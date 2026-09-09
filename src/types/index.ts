@@ -93,6 +93,8 @@ export interface MessageMetadata {
   contentEvicted?: boolean;
   /** Bulky payload fields in completed mutation calls were replaced by a structural stub. */
   toolArgumentsEvicted?: boolean;
+  /** Context-only explanation of omitted input, carried by its paired result. */
+  toolArgumentSummary?: string;
   /** File paths, images, and directories that were mentioned using '@' completion in this message */
   mentions?: {
     files?: string[];

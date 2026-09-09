@@ -15,13 +15,6 @@ export function extractSourceOutline(value: unknown): string {
   };
   visit(value);
 
-  // Compacted calls already carry their outline inside the stub. Reuse it on
-  // later checkpoint generations rather than trying to parse the stub as code.
-  for (const text of texts) {
-    const embedded = text.match(/outline:\s*([^\]]+)/)?.[1];
-    if (embedded) return embedded.slice(0, MAX_OUTLINE_CHARS);
-  }
-
   const signatures: Array<{ text: string; rank: number; order: number }> = [];
   const seen = new Set<string>();
   const patterns = [
@@ -72,15 +65,18 @@ function valueAtPath(value: unknown, path: readonly string[]): unknown {
   ), value);
 }
 
-function compactPath(value: unknown, path: readonly string[], outline: string): unknown {
+function omitPayload(value: unknown, path: readonly string[]): unknown {
   if (path.length === 0 || !value || typeof value !== 'object' || Array.isArray(value)) return value;
   const [head, ...tail] = path;
   if (!head || !(head in value)) return value;
   const record = value as Record<string, unknown>;
   const current = record[head];
-  const replacement = tail.length === 0 && typeof current === 'string'
-    ? `[payload evicted after successful tool call: ${current.length} chars${outline ? `; outline: ${outline}` : ''}]`
-    : compactPath(current, tail, outline);
+  if (tail.length === 0 && typeof current === 'string') {
+    const copy = { ...record };
+    delete copy[head];
+    return copy;
+  }
+  const replacement = omitPayload(current, tail);
   if (replacement === current) return value;
   return { ...record, [head]: replacement };
 }
@@ -97,22 +93,27 @@ export function toolCallHasCompactablePayload(
   });
 }
 
-/** Preserve argument shape and control fields while stubbing durable bulk. */
+/** Omit historical bulk; explanations belong in results, never executable payloads. */
 export function compactCompletedToolCall(
   call: ToolCall,
   policy: ToolArgumentCompactionPolicy,
-): ToolCall {
+): { call: ToolCall; summary: string } {
   const args = parseToolCallArguments(call.function.arguments as any);
   const outline = extractSourceOutline(args);
   const compacted = policy.payloadPaths.reduce(
-    (current, path) => compactPath(current, path, outline),
+    (current, path) => omitPayload(current, path),
     args as unknown,
   );
   return {
-    ...call,
-    function: {
-      ...call.function,
-      arguments: compacted as Record<string, unknown>,
+    call: {
+      ...call,
+      function: {
+        ...call.function,
+        arguments: compacted as Record<string, unknown>,
+      },
     },
+    summary: 'Historical tool input payload omitted from compacted context; the operation already succeeded. '
+      + 'This is not a new call or reusable input. Original arguments remain in the transcript; inspect current files when needed.'
+      + (outline ? ` Source outline: ${outline}` : ''),
   };
 }

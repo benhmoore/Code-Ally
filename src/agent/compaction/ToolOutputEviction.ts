@@ -74,19 +74,9 @@ export function evictStaleToolOutputs(
     evictableIndexes.push(index);
   }
   const evictable = new Set(evictableIndexes);
-  let reclaimedTokens = 0;
   let evictedCount = evictable.size;
-  const replaced = messages.map((message, index) => {
-    if (evictable.has(index)) {
-      const before = estimateMessageTokens(message);
-      const evicted: Message = {
-        ...message,
-        content: evictionStub(message, before),
-        metadata: { ...message.metadata, contentEvicted: true },
-      };
-      reclaimedTokens += Math.max(0, before - estimateMessageTokens(evicted));
-      return evicted;
-    }
+  const summaries = new Map<string, string>();
+  const compactedCalls = messages.map((message) => {
     if (message.role !== 'assistant' || !message.tool_calls?.some(call =>
       successfulOldCallIds.has(call.id)
       && toolCallHasCompactablePayload(call, argumentPolicyFor(call.function.name)))) return message;
@@ -94,17 +84,38 @@ export function evictStaleToolOutputs(
     if (before < MIN_EVICTABLE_ARGUMENT_TOKENS) return message;
     const compacted: Message = {
       ...message,
-      tool_calls: message.tool_calls.map(call =>
-        successfulOldCallIds.has(call.id) && argumentPolicyFor(call.function.name)
-          ? compactCompletedToolCall(call, argumentPolicyFor(call.function.name)!)
-          : call),
+      tool_calls: message.tool_calls.map(call => {
+        const policy = argumentPolicyFor(call.function.name);
+        if (!successfulOldCallIds.has(call.id) || !toolCallHasCompactablePayload(call, policy)) return call;
+        const compacted = compactCompletedToolCall(call, policy!);
+        summaries.set(call.id, compacted.summary);
+        return compacted.call;
+      }),
       metadata: { ...message.metadata, toolArgumentsEvicted: true },
     };
-    const reclaimed = Math.max(0, before - estimateMessageTokens(compacted));
-    if (reclaimed === 0) return message;
-    reclaimedTokens += reclaimed;
     evictedCount++;
     return compacted;
   });
+
+  const replaced = compactedCalls.map((message, index) => {
+    const newSummary = message.tool_call_id ? summaries.get(message.tool_call_id) : undefined;
+    const evicted = evictable.has(index);
+    if (!evicted && !newSummary) return message;
+    const summary = newSummary ?? message.metadata?.toolArgumentSummary;
+    const content = evicted ? evictionStub(message, estimateMessageTokens(message)) : message.content;
+    return {
+      ...message,
+      content: summary ? `${content}\n\n${summary}` : content,
+      metadata: {
+        ...message.metadata,
+        ...(evicted ? { contentEvicted: true } : {}),
+        ...(summary ? { toolArgumentSummary: summary } : {}),
+      },
+    };
+  });
+  // Include explanatory result text in the savings, not just removed payloads.
+  const reclaimedTokens = messages.reduce((sum, message) => sum + estimateMessageTokens(message), 0)
+    - replaced.reduce((sum, message) => sum + estimateMessageTokens(message), 0);
+  if (reclaimedTokens <= 0) return { messages: [...messages], evictedCount: 0, reclaimedTokens: 0 };
   return { messages: replaced, evictedCount, reclaimedTokens };
 }

@@ -111,17 +111,28 @@ describe('evictStaleToolOutputs', () => {
     expect(reclaimed.evictedCount).toBeGreaterThanOrEqual(1);
     expect(reclaimed.reclaimedTokens).toBeGreaterThan(300);
     expect(args.file_path).toBe('/repo/world.js');
-    expect(args.content).not.toContain('x'.repeat(100));
-    expect(args.content).toContain('export class World');
-    expect(args.content).toContain('getBlock(x, y, z)');
+    expect(args).not.toHaveProperty('content');
+    expect(reclaimed.messages[1]!.content).toContain('export class World');
+    expect(reclaimed.messages[1]!.content).toContain('getBlock(x, y, z)');
+    expect(reclaimed.messages[1]!.content).toContain('Historical tool input payload omitted');
+    expect(reclaimed.messages[1]!.tool_call_id).toBe(call.id);
+    expect(reclaimed.reclaimedTokens).toBe(
+      messages.reduce((sum, message) => sum + estimateFull(message), 0)
+      - reclaimed.messages.reduce((sum, message) => sum + estimateFull(message), 0),
+    );
     expect(reclaimed.messages[0]!.metadata?.toolArgumentsEvicted).toBe(true);
     // The durable input array remains untouched.
     expect(messages[0]!.tool_calls![0]!.function.arguments.content).toBe(source);
+    expect(messages[1]!.content).not.toContain('Historical tool input');
+    const again = evictStaleToolOutputs(reclaimed.messages, estimateFull, writePolicy);
+    expect(again.messages[0]!.tool_calls![0]!.function.arguments).not.toHaveProperty('content');
+    expect(again.messages[1]!.content).toContain('export class World');
+    expect(again.messages[1]!.content.match(/Historical tool input payload omitted/g)).toHaveLength(1);
   });
 
   it('prioritizes exported callables over long runs of exported constants', () => {
     const constants = Array.from({ length: 20 }, (_, index) => `export const VALUE_${index} = ${index};`).join('\n');
-    const source = `${constants}\nexport function isSolid(id) { return id > 0; }\nexport class Registry {}`;
+    const source = `${constants}\nexport function isSolid(id) { return id > 0; }\nexport class Registry {}\n// ${'x'.repeat(2000)}`;
     const messages: Message[] = [{
       id: 'assistant-old', role: 'assistant', content: '', timestamp: 1,
       tool_calls: [{ id: 'call-old', type: 'function', function: {
@@ -130,7 +141,7 @@ describe('evictStaleToolOutputs', () => {
     }, result('old', 'created', { name: 'write', tool_call_id: 'call-old' }), result('new-1', bigPayload), result('new-2', bigPayload)];
 
     const compacted = evictStaleToolOutputs(messages, estimateFull, writePolicy);
-    const outline = compacted.messages[0]!.tool_calls![0]!.function.arguments.content as string;
+    const outline = compacted.messages[1]!.content;
 
     expect(outline).toContain('export function isSolid(id)');
     expect(outline).toContain('export class Registry');
@@ -173,5 +184,26 @@ describe('evictStaleToolOutputs', () => {
     const compacted = evictStaleToolOutputs(messages, estimateFull, writePolicy);
     expect(compacted.messages[0]!.tool_calls![0]!.function.arguments.content).toBe(content);
     expect(compacted.messages[0]!.metadata?.toolArgumentsEvicted).toBeUndefined();
+  });
+
+  it('omits only declared nested payloads and leaves unfinished calls intact', () => {
+    const args = { target: '/repo/data', operation: { text: 'large payload\n'.repeat(500), mode: 'replace' } };
+    const messages: Message[] = [{
+      role: 'assistant', content: '', tool_calls: [
+        { id: 'old', type: 'function', function: { name: 'custom', arguments: args } },
+        { id: 'pending', type: 'function', function: { name: 'custom', arguments: args } },
+      ],
+    }, result('old', bigPayload, { tool_call_id: 'old' }), result('recent-1', 'ok'), result('recent-2', 'ok')];
+    const original = structuredClone(messages);
+    const compacted = evictStaleToolOutputs(messages, estimateFull, () => ({
+      payloadPaths: [['operation', 'text']], durableReceipt: 'successful-tool-result',
+    }));
+    expect(compacted.messages[0]!.tool_calls![0]!.function.arguments).toEqual({
+      target: '/repo/data', operation: { mode: 'replace' },
+    });
+    expect(compacted.messages[0]!.tool_calls![1]!.function.arguments).toEqual(args);
+    expect(compacted.messages[1]!.content).toContain('Historical tool input payload omitted');
+    expect(compacted.messages[1]!.metadata?.contentEvicted).toBe(true);
+    expect(messages).toEqual(original);
   });
 });
