@@ -1181,8 +1181,9 @@ export class Agent {
         break;
       }
 
-      this.emitAgentEnd(false, undefined, finalResponse);
-      this.turnController.finish('completed');
+      delegationSucceeded = this.turnController.snapshot().state !== 'failed';
+      this.emitAgentEnd(!delegationSucceeded, delegationSucceeded ? undefined : 'model_error', finalResponse);
+      this.turnController.finish(delegationSucceeded ? 'completed' : 'failed');
       return finalResponse;
     } catch (error) {
       logger.debug('[AGENT]', this.instanceId, 'sendMessage caught exception:', error instanceof Error ? error.message : String(error));
@@ -1814,10 +1815,13 @@ export class Agent {
       throw new Error('Model generation stopped without an agent interruption cause');
     }
 
-    if (response.error && !this.config.isSpecializedAgent) {
-      await ServiceRegistry.getInstance().get('run_supervisor')?.block(
-        response.content || response.error_message || 'Non-retryable model endpoint error'
-      );
+    if (response.error && !response.partial && !response.tool_call_validation_failed) {
+      this.turnController.finish('failed');
+      if (!this.config.isSpecializedAgent) {
+        await ServiceRegistry.getInstance().get('run_supervisor')?.block(
+          response.content || response.error_message || 'Non-retryable model endpoint error'
+        );
+      }
     }
 
     // Check for interruption

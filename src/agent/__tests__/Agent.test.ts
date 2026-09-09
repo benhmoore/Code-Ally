@@ -106,6 +106,17 @@ describe('Agent - Interruption Handling', () => {
   });
 
   describe('System Reminder Injection', () => {
+    it('records terminal model errors as failed and resets on the next user turn', async () => {
+      vi.mocked(mockModelClient.send).mockResolvedValueOnce({
+        role: 'assistant', content: 'Provider request failed', error: true,
+      });
+      expect(await agent.sendMessage('Begin task')).toBe('Provider request failed');
+      expect(agent.getTurnSnapshot().terminationReason).toBe('failed');
+
+      await agent.sendMessage('Try again');
+      expect(agent.getTurnSnapshot().terminationReason).toBe('completed');
+    });
+
     const forceInternalNoProgressRecovery = (): void => {
       // Transport owns model-request stalls. Exercise the agent's bounded
       // recovery path directly so this test remains about recovery semantics,
