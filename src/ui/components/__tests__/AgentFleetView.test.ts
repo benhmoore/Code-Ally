@@ -38,8 +38,16 @@ describe('AgentFleetView', () => {
       agent({ id: 'agent-101-bravo' }),
       agent({ id: 'agent-102-charlie', taskPrompt: 'Implement the CLI' }),
     ]);
-    expect(labels[0]).toMatch(/ · alpha$/);
-    expect(labels[1]).toMatch(/ · bravo$/);
+    expect(labels[0]).toMatch(/ · agent-100-alpha$/);
+    expect(labels[1]).toMatch(/ · agent-101-bravo$/);
     expect(labels[2]).toBe('task · Implement the CLI');
+  });
+
+  it('distinguishes opaque IDs sharing the same final component', () => {
+    const labels = agentFleetLabels([
+      agent({ id: 'agent-100-same' }),
+      agent({ id: 'agent-101-same' }),
+    ]);
+    expect(new Set(labels).size).toBe(2);
   });
 });

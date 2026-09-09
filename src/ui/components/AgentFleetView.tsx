@@ -50,13 +50,8 @@ function conciseTaskText(value: string): string {
 
 /** Semantic fleet label, derived from explicit metadata before task content. */
 export function agentFleetLabel(agent: BackgroundAgentInfo): string {
-  const detail = conciseTaskText(agent.description || agent.taskPrompt);
+  const detail = conciseTaskText(agent.description?.trim() || agent.taskPrompt);
   return detail ? `${agent.agentType} · ${detail}` : agent.agentType;
-}
-
-function shortAgentId(id: string): string {
-  const suffix = id.split('-').at(-1);
-  return suffix || id;
 }
 
 /** Fleet labels remain semantic, with a stable id suffix only for collisions. */
@@ -67,7 +62,7 @@ export function agentFleetLabels(agents: BackgroundAgentInfo[]): string[] {
   return baseLabels.map((label, index) => {
     const agent = agents[index];
     return agent && (counts.get(label) ?? 0) > 1
-      ? `${label} · ${shortAgentId(agent.id)}`
+      ? `${label} · ${agent.id}`
       : label;
   });
 }
