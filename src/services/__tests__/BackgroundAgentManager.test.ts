@@ -124,10 +124,11 @@ describe('BackgroundAgentManager', () => {
 
   it('createTask wires a detach that flips foreground → background', () => {
     const task = manager.createTask({
-      agentType: 'explore', taskPrompt: 'x', mode: 'foreground',
+      agentType: 'explore', taskPrompt: 'x', description: 'Map handlers', mode: 'foreground',
       subAgent: fakeAgent(), pooledAgent: null, callId: 'c1',
     });
     expect(task.mode).toBe('foreground');
+    expect(task.description).toBe('Map handlers');
     task.detach();
     expect(task.mode).toBe('background');
   });

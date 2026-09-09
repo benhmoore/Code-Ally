@@ -44,6 +44,7 @@ import {
 interface AgentExecutionParams {
   agentType: string;
   taskPrompt: string;
+  description?: string;
   thoroughness: string;
   callId: string;
   depth: number;
@@ -66,7 +67,7 @@ interface AgentTaskExecutionParams extends AgentExecutionParams {
 export class AgentTool extends BaseTool {
   readonly name = 'agent';
   readonly description =
-    'Delegate task to specialized agent. Multiple calls can run in parallel';
+    'Delegate tasks; calls may run in parallel';
   /** Delegates; the child agent's own tool calls are gated individually. */
   readonly capabilities = [] as const;
   readonly suppressExecutionAnimation = true; // Agent manages its own display
@@ -139,6 +140,10 @@ Only set run_in_background=false when your very next step depends on the result.
               type: 'string',
               description: `Agent type (default: ${AGENT_TYPES.TASK}).`,
             },
+            description: {
+              type: 'string',
+              description: 'Task label.',
+            },
             thoroughness: {
               type: 'string',
               enum: ['quick', 'medium', 'very thorough', 'uncapped'],
@@ -180,6 +185,7 @@ Only set run_in_background=false when your very next step depends on the result.
 
     const agentType = (args.agent_type || AGENT_TYPES.TASK).trim();
     const taskPrompt = args.task_prompt;
+    const description = typeof args.description === 'string' ? args.description.trim() : undefined;
     const thoroughness = args.thoroughness ?? THOROUGHNESS_LEVELS.UNCAPPED;
     const contextFiles = args.context_files;
     const contextImages = args.context_images;
@@ -228,6 +234,21 @@ Only set run_in_background=false when your very next step depends on the result.
       return this.formatErrorResponse(
         'agent_type is too long. Maximum length is 100 characters',
         'validation_error'
+      );
+    }
+
+    if (args.description !== undefined && typeof args.description !== 'string') {
+      return this.formatErrorResponse(
+        'description must be a string',
+        'validation_error'
+      );
+    }
+
+    if (description && description.length > 120) {
+      return this.formatErrorResponse(
+        'description is too long. Maximum length is 120 characters',
+        'validation_error',
+        'Use a short task label; keep full instructions in task_prompt'
       );
     }
 
@@ -436,6 +457,7 @@ Only set run_in_background=false when your very next step depends on the result.
     return await this.executeSingleAgentWrapper({
       agentType,
       taskPrompt,
+      description,
       thoroughness,
       callId,
       depth: newDepth,
@@ -510,7 +532,7 @@ Only set run_in_background=false when your very next step depends on the result.
    * Agents always persist in the agent pool for reuse.
    */
   private async executeSingleAgent(params: AgentExecutionParams): Promise<any> {
-    const { agentType, taskPrompt, thoroughness, callId, depth, parentAgentName, initialMessages, contextImages, runInBackground, notifyWhenDone } = params;
+    const { agentType, taskPrompt, description, thoroughness, callId, depth, parentAgentName, initialMessages, contextImages, runInBackground, notifyWhenDone } = params;
 
     logger.debug('[AGENT_TOOL] executeSingleAgent START:', agentType, 'callId:', callId, 'thoroughness:', thoroughness, 'background:', runInBackground);
     const startTime = Date.now();
@@ -590,6 +612,7 @@ Only set run_in_background=false when your very next step depends on the result.
         agentData,
         agentType,
         taskPrompt,
+        description,
         thoroughness,
         callId,
         depth,
@@ -928,7 +951,7 @@ Only set run_in_background=false when your very next step depends on the result.
    * Agents always persist in the agent pool for reuse.
    */
   private async executeAgentTask(params: AgentTaskExecutionParams): Promise<{ result: string; agent_id?: string; backgrounded?: boolean; toolUseCount?: number }> {
-    const { agentData, agentType, taskPrompt, thoroughness, callId, depth, initialMessages, contextImages, runInBackground, notifyWhenDone } = params;
+    const { agentData, agentType, taskPrompt, description, thoroughness, callId, depth, initialMessages, contextImages, runInBackground, notifyWhenDone } = params;
 
     logger.debug('[AGENT_TOOL] executeAgentTask START for callId:', callId, 'thoroughness:', thoroughness);
 
@@ -1090,6 +1113,7 @@ Only set run_in_background=false when your very next step depends on the result.
         activityStream: this.activityStream,
         agentType,
         taskPrompt,
+        description,
         callId,
         subAgent,
         pooledAgent: pooledAgent ?? null,

@@ -29,6 +29,8 @@ export interface FleetDelegationParams {
   activityStream: ActivityStream;
   agentType: string;
   taskPrompt: string;
+  /** Optional concise label for navigation in the agent fleet. */
+  description?: string;
   callId: string;
   subAgent: Agent;
   pooledAgent: PooledAgent | null;
@@ -49,6 +51,7 @@ export async function runFleetDelegation(p: FleetDelegationParams): Promise<Flee
   const task = p.manager.createTask({
     agentType: p.agentType,
     taskPrompt: p.taskPrompt,
+    description: p.description,
     mode: p.runInBackground ? 'background' : 'foreground',
     subAgent: p.subAgent,
     pooledAgent: p.pooledAgent,

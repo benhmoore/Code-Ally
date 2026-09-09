@@ -19,6 +19,8 @@ import { POLLING_INTERVALS, BACKGROUND_AGENT } from '@config/constants.js';
 export interface BackgroundAgentInfo {
   id: string;
   agentType: string;
+  taskPrompt: string;
+  description?: string;
   status: BackgroundAgentStatus;
   startTime: number;
   endTime: number | null;
@@ -41,6 +43,8 @@ function readAgents(): BackgroundAgentInfo[] {
     .map((task) => ({
       id: task.id,
       agentType: task.agentType,
+      taskPrompt: task.taskPrompt,
+      description: task.description,
       status: task.status,
       startTime: task.startTime,
       endTime: task.endTime,

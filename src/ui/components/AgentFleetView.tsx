@@ -20,6 +20,7 @@ import { BackgroundAgentStatus } from '@services/BackgroundAgentManager.js';
 import { SelectionIndicator } from './SelectionIndicator.js';
 import { UI_COLORS } from '../constants/colors.js';
 import { formatElapsed } from '../utils/timeUtils.js';
+import { TEXT_LIMITS } from '@config/constants.js';
 
 export interface AgentFleetViewProps {
   /** Background agents (excludes the implicit 'main' row) */
@@ -39,6 +40,36 @@ const INACTIVE_AGENT_DOT = '○';
 
 export function agentFleetDot(isCurrentAgent: boolean): string {
   return isCurrentAgent ? CURRENT_AGENT_DOT : INACTIVE_AGENT_DOT;
+}
+
+function conciseTaskText(value: string): string {
+  const text = value.trim().replace(/\s+/g, ' ');
+  if (text.length <= TEXT_LIMITS.DESCRIPTION_MAX) return text;
+  return `${text.slice(0, TEXT_LIMITS.DESCRIPTION_MAX - 1).trimEnd()}…`;
+}
+
+/** Semantic fleet label, derived from explicit metadata before task content. */
+export function agentFleetLabel(agent: BackgroundAgentInfo): string {
+  const detail = conciseTaskText(agent.description || agent.taskPrompt);
+  return detail ? `${agent.agentType} · ${detail}` : agent.agentType;
+}
+
+function shortAgentId(id: string): string {
+  const suffix = id.split('-').at(-1);
+  return suffix || id;
+}
+
+/** Fleet labels remain semantic, with a stable id suffix only for collisions. */
+export function agentFleetLabels(agents: BackgroundAgentInfo[]): string[] {
+  const baseLabels = agents.map(agentFleetLabel);
+  const counts = new Map<string, number>();
+  for (const label of baseLabels) counts.set(label, (counts.get(label) ?? 0) + 1);
+  return baseLabels.map((label, index) => {
+    const agent = agents[index];
+    return agent && (counts.get(label) ?? 0) > 1
+      ? `${label} · ${shortAgentId(agent.id)}`
+      : label;
+  });
 }
 
 function statusColor(status: BackgroundAgentStatus): string | undefined {
@@ -83,6 +114,7 @@ const AgentFleetViewComponent: React.FC<AgentFleetViewProps> = ({
     if (endIdx === total) startIdx = Math.max(0, endIdx - maxVisible);
   }
   const visibleAgents = agents.slice(startIdx, endIdx);
+  const labels = agentFleetLabels(agents);
   const hasMoreAbove = startIdx > 0;
   const hasMoreBelow = endIdx < total;
 
@@ -106,11 +138,12 @@ const AgentFleetViewComponent: React.FC<AgentFleetViewProps> = ({
         const elapsedSeconds = Math.round(((agent.endTime ?? now) - agent.startTime) / 1000);
         const dot = agentFleetDot(isViewed);
         const color = statusColor(agent.status);
+        const label = labels[startIdx + idx];
 
         return (
           <SelectionIndicator key={agent.id} isSelected={isSelected}>
             <Text color={color} dimColor={agent.status === 'cancelled'}>{dot} </Text>
-            <Text bold={isViewed}>{agent.agentType}</Text>
+            <Text bold={isViewed} wrap="truncate-end">{label}</Text>
             <Text dimColor>  {formatElapsed(elapsedSeconds)} · {formatTokens(agent.tokens)}</Text>
             {agent.status !== 'running' && (
               <Text dimColor> ({agent.status})</Text>

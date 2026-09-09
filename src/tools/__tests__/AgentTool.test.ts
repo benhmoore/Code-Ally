@@ -378,10 +378,11 @@ describe('AgentTool', () => {
       const props = def.function.parameters.properties as Record<string, any>;
       // The full public parameter surface the consolidation must preserve.
       expect(Object.keys(props).sort()).toEqual(
-        ['agent_type', 'context_files', 'context_images', 'notify_when_done', 'run_in_background', 'task_prompt', 'thoroughness'].sort()
+        ['agent_type', 'context_files', 'context_images', 'description', 'notify_when_done', 'run_in_background', 'task_prompt', 'thoroughness'].sort()
       );
       expect(props.task_prompt.type).toBe('string');
       expect(props.agent_type.type).toBe('string');
+      expect(props.description.type).toBe('string');
       expect(props.thoroughness.type).toBe('string');
       expect(props.context_files.type).toBe('array');
       expect(props.context_files.items.type).toBe('string');
@@ -396,6 +397,22 @@ describe('AgentTool', () => {
   });
 
   describe('extended validation', () => {
+    it('should reject invalid or oversized display descriptions', async () => {
+      const invalid = await tool.execute({
+        task_prompt: 'Test task',
+        description: 42,
+      }, 'test-call-id');
+      expect(invalid.success).toBe(false);
+      expect(invalid.error).toContain('description must be a string');
+
+      const oversized = await tool.execute({
+        task_prompt: 'Test task',
+        description: 'x'.repeat(121),
+      }, 'test-call-id');
+      expect(oversized.success).toBe(false);
+      expect(oversized.error).toContain('Maximum length is 120');
+    });
+
     it('should reject agent_type that is empty after trimming', async () => {
       const result = await tool.execute({
         agent_type: '   ',

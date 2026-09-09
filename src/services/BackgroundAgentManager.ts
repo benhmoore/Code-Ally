@@ -41,6 +41,8 @@ export interface BackgroundAgentTask {
   agentType: string;
   /** The task prompt the agent was given (for display + reminders) */
   taskPrompt: string;
+  /** Optional concise, human-readable label supplied by the delegating model. */
+  description?: string;
   /** Execution mode (may flip foreground → background via detach) */
   mode: BackgroundAgentMode;
   /** Current lifecycle status */
@@ -105,6 +107,7 @@ export class BackgroundAgentManager {
   createTask(meta: {
     agentType: string;
     taskPrompt: string;
+    description?: string;
     mode: BackgroundAgentMode;
     subAgent: Agent;
     pooledAgent: PooledAgent | null;
@@ -117,6 +120,7 @@ export class BackgroundAgentManager {
       id: this.generateId(),
       agentType: meta.agentType,
       taskPrompt: meta.taskPrompt,
+      description: meta.description,
       mode: meta.mode,
       status: 'running',
       result: null,
