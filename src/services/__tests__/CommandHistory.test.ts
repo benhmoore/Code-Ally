@@ -4,11 +4,12 @@
  * Tests command history storage, navigation, persistence, and search
  */
 
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { promises as fs } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { CommandHistory } from '../CommandHistory.js';
+import * as atomicFile from '../../utils/atomicFile.js';
 
 describe('CommandHistory', () => {
   let tempDir: string;
@@ -22,6 +23,7 @@ describe('CommandHistory', () => {
   });
 
   afterEach(async () => {
+    vi.restoreAllMocks();
     // Cleanup
     try {
       await fs.rm(tempDir, { recursive: true, force: true });
@@ -259,6 +261,66 @@ describe('CommandHistory', () => {
   });
 
   describe('persistence', () => {
+    it('rejects all coalesced callers and allows a later save to recover', async () => {
+      const history = new CommandHistory({ storagePath: historyPath });
+      const failure = new Error('write failed');
+      const originalWrite = atomicFile.atomicWriteFile;
+      let fail = true;
+      vi.spyOn(atomicFile, 'atomicWriteFile').mockImplementation(async (...args) => {
+        if (args[0] === historyPath && fail) {
+          fail = false;
+          throw failure;
+        }
+        return originalWrite(...args);
+      });
+      const results = await Promise.allSettled([history.save(), history.save()]);
+      expect(results).toEqual([
+        { status: 'rejected', reason: failure },
+        { status: 'rejected', reason: failure },
+      ]);
+      await history.save();
+      expect(JSON.parse(await fs.readFile(historyPath, 'utf8'))).toEqual([]);
+    });
+
+    it('orders clear after an in-flight save so stale history cannot return', async () => {
+      const history = new CommandHistory({ storagePath: historyPath });
+      let release!: () => void;
+      const gate = new Promise<void>(resolve => { release = resolve; });
+      let started!: () => void;
+      const writing = new Promise<void>(resolve => { started = resolve; });
+      const originalWrite = atomicFile.atomicWriteFile;
+      const write = vi.spyOn(atomicFile, 'atomicWriteFile').mockImplementation(async (...args) => {
+        if (args[0] === historyPath) {
+          started();
+          await gate;
+        }
+        await originalWrite(...args);
+      });
+      history.addCommand('old command');
+      const saved = history.save();
+      await writing;
+      const cleared = history.clear();
+      try {
+        await new Promise(resolve => setTimeout(resolve, 20));
+        expect(write.mock.calls.filter(args => args[0] === historyPath)).toHaveLength(1);
+      } finally {
+        release();
+        await Promise.all([saved, cleared]);
+      }
+      expect(JSON.parse(await fs.readFile(historyPath, 'utf8'))).toEqual([]);
+    });
+
+    it('settles every caller when saves are coalesced', async () => {
+      const history = new CommandHistory({ storagePath: historyPath });
+      history.addCommand('first');
+      const first = history.save();
+      history.addCommand('second');
+      const second = history.save();
+      await Promise.all([first, second]);
+      const stored = JSON.parse(await fs.readFile(historyPath, 'utf8'));
+      expect(stored.map((entry: { command: string }) => entry.command)).toEqual(['first', 'second']);
+    });
+
     it('should save history to file', async () => {
       const history = new CommandHistory({ storagePath: historyPath });
       history.addCommand('test command');

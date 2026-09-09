@@ -34,6 +34,8 @@ export class CommandHistory {
   private maxSize: number;
   private storagePath: string;
   private saveDebounceTimer: NodeJS.Timeout | null = null;
+  private pendingSave: { promise: Promise<void>; resolve: () => void; reject: (error: unknown) => void } | null = null;
+  private writeTail: Promise<void> = Promise.resolve();
   private loaded: boolean = false;
 
   constructor(options: CommandHistoryOptions = {}) {
@@ -93,22 +95,36 @@ export class CommandHistory {
       clearTimeout(this.saveDebounceTimer);
     }
 
-    return new Promise((resolve, reject) => {
-      this.saveDebounceTimer = setTimeout(async () => {
-        try {
-          await this.saveImmediate();
-          resolve();
-        } catch (error) {
-          reject(error);
-        }
-      }, UI_DELAYS.SAVE_DEBOUNCE);
-    });
+    if (!this.pendingSave) {
+      let resolve!: () => void;
+      let reject!: (error: unknown) => void;
+      const promise = new Promise<void>((onResolve, onReject) => {
+        resolve = onResolve;
+        reject = onReject;
+      });
+      this.pendingSave = { promise, resolve, reject };
+    }
+    const batch = this.pendingSave;
+    this.saveDebounceTimer = setTimeout(() => {
+      this.saveDebounceTimer = null;
+      this.pendingSave = null;
+      void this.saveImmediate().then(batch.resolve, batch.reject);
+    }, UI_DELAYS.SAVE_DEBOUNCE);
+    return batch.promise;
   }
 
   /**
    * Save immediately without debouncing
    */
-  private async saveImmediate(): Promise<void> {
+  private saveImmediate(): Promise<void> {
+    const snapshot = JSON.stringify(this.history, null, 2);
+    const write = this.writeTail.then(() => this.writeSnapshot(snapshot));
+    // A failed write rejects its callers, but cannot strand later saves.
+    this.writeTail = write.catch(() => {});
+    return write;
+  }
+
+  private async writeSnapshot(snapshot: string): Promise<void> {
     try {
       // Get directory from storagePath (not using join with '..')
       const dir = this.storagePath.substring(0, this.storagePath.lastIndexOf('/'));
@@ -116,7 +132,7 @@ export class CommandHistory {
       // Ensure parent directory exists
       await fs.mkdir(dir, { recursive: true });
 
-      await atomicWriteFile(this.storagePath, JSON.stringify(this.history, null, 2));
+      await atomicWriteFile(this.storagePath, snapshot);
     } catch (error) {
       logger.error('Error saving command history:', error);
       throw error;

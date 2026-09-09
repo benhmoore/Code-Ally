@@ -40,6 +40,41 @@ const ControlledPrompt: React.FC = () => {
 };
 
 describe('InputPrompt controlled buffer', () => {
+  test('admits successive messages without waiting for history persistence', async () => {
+    const stdout = new FakeStdout();
+    const stdin = new FakeStdin();
+    const submitted: string[] = [];
+    const history = {
+      addCommand: vi.fn(),
+      save: vi.fn(() => new Promise<void>(() => {})),
+    } as unknown as CommandHistory;
+    const instance = render(
+      <InputPrompt commandHistory={history} onSubmit={value => { submitted.push(value); }} />,
+      {
+        stdout: stdout as unknown as NodeJS.WriteStream,
+        stdin: stdin as unknown as NodeJS.ReadStream,
+        debug: true,
+        exitOnCtrlC: false,
+        patchConsole: false,
+      }
+    );
+    try {
+      await settle();
+      for (const message of ['first message', 'second message']) {
+        stdin.write(message);
+        await settle();
+        stdin.write('\r');
+        await settle();
+      }
+      expect(submitted).toEqual(['first message', 'second message']);
+      expect(history.addCommand).toHaveBeenNthCalledWith(1, 'first message');
+      expect(history.addCommand).toHaveBeenNthCalledWith(2, 'second message');
+      expect(history.save).not.toHaveBeenCalled();
+    } finally {
+      instance.unmount();
+    }
+  });
+
   test('preserves pasted prose containing an existing path as literal input', async () => {
     const stdout = new FakeStdout();
     const stdin = new FakeStdin();

@@ -558,20 +558,14 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
     dismissCompletions(false);
   };
 
-  const handleSubmit = async (inputValue = buffer) => {
+  const handleSubmit = (inputValue = buffer) => {
     const trimmed = inputValue.trim();
     if (!trimmed) return;
 
-    // Add to history and save
-    if (commandHistory) {
-      commandHistory.addCommand(trimmed);
-      // Save history to disk for persistence across restarts
-      try {
-        await commandHistory.save();
-      } catch (error) {
-        console.error('Failed to save command history:', error);
-      }
-    }
+    // History owns its asynchronous persistence. Message admission and buffer
+    // ownership must not wait for disk I/O or a debounced save.
+    commandHistory?.addCommand(trimmed);
+    resetInputState();
 
     // Extract all @ mentions from buffer (handles both quoted and unquoted paths)
     const extractedPaths: string[] = [];
@@ -595,9 +589,6 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
       ...(extractedImages.length > 0 && { images: extractedImages }),
     };
     onSubmit(trimmed, Object.keys(mentions).length > 0 ? mentions : undefined);
-
-    // Reset state
-    resetInputState();
   };
 
   // Track whether TextInput is active (inactive when modals are open)
