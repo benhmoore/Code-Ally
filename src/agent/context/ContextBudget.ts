@@ -39,6 +39,8 @@ export interface ContextBudgetSnapshot {
    * Reclaim can never recover these.
    */
   fixedOverhead: number;
+  /** Tool schemas and dynamic context, absent from TokenManager's message count. */
+  requestOnlyOverhead: number;
   /** Input tokens available to conversation content (trigger - fixed). */
   usableBudget: number;
   /** Post-reclaim conversation budget: retained tail + checkpoint. */
@@ -165,6 +167,7 @@ export class ContextBudgetPlanner {
       triggerBudget,
       targetBudget,
       fixedOverhead,
+      requestOnlyOverhead: schemaTokens + dynamicTokens,
       usableBudget,
       domainBudget,
       retainedTailBudget,

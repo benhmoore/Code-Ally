@@ -39,6 +39,24 @@ describe('ContextBudgetPlanner', () => {
     expect(budget.estimatedInput).toBe(500);
   });
 
+  it('separates request-only overhead from costs already in calibrated messages', () => {
+    const tokens = new TokenManager(32_768);
+    tokens.calibrate(1_000, 8_000);
+    const messages: Message[] = [{ role: 'system', content: 'system instructions' },
+      { role: 'user', content: 'user request' }];
+    const functions = [{ type: 'function' as const,
+      function: { name: 'read', description: 'Read text', parameters: {} } }];
+    const dynamicContext = 'working directory and active tools';
+    tokens.updateTokenCount(messages);
+    const budget = new ContextBudgetPlanner(tokens).plan({ messages, functions, dynamicContext });
+
+    expect(budget.requestOnlyOverhead).toBe(tokens.estimateTokens(JSON.stringify(functions))
+      + tokens.estimateTokens(dynamicContext));
+    expect(tokens.getCurrentTokenCount() + budget.requestOnlyOverhead).toBe(budget.estimatedInput);
+    expect(budget.fixedOverhead).toBe(budget.requestOnlyOverhead
+      + tokens.estimateMessageTokens(messages[0]!) + tokens.getCalibrationOverhead());
+  });
+
   it('anchors the post-compaction target on usable space, not the raw window', () => {
     const tokens = new TokenManager(32_768);
     const planner = new ContextBudgetPlanner(tokens);

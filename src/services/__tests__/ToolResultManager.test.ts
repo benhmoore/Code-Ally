@@ -13,6 +13,9 @@ import { GrepTool } from '@tools/GrepTool.js';
 import { GlobTool } from '@tools/GlobTool.js';
 import { LsTool } from '@tools/LsTool.js';
 import { ToolResultPersistence } from '../ToolResultPersistence.js';
+import { ServiceRegistry } from '../ServiceRegistry.js';
+import { ContextBudgetService } from '../ContextBudgetService.js';
+import { ContextBudgetPlanner } from '../../agent/context/ContextBudget.js';
 
 describe('ToolResultManager', () => {
   let toolResultManager: ToolResultManager;
@@ -43,6 +46,36 @@ describe('ToolResultManager', () => {
   });
 
   describe('Tool-Specific Truncation Notices', () => {
+    it('does not charge system and calibration overhead twice when retaining results', async () => {
+      const tokens = new TokenManager(32_768);
+      tokens.calibrate(1_000, 8_000);
+      const messages = [{ role: 'system' as const, content: 'instructions '.repeat(1_000) },
+        { role: 'user' as const, content: 'request '.repeat(6_000) }];
+      tokens.updateTokenCount(messages);
+      const budget = new ContextBudgetPlanner(tokens).plan({
+        messages, dynamicContext: 'context '.repeat(1_000),
+      });
+      const budgets = new ContextBudgetService();
+      budgets.publish('test-agent', budget);
+      const registry = vi.spyOn(ServiceRegistry, 'getInstance').mockReturnValue({
+        get: (name: string) => name === 'agent'
+          ? { getInstanceId: () => 'test-agent' } : name === 'context_budget' ? budgets : undefined,
+      } as unknown as ServiceRegistry);
+      try {
+        const manager = new ToolResultManager(tokens);
+        const output = 'line of output\n'.repeat(500);
+        // This fits after charging each cost once but not after double-charging
+        // the fixed system/calibration cost, as the old implementation did.
+        const available = 32_768 - tokens.getCurrentTokenCount() - Math.floor(32_768 * 0.1);
+        expect(tokens.estimateTokens(output)).toBeLessThan((available - budget.requestOnlyOverhead) * 0.2);
+        expect(tokens.estimateTokens(output)).toBeGreaterThan(Math.max(200,
+          (available - budget.fixedOverhead) * 0.2));
+        expect(await manager.processToolResult('read', output)).toBe(output);
+      } finally {
+        registry.mockRestore();
+      }
+    });
+
     it('should provide bash-specific guidance when truncating bash output', async () => {
       // Create a very long bash output to trigger truncation
       const longOutput = 'line\n'.repeat(1000); // ~1000 lines

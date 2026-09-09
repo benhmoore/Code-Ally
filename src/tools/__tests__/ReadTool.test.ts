@@ -366,7 +366,7 @@ describe('ReadTool', () => {
       // Published per agent: agent-a above keeps the fallback, proving scoping.
       budgets.publish('agent-b', {
         contextWindow: 16_384, estimatedInput: 0, outputReserve: 2_048, safetyReserve: 819,
-        triggerBudget: 13_107, targetBudget: 10_800, fixedOverhead: 7_400, usableBudget: 5_707,
+        triggerBudget: 13_107, targetBudget: 10_800, fixedOverhead: 7_400, requestOnlyOverhead: 0, usableBudget: 5_707,
         domainBudget: 3_424, retainedTailBudget: 2_054, checkpointBudget: 1_370,
         maxToolResultTokens: 2_054, shouldCompact: false,
       });
@@ -391,7 +391,7 @@ describe('ReadTool', () => {
       } as any);
       budgets.publish('agent-a', {
         contextWindow: 16_384, estimatedInput: 0, outputReserve: 2_048, safetyReserve: 819,
-        triggerBudget: 13_107, targetBudget: 10_800, fixedOverhead: 3_450, usableBudget: 9_657,
+        triggerBudget: 13_107, targetBudget: 10_800, fixedOverhead: 3_450, requestOnlyOverhead: 0, usableBudget: 9_657,
         domainBudget: 5_794, retainedTailBudget: 3_476, checkpointBudget: 2_318,
         maxToolResultTokens: 1_738, shouldCompact: false,
       });

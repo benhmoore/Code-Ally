@@ -367,22 +367,21 @@ export class ToolResultManager {
     const totalContext = this.tokenManager.getContextSize();
     const usedTokens = this.tokenManager.getCurrentTokenCount();
     const bufferTokens = Math.floor(totalContext * TOKEN_MANAGEMENT.SAFETY_BUFFER_PERCENT); // 10% buffer for safety
-    // The token count covers messages only. Fixed request overhead (system
-    // prompt + tool schemas + dynamic context) is charged on every request and
-    // must come off the top, or "remaining" overstates the truth by thousands
-    // of tokens on a small window.
-    const overhead = this.getFixedOverhead();
+    // The calibrated message count already includes the system message and
+    // provider calibration. Charge only schemas and dynamic request context
+    // here; subtracting fixedOverhead would charge those included costs twice.
+    const overhead = this.getRequestOnlyOverhead();
 
     return Math.max(0, totalContext - usedTokens - bufferTokens - overhead);
   }
 
-  /** Fixed per-request overhead published by the owning agent, if known. */
-  private getFixedOverhead(): number {
+  /** Costs outside the calibrated message count, published by the owning agent. */
+  private getRequestOnlyOverhead(): number {
     try {
       const registry = ServiceRegistry.getInstance();
       const agentId = registry.get('agent')?.getInstanceId?.();
       if (!agentId) return 0;
-      return registry.get('context_budget')?.get(agentId)?.fixedOverhead ?? 0;
+      return registry.get('context_budget')?.get(agentId)?.requestOnlyOverhead ?? 0;
     } catch {
       return 0;
     }
