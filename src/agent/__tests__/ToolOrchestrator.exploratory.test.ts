@@ -302,6 +302,41 @@ describe('ToolOrchestrator Exploratory Tracking', () => {
     });
   });
 
+  describe('Tool result deduplication eligibility', () => {
+    it('deduplicates successful exploratory observations', async () => {
+      const tokenManager = mockAgent.getTokenManager();
+
+      await (orchestrator as any).processToolResult(
+        createToolCall('read'),
+        { success: true, error: '', content: 'same observation' },
+      );
+
+      expect(tokenManager.trackToolResult).toHaveBeenCalledOnce();
+    });
+
+    it('preserves repeated exploratory failures as independent evidence', async () => {
+      const tokenManager = mockAgent.getTokenManager();
+
+      await (orchestrator as any).processToolResult(
+        createToolCall('read'),
+        { success: false, error: 'read failed', error_type: 'file_error' },
+      );
+
+      expect(tokenManager.trackToolResult).not.toHaveBeenCalled();
+    });
+
+    it('preserves successful state-changing results as independent evidence', async () => {
+      const tokenManager = mockAgent.getTokenManager();
+
+      await (orchestrator as any).processToolResult(
+        createToolCall('write'),
+        { success: true, error: '', content: 'file written' },
+      );
+
+      expect(tokenManager.trackToolResult).not.toHaveBeenCalled();
+    });
+  });
+
   describe('Specialized agent handling', () => {
     it('should skip injection for specialized agents', () => {
       // Create orchestrator with specialized agent config

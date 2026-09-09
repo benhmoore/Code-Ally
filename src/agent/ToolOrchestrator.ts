@@ -1283,11 +1283,17 @@ export class ToolOrchestrator {
     // Check if this is an ephemeral read
     const isEphemeral = (result as any)._ephemeral === true;
 
-    // Skip duplicate detection for ephemeral reads (they're temporary anyway)
+    // Deduplication is a context-saving optimization for repeated successful
+    // observations. Errors are evidence about an individual attempt, and
+    // state-changing tools are evidence about an individual effect; replacing
+    // either with a reference can falsely imply that the current call did not
+    // run or failed for the same reason as an earlier call.
+    const tool = this.toolManager.getTool(toolCall.function.name);
+    const canDeduplicate = result.success && tool?.isExploratoryTool && !isEphemeral;
     const tokenManager = this.agent.getTokenManager();
-    const previousCallId = isEphemeral
-      ? null
-      : tokenManager.trackToolResult(toolCall.id, formattedResult);
+    const previousCallId = canDeduplicate
+      ? tokenManager.trackToolResult(toolCall.id, formattedResult)
+      : null;
 
     let finalContent: string;
     if (previousCallId) {
