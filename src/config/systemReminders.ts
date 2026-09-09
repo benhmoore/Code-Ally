@@ -176,10 +176,9 @@ export const SYSTEM_REMINDERS = {
 
 Last user message you are responding to: "${originalPrompt}"
 
-Verify alignment:
-- Are you still working toward this goal?
-- Have you drifted into unrelated improvements?
-- Course-correct now if off-track, or continue if aligned.`,
+Silently compare your current work with that request. Do not spend a response
+restating alignment. If work has drifted, course-correct in the next action;
+otherwise continue directly.`,
       persist: false,
     },
   },
@@ -216,7 +215,7 @@ Verify alignment:
     // Cleaned up after turn since time state is dynamic and updated each turn
     HALFWAY: {
       text: (remaining: string) =>
-        `You're halfway through your allotted time (${remaining} remaining). Keep your exploration focused and efficient.`,
+        `You're halfway through your allotted time (${remaining} remaining). Prioritize the required implementation and verification; inspect only facts needed for the next action.`,
       persist: false,
     },
 
@@ -225,7 +224,7 @@ Verify alignment:
     // Cleaned up after turn since time state is dynamic and updated each turn
     WARNING_75: {
       text: (remaining: string, percentRemaining: number) =>
-        `⏰ You have ${remaining} left (${percentRemaining}% remaining). Start wrapping up your exploration.`,
+        `⏰ You have ${remaining} left (${percentRemaining}% remaining). Stop broad exploration. Finish a coherent verified result, or preserve and report the exact unfinished state.`,
       persist: false,
     },
 

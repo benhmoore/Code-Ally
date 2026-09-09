@@ -358,13 +358,12 @@ describe('Checkpoint Reminder System', () => {
       expect(checkpoint).toMatch(/".*"/);
     });
 
-    it('should include verification questions', () => {
+    it('should request silent alignment without eliciting status prose', () => {
       const checkpoint = agent.generateCheckpointReminder();
 
-      expect(checkpoint).toContain('Verify alignment:');
-      expect(checkpoint).toContain('Are you still working toward this goal?');
-      expect(checkpoint).toContain('Have you drifted into unrelated improvements?');
-      expect(checkpoint).toContain('Course-correct now if off-track, or continue if aligned.');
+      expect(checkpoint).toContain('Silently compare your current work');
+      expect(checkpoint).toContain('Do not spend a response');
+      expect(checkpoint).toContain('course-correct in the next action');
     });
 
     it('should be firm but professional (no CAPS)', () => {
