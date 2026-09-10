@@ -16,7 +16,7 @@ export async function shutdownApplication(registry: ServiceRegistry): Promise<Er
     // Enqueue the recoverable interruption before agent cancellation can enqueue
     // a user-cancel transition. Process exit must not cancel the durable goal.
     attempt('durable run', () => registry.get('run_supervisor')?.interruptForShutdown('Owning Code-Ally process closed')),
-    attempt('primary agent', () => registry.get('agent')?.interrupt({ kind: 'user_cancel' })),
+    attempt('primary agent', () => registry.get('agent')?.stopAndDrain()),
     attempt('background watchers', () => registry.get('background_task_registry')?.shutdown()),
     attempt('background shells', () => registry.get('bash_process_manager')?.shutdown()),
     attempt('background agents', () => registry.get('background_agent_manager')?.shutdown()),

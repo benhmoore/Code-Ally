@@ -21,6 +21,24 @@ describe('Agent - Interruption Handling', () => {
   let activityStream: ActivityStream;
   let mockConfig: Config;
 
+  it.each([false, true])('drains the admitted turn before cleanup (turn failure: %s)', async fails => {
+    let finish!: () => void;
+    vi.spyOn(agent as any, 'executeMessageTurn').mockImplementation(() => new Promise<string>((resolve, reject) => {
+      finish = () => fails ? reject(new Error('turn failed')) : resolve('done');
+    }));
+    const turn = agent.sendMessage('work').catch(error => error);
+    const cleanup = agent.cleanup();
+    expect(agent.cleanup()).toBe(cleanup);
+    expect(mockModelClient.close).not.toHaveBeenCalled();
+    await expect(agent.sendMessage('late work')).rejects.toThrow('closing');
+    expect(() => agent.resetForReuse()).toThrow('active or closing');
+    finish();
+    await turn;
+    await cleanup;
+    expect(agent.isProcessing()).toBe(false);
+    expect(mockModelClient.close).toHaveBeenCalledOnce();
+  });
+
   beforeEach(() => {
     // Create mock config
     mockConfig = {

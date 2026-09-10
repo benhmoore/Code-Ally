@@ -13,7 +13,7 @@ function fixture() {
   const registryShutdown = operation('registry');
   const services = new Map<string, unknown>([
     ['run_supervisor', { interruptForShutdown: run }],
-    ['agent', { interrupt: agent }],
+    ['agent', { stopAndDrain: agent }],
     ['background_task_registry', { shutdown: watchers }],
     ['bash_process_manager', { shutdown: shells }],
     ['background_agent_manager', { shutdown: agents }],

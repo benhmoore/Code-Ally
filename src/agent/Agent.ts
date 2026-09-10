@@ -255,6 +255,9 @@ export class Agent {
   private activeExecutionContext: AgentExecutionContext = {};
   /** Synchronous, whole-turn admission guard; broader than an in-flight model request. */
   private turnAdmissionActive = false;
+  private turnCompletion: Promise<void> = Promise.resolve();
+  private closing = false;
+  private cleanupPromise?: Promise<void>;
   private nativeCompactionPending = false;
   private lastRequestFunctions: FunctionDefinition[] = [];
   /** Advertisement of tools whose schemas were withheld from the last request. */
@@ -829,6 +832,7 @@ export class Agent {
    * System prompts and execution contexts are regenerated fresh on each invocation.
    */
   resetForReuse(): void {
+    if (this.turnAdmissionActive || this.closing) throw new Error('Cannot reuse an active or closing agent');
     // Clear conversation history (includes checkpoint tracking and token count)
     this.clearConversationHistory();
 
@@ -963,6 +967,7 @@ export class Agent {
     executionContext?: AgentExecutionContext,
     images?: string[]
   ): Promise<string> {
+    if (this.closing) throw new Error('Agent is closing and cannot admit a new turn');
     if (this.turnAdmissionActive) {
       throw new Error('Agent is already processing a turn; submit this message as an interjection instead.');
     }
@@ -971,19 +976,22 @@ export class Agent {
     // part of the turn too; allowing another sendMessage during either phase
     // corrupts the shared interruption, context, and lifecycle state.
     this.turnAdmissionActive = true;
-    this.interruptionManager.reset();
-    this.invocationState.requestInProgress = true;
-    this.invocationState.agentEndEmitted = false;
-
+    let finishTurn!: () => void;
+    this.turnCompletion = new Promise<void>(resolve => { finishTurn = resolve; });
     try {
+      this.interruptionManager.reset();
+      this.invocationState.requestInProgress = true;
+      this.invocationState.agentEndEmitted = false;
       return await this.executeMessageTurn(message, executionContext, images);
     } finally {
       // executeMessageTurn owns normal cleanup. This covers failures during its
       // preparation phase, before the existing lifecycle try/finally begins.
-      if (this.invocationState.requestInProgress) {
-        this.cleanupRequestState();
+      try {
+        if (this.invocationState.requestInProgress) this.cleanupRequestState();
+      } finally {
+        this.turnAdmissionActive = false;
+        finishTurn();
       }
-      this.turnAdmissionActive = false;
     }
   }
 
@@ -2857,8 +2865,15 @@ export class Agent {
    * NOTE: Subagents share the ModelClient with the main agent, so they should
    * NOT close it. Only the main agent should close the shared client.
    */
-  async cleanup(): Promise<void> {
+  cleanup(): Promise<void> {
+    this.closing = true;
+    this.cleanupPromise ??= this.performCleanup();
+    return this.cleanupPromise;
+  }
+
+  private async performCleanup(): Promise<void> {
     logger.debug('[AGENT_CLEANUP]', this.instanceId, 'Cleanup started');
+    await this.stopAndDrain();
 
     // Stop activity monitoring
     this.stopActivityMonitoring();
@@ -2898,5 +2913,12 @@ export class Agent {
     }
 
     logger.debug('[AGENT_CLEANUP]', this.instanceId, 'Cleanup completed');
+  }
+
+  /** Stop admission and await the entire admitted turn, including final bookkeeping. */
+  async stopAndDrain(): Promise<void> {
+    this.closing = true;
+    this.interrupt({ kind: 'user_cancel' });
+    await this.turnCompletion;
   }
 }
