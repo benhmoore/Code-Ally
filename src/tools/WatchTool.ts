@@ -19,7 +19,7 @@ import { ToolCapability } from './ToolCapability.js';
 import { ToolResult, FunctionDefinition } from '../types/index.js';
 import { ActivityStream } from '../services/ActivityStream.js';
 import { ServiceRegistry } from '../services/ServiceRegistry.js';
-import { spawnBashCommand } from '../utils/bashProcess.js';
+import { spawnBashCommand, waitForBashClose } from '../utils/bashProcess.js';
 
 const DEFAULT_INTERVAL_SECONDS = 10;
 const DEFAULT_TIMEOUT_SECONDS = 1800; // 30 minutes
@@ -197,7 +197,8 @@ moment it's satisfied; otherwise check it with wait or on your next turn.`;
           } catch { return false; }
         };
       case 'shell':
-        return (signal) => new Promise<boolean>((resolve) => {
+        return async (signal) => {
+          if (signal.aborted) return false;
           const child = spawnBashCommand(target, {
             stdio: 'ignore',
             detached: process.platform !== 'win32',
@@ -215,26 +216,8 @@ moment it's satisfied; otherwise check it with wait or on your next turn.`;
               VISUAL: 'false',
             },
           });
-          let done = false;
-          const finish = (value: boolean) => {
-            if (done) return;
-            done = true;
-            signal.removeEventListener('abort', abort);
-            resolve(value);
-          };
-          const abort = () => {
-            if (child.pid && process.platform !== 'win32') {
-              try { process.kill(-child.pid, 'SIGTERM'); } catch { child.kill('SIGTERM'); }
-            } else {
-              child.kill('SIGTERM');
-            }
-            finish(false);
-          };
-          if (signal.aborted) abort();
-          else signal.addEventListener('abort', abort, { once: true });
-          child.on('close', (code) => finish(code === 0));
-          child.on('error', () => finish(false));
-        });
+          return await waitForBashClose(child, signal) === 0;
+        };
     }
   }
 

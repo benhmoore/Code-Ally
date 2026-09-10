@@ -10,7 +10,7 @@ function processInfo(overrides: Partial<ProcessInfo> = {}): ProcessInfo {
     id: 'shell-test',
     pid: 12345,
     command: 'npm run dev',
-    process: { kill: vi.fn(), exitCode: null, signalCode: null } as any,
+    process: { pid: 12345, kill: vi.fn(), exitCode: null, signalCode: null } as any,
     outputBuffer: new CircularBuffer(),
     startTime: Date.now() - 1_000,
     status: 'running',

@@ -8,6 +8,7 @@
 import { ChildProcess } from 'child_process';
 import { logger } from './Logger.js';
 import { formatDuration } from '../ui/utils/timeUtils.js';
+import { signalBashProcess } from '../utils/bashProcess.js';
 
 /**
  * Circular buffer for storing lines of output with automatic overflow handling
@@ -411,19 +412,7 @@ export class BashProcessManager {
   }
 
   private signalProcessGroup(info: ProcessInfo, signal: NodeJS.Signals): boolean {
-    if (process.platform !== 'win32' && info.pid > 0) {
-      try {
-        process.kill(-info.pid, signal);
-        return true;
-      } catch (error) {
-        // Fall back to the direct child handle for spawn modes/platforms where
-        // no process group exists. A false return means there is no live target.
-        if ((error as NodeJS.ErrnoException).code !== 'ESRCH') {
-          logger.debug(`[BashProcessManager] Process-group signal failed for ${info.id}; trying child handle`);
-        }
-      }
-    }
-    return info.process.kill(signal);
+    return signalBashProcess(info.process, signal);
   }
 
   /**
