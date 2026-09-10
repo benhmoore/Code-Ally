@@ -24,6 +24,35 @@ function fakeStream() {
 }
 
 describe('BackgroundTaskRegistry', () => {
+  it.each(['cancel', 'deadline', 'check timeout'] as const)('does not accept a late predicate success after %s', async boundary => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'performance'] });
+    const stream = fakeStream();
+    const registry = new BackgroundTaskRegistry(fakeAgentManager(), fakeBashManager(), stream);
+    let finish!: (value: boolean) => void;
+    let signal!: AbortSignal;
+    const check = vi.fn((input: AbortSignal) => {
+      signal = input;
+      return new Promise<boolean>(resolve => { finish = resolve; });
+    });
+    const task = registry.createWatcher({ description: 'delayed success', intervalMs: 1000,
+      timeoutMs: boundary === 'check timeout' ? 10000 : 100, watched: true, check });
+    try {
+      if (boundary === 'cancel') registry.cancelWatcher(task.id);
+      else await vi.advanceTimersByTimeAsync(boundary === 'deadline' ? 100 : 1000);
+      expect(signal.aborted).toBe(true);
+      finish(true);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(registry.get(task.id)?.status).toBe(boundary === 'cancel' ? 'cancelled' : boundary === 'deadline' ? 'error' : 'running');
+      expect(registry.get(task.id)?.result).toBeNull();
+      expect(check).toHaveBeenCalledTimes(1);
+      expect(stream.emit).toHaveBeenCalledTimes(boundary === 'check timeout' ? 0 : 1);
+    } finally {
+      registry.cancelWatcher(task.id);
+      finish(true);
+      await registry.shutdown();
+      vi.useRealTimers();
+    }
+  });
   it('retains a required watcher result until delivery even if its wake preference is cleared', async () => {
     const registry = new BackgroundTaskRegistry(fakeAgentManager(), fakeBashManager(), fakeStream());
     const task = registry.createWatcher({ description: 'ready', intervalMs: 1, timeoutMs: 100, watched: true, check: async () => true });

@@ -72,7 +72,7 @@ export interface WatcherSpec {
   timeoutMs: number;
   /** Auto-wake the idle main agent when satisfied */
   watched: boolean;
-  /** Predicate evaluated each interval; true === condition satisfied */
+  /** Predicate evaluated serially; must settle and clean up when aborted. */
   check: (signal: AbortSignal) => Promise<boolean>;
 }
 
@@ -296,13 +296,17 @@ export class BackgroundTaskRegistry {
       const deadline = performance.now() + spec.timeoutMs;
       while (!cancelled && performance.now() < deadline) {
         const remaining = Math.max(1, deadline - performance.now());
-        const checkTimeoutMs = Math.max(1_000, Math.min(30_000, spec.intervalMs, remaining));
+        const checkTimeoutMs = Math.min(remaining, Math.max(1_000, Math.min(30_000, spec.intervalMs)));
         const checkController = new AbortController();
         const forwardAbort = () => checkController.abort();
         controller.signal.addEventListener('abort', forwardAbort, { once: true });
         const checkTimer = setTimeout(() => checkController.abort(), checkTimeoutMs);
         try {
-          if (await spec.check(checkController.signal)) {
+          const satisfied = await spec.check(checkController.signal);
+          // Cancellation/deadlines revoke this check's authority to satisfy the
+          // watcher, even if the predicate completes successfully during cleanup.
+          // Await cleanup rather than detaching work and overlapping future polls.
+          if (satisfied && !checkController.signal.aborted && performance.now() < deadline) {
             task.status = 'done';
             task.result = `Condition satisfied: ${spec.description}`;
             break;
