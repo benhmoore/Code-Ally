@@ -18,6 +18,7 @@ import { ActivityEventType, IService } from '../types/index.js';
 import type { ActivityStream } from './ActivityStream.js';
 import { generateShortId } from '../utils/id.js';
 import { logger } from './Logger.js';
+import type { CommandRule, RunAuthorizationPolicy } from '../security/RunAuthorizationPolicy.js';
 import { atomicWriteFile } from '../utils/atomicFile.js';
 import { migrateRecord, stampVersion, SchemaTooNewError } from '../utils/versionedStore.js';
 import { SCHEDULED_TASK_SCHEMA } from '../config/schemas.js';
@@ -62,22 +63,13 @@ export type CreateScheduledTaskOnceSchedule = {
   grace_minutes?: number;
 };
 
-export type ScheduledCommandRule = {
-  /**
-   * Only literal match kinds exist. There is deliberately no `regex` kind:
-   * an allow-rule expressed as a regex is fail-open (`.*` grants everything),
-   * and the matcher in TrustManager treats any unrecognized kind as no match.
-   */
-  match: 'exact' | 'prefix';
-  value: string;
-};
-
-export interface ScheduledTaskPermissionPolicy {
-  allowed_tools?: string[];
-  allowed_bash_commands?: ScheduledCommandRule[];
-  /** Regex denials are fail-closed (a broken/broad pattern only denies more). */
-  denied_bash_patterns?: string[];
-}
+/**
+ * A scheduled task policy is a run authorization policy installed strictly:
+ * the shape is shared with `--allowed-tools` / `--disallowed-tools`, only the
+ * treatment of an unmatched call differs. See `RunAuthorizationPolicy`.
+ */
+export type ScheduledCommandRule = CommandRule;
+export type ScheduledTaskPermissionPolicy = RunAuthorizationPolicy;
 
 /**
  * The closed, code-owned set of permission policies a scheduled task may run
