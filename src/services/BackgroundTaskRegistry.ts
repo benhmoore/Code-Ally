@@ -25,6 +25,13 @@ import { logger } from './Logger.js';
 export type BackgroundTaskKind = 'agent' | 'shell' | 'watcher';
 export type BackgroundTaskStatus = 'running' | 'done' | 'error' | 'cancelled';
 
+export class MissingBackgroundTasksError extends Error {
+  constructor(readonly taskIds: readonly string[]) {
+    super(`Background task state is unavailable: ${taskIds.join(', ')}`);
+    this.name = 'MissingBackgroundTasksError';
+  }
+}
+
 export interface BackgroundTask {
   id: string;
   kind: BackgroundTaskKind;
@@ -211,23 +218,23 @@ export class BackgroundTaskRegistry {
     const pollMs = opts.pollMs ?? 5000;
     const deadline = Date.now() + opts.timeoutMs;
 
-    const targetIds = (): string[] =>
-      target === 'all'
-        ? this.list().filter((t) => t.status === 'running').map((t) => t.id)
-        : target;
-
-    const ids = targetIds();
-    const settled = (): boolean =>
-      ids.every((id) => {
-        const t = this.get(id);
-        return !t || t.status !== 'running';
-      });
-
-    while (!settled() && Date.now() < deadline && !opts.signal?.aborted) {
+    const ids = [...new Set(target === 'all'
+      ? this.list().filter(t => t.status === 'running').map(t => t.id)
+      : target)];
+    while (true) {
+      const tasks: BackgroundTask[] = [];
+      const missing: string[] = [];
+      for (const id of ids) {
+        const task = this.get(id);
+        if (task) tasks.push(task);
+        else missing.push(id);
+      }
+      // Disappearance is not completion. Return only a snapshot that accounts
+      // for every requested dependency, including at timeout or interruption.
+      if (missing.length) throw new MissingBackgroundTasksError(missing);
+      if (tasks.every(task => task.status !== 'running') || Date.now() >= deadline || opts.signal?.aborted) return tasks;
       await abortableDelay(Math.min(pollMs, Math.max(1, deadline - Date.now())), opts.signal);
     }
-
-    return ids.map((id) => this.get(id)).filter((t): t is BackgroundTask => !!t);
   }
 
   /**

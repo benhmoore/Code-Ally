@@ -14,7 +14,7 @@ import { BaseTool } from './BaseTool.js';
 import { ToolResult, FunctionDefinition, ToolExecutionContext } from '../types/index.js';
 import { ActivityStream } from '../services/ActivityStream.js';
 import { ServiceRegistry } from '../services/ServiceRegistry.js';
-import { BackgroundTask } from '../services/BackgroundTaskRegistry.js';
+import { BackgroundTask, MissingBackgroundTasksError } from '../services/BackgroundTaskRegistry.js';
 import { formatDuration } from '../ui/utils/timeUtils.js';
 
 const DEFAULT_TIMEOUT_SECONDS = 300; // 5 minutes
@@ -99,25 +99,20 @@ Returns results inline once they finish (or partial state on timeout).`;
 
     const target: string[] | 'all' = ids ?? 'all';
 
-    // Validate explicit ids exist.
-    if (ids) {
-      const missing = ids.filter((id) => !taskRegistry.get(id));
-      if (missing.length === ids.length) {
-        return this.formatErrorResponse(
-          `No matching background tasks: ${missing.join(', ')}`,
-          'user_error',
-          'They may have already finished. Check the task ids from when you started them.'
-        );
-      }
+    let results: BackgroundTask[];
+    try {
+      results = await taskRegistry.waitFor(target, {
+        timeoutMs: timeoutSeconds * 1000,
+        // An interjection should release this passive join, not terminate the
+        // background task. Other tools continue to observe only their hard-cancel
+        // signal through BaseTool.currentAbortSignal.
+        signal: executionContext?.turnInterruptionSignal ?? this.currentAbortSignal,
+      });
+    } catch (error) {
+      if (!(error instanceof MissingBackgroundTasksError)) throw error;
+      return this.formatErrorResponse(error.message, 'user_error',
+        'Completion has not been established for every requested task. Inspect the task IDs and existing work before deciding whether to restart anything.');
     }
-
-    const results = await taskRegistry.waitFor(target, {
-      timeoutMs: timeoutSeconds * 1000,
-      // An interjection should release this passive join, not terminate the
-      // background task. Other tools continue to observe only their hard-cancel
-      // signal through BaseTool.currentAbortSignal.
-      signal: executionContext?.turnInterruptionSignal ?? this.currentAbortSignal,
-    });
     taskRegistry.acknowledgeResults(results);
 
     const aborted = executionContext?.turnInterruptionSignal?.aborted

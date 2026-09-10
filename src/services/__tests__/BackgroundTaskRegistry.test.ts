@@ -6,7 +6,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { BackgroundTaskRegistry } from '../BackgroundTaskRegistry.js';
+import { BackgroundTaskRegistry, MissingBackgroundTasksError } from '../BackgroundTaskRegistry.js';
 
 function fakeAgentManager(tasks: any[] = []) {
   return {
@@ -23,6 +23,23 @@ function fakeStream() {
 }
 
 describe('BackgroundTaskRegistry', () => {
+  it('rejects partially missing dependencies instead of reporting the surviving task as complete', async () => {
+    const reg = new BackgroundTaskRegistry(fakeAgentManager([
+      { id: 'done', agentType: 'x', status: 'done', startTime: 1, endTime: 2, result: 'ok', error: null },
+    ]), fakeBashManager(), fakeStream());
+    await expect(reg.waitFor(['done', 'missing'], { timeoutMs: 1000 })).rejects.toMatchObject({ taskIds: ['missing'] });
+  });
+
+  it.each([false, true])('does not turn a disappearing dependency into success (all=%s)', async all => {
+    const tasks = [{ id: 'pending', agentType: 'x', status: 'running', startTime: 1, endTime: null, result: null, error: null }];
+    const reg = new BackgroundTaskRegistry(fakeAgentManager(tasks), fakeBashManager(), fakeStream());
+    const controller = new AbortController();
+    const waiting = reg.waitFor(all ? 'all' : ['pending'], { timeoutMs: 10000, signal: controller.signal });
+    const checked = expect(waiting).rejects.toBeInstanceOf(MissingBackgroundTasksError);
+    tasks.splice(0);
+    controller.abort();
+    await checked;
+  });
   it('presents a unified view across agents and shells', () => {
     const agents = [{ id: 'agent-1', agentType: 'explore', status: 'running', startTime: 1, endTime: null, result: null, error: null }];
     const shells = [{ id: 'shell-1', command: 'npm run dev', status: 'running', exitCode: null, exitSignal: null, terminationSignal: null, blocksCompletion: false, startTime: 2, exitTime: null }];

@@ -2,8 +2,20 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ActivityStream } from '../../services/ActivityStream.js';
 import { ServiceRegistry } from '../../services/ServiceRegistry.js';
 import { WaitTool } from '../WaitTool.js';
+import { MissingBackgroundTasksError } from '../../services/BackgroundTaskRegistry.js';
 
 describe('WaitTool', () => {
+  it('reports a lost dependency without acknowledging partial results', async () => {
+    const acknowledgeResults = vi.fn();
+    ServiceRegistry.getInstance().registerInstance('background_task_registry', {
+      waitFor: vi.fn().mockRejectedValue(new MissingBackgroundTasksError(['lost'])),
+      acknowledgeResults,
+    } as any);
+    const result = await new WaitTool(new ActivityStream()).execute({ task_ids: ['done', 'lost'] });
+    expect(result.success).toBe(false);
+    expect(result.error).toContain('lost');
+    expect(acknowledgeResults).not.toHaveBeenCalled();
+  });
   beforeEach(async () => {
     await ServiceRegistry.getInstance().shutdown();
   });
