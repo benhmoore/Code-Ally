@@ -35,17 +35,26 @@ describe('ReadHistoryTool', () => {
       let args: Record<string, unknown> = {};
       let recovered = '';
       let complete = false;
+      let appended = false;
       for (let page = 0; page < 100; page++) {
         const result = await tool.execute(args, 'history-page', undefined, false, false, { registryScope: scope });
         expect(result.success).toBe(true);
         expect(tokenCounter.count(JSON.stringify(toModelToolResult(result)))).toBeLessThanOrEqual(300);
         if (result.message_id === 'original') recovered += result.content;
+        if (!appended && result.message_id === 'original' && result.next_offset !== null) {
+          // New input must not redirect a partially read older message.
+          expect(await writer.saveSession('history', [], [...messages,
+            { id: 'concurrent', role: 'user', content: 'New input during retrieval.', timestamp: 1001 },
+          ])).toBe(true);
+          appended = true;
+        }
         if (result.next_before === null) { complete = true; break; }
         args = { session_id: result.session_id, before: result.next_before,
           ...(result.next_offset !== null ? { offset: result.next_offset, message_id: result.message_id } : {}) };
       }
       expect(complete).toBe(true);
       expect(recovered).toBe(original);
+      expect(appended).toBe(true);
       const rejected = await tool.execute({ session_id: 'another-session', before: 1 }, 'stale', undefined, false, false, { registryScope: scope });
       expect(rejected.success).toBe(false);
       const tiny = await tool.execute({}, 'tiny', undefined, false, false, {
@@ -57,5 +66,21 @@ describe('ReadHistoryTool', () => {
         'changed', undefined, false, false, { registryScope: scope });
       expect(staleMessage.success).toBe(false);
     } finally { await fs.rm(dir, { recursive: true, force: true }); }
+  });
+
+  it('rejects results if the active session changes while loading an archive page', async () => {
+    let active = 'first';
+    const sessions = {
+      getCurrentSession: () => active,
+      getTranscriptPage: async () => {
+        active = 'second';
+        return { messages: [{ id: 'old', role: 'user', content: 'Old session request' }], nextCursor: null, totalMessages: 1 };
+      },
+    };
+    const scope = { get: (name: string) => name === 'session_manager' ? sessions : null };
+    const result = await new ReadHistoryTool(new ActivityStream()).execute({}, 'page', undefined, false, false, { registryScope: scope });
+    expect(result.success).toBe(false);
+    expect(result.error).toContain('session changed');
+    expect(JSON.stringify(result)).not.toContain('Old session request');
   });
 });
