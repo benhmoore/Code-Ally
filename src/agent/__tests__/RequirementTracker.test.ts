@@ -567,4 +567,21 @@ describe('RequirementValidator', () => {
       expect(calls).toEqual(['tool1']);
     });
   });
+
+  describe('tool name normalization', () => {
+    it('should satisfy a Claude-spelled requirement from an Ally tool call', () => {
+      validator.setRequirements({ required_tools_all: ['Read', 'Edit'] });
+      validator.recordToolCall('read', true);
+      validator.recordToolCall('apply-patch', true);
+
+      expect(validator.checkRequirements().met).toBe(true);
+    });
+
+    it('should satisfy an Ally-spelled requirement from a Claude tool call', () => {
+      validator.setRequirements({ required_tools_one_of: ['apply-patch'] });
+      validator.recordToolCall('Edit', true);
+
+      expect(validator.checkRequirements().met).toBe(true);
+    });
+  });
 });

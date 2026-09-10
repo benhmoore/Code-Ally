@@ -103,6 +103,31 @@ describe('selectExposedTools', () => {
     const exposedNames = result.exposed.map(d => d.function.name);
     for (const core of CORE_TOOL_NAMES) expect(exposedNames).toContain(core);
   });
+
+  it('drops disallowed tools from the surface, core tools included', () => {
+    const definitions = [...coreDefs, definition('web-fetch'), definition(TOOL_SEARCH_TOOL_NAME)];
+
+    const result = selectExposedTools({
+      definitions, schemaBudget: 1_000_000, estimateTokens: estimate,
+      disallowed: ['Bash', 'web-*'],
+    });
+
+    const exposedNames = result.exposed.map(d => d.function.name);
+    expect(exposedNames).not.toContain('bash');
+    expect(exposedNames).not.toContain('web-fetch');
+    expect(exposedNames).toContain('read');
+  });
+
+  it('keeps disallowed tools out of the deferred catalogue too', () => {
+    const definitions = [...coreDefs, ...mcpDefs, definition(TOOL_SEARCH_TOOL_NAME)];
+
+    const result = selectExposedTools({
+      definitions, schemaBudget: 200, estimateTokens: estimate,
+      disallowed: ['chrome_action_*'],
+    });
+
+    expect(result.deferred).toEqual([]);
+  });
 });
 
 describe('renderDeferredToolCatalogue', () => {

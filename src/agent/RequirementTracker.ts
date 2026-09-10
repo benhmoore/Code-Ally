@@ -10,6 +10,7 @@
  */
 
 import { logger } from '../services/Logger.js';
+import { normalizeToolName } from '../tools/toolNameAliases.js';
 
 /**
  * Agent requirements specification
@@ -170,7 +171,9 @@ export class RequirementValidator {
     }
 
     if (success) {
-      this.successfulToolCalls.add(toolName);
+      // Requirement lists are written by humans and may use either spelling,
+      // so both sides of the comparison are normalized.
+      this.successfulToolCalls.add(normalizeToolName(toolName));
       logger.debug('[REQUIREMENT_TRACKER]', this.instanceId, 'Recorded successful tool call:', toolName, '- Total successful calls:', this.successfulToolCalls.size);
     }
   }
@@ -205,7 +208,7 @@ export class RequirementValidator {
     // Check required_tools_one_of
     if (reqs.required_tools_one_of && reqs.required_tools_one_of.length > 0) {
       const hasOne = reqs.required_tools_one_of.some(toolName =>
-        this.successfulToolCalls.has(toolName)
+        this.successfulToolCalls.has(normalizeToolName(toolName))
       );
       if (!hasOne) {
         return {
@@ -218,7 +221,7 @@ export class RequirementValidator {
     // Check required_tools_all
     if (reqs.required_tools_all && reqs.required_tools_all.length > 0) {
       const missing = reqs.required_tools_all.filter(
-        toolName => !this.successfulToolCalls.has(toolName)
+        toolName => !this.successfulToolCalls.has(normalizeToolName(toolName))
       );
       if (missing.length > 0) {
         return {

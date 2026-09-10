@@ -1,4 +1,5 @@
 import type { FunctionDefinition } from '../types/index.js';
+import { matchesAnyToolGlob } from './toolNameAliases.js';
 
 /**
  * Decides which tool schemas are sent with a request.
@@ -53,6 +54,12 @@ export interface ToolExposureInput {
   activated?: readonly string[];
   /** Most recent batch explicitly requested through tool-search. */
   requested?: readonly string[];
+  /**
+   * Tool name globs the run authorization policy forbids. These are dropped
+   * from the surface entirely, catalogue included, so the model never sees a
+   * tool whose call would only be refused.
+   */
+  disallowed?: readonly string[];
   estimateTokens: (text: string) => number;
 }
 
@@ -80,7 +87,11 @@ function summarize(definition: FunctionDefinition): string {
 }
 
 export function selectExposedTools(input: ToolExposureInput): ToolExposureResult {
-  const { definitions, schemaBudget, estimateTokens } = input;
+  const { schemaBudget, estimateTokens } = input;
+  const disallowed = input.disallowed ?? [];
+  const definitions = disallowed.length === 0
+    ? input.definitions
+    : input.definitions.filter(d => !matchesAnyToolGlob(d.function.name, disallowed));
   const byName = new Map(definitions.map(definition => [definition.function.name, definition]));
   const searchTool = byName.get(TOOL_SEARCH_TOOL_NAME);
 
