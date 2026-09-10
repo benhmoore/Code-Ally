@@ -24,6 +24,28 @@ function fakeStream() {
 }
 
 describe('BackgroundTaskRegistry', () => {
+  it.each([-3600000, 3600000])('uses elapsed time for waits and watchers across a %i ms wall-clock adjustment', async adjustment => {
+    vi.useFakeTimers({ toFake: ['Date', 'performance', 'setTimeout', 'clearTimeout'] });
+    const reg = new BackgroundTaskRegistry(fakeAgentManager([
+      { id: 'pending', agentType: 'x', status: 'running', startTime: Date.now(), endTime: null, result: null, error: null },
+    ]), fakeBashManager(), fakeStream());
+    try {
+      let finished = false;
+      const waiting = reg.waitFor(['pending'], { timeoutMs: 100, pollMs: 10 }).then(() => { finished = true; });
+      const watcher = reg.createWatcher({ description: 'pending', intervalMs: 10, timeoutMs: 100, watched: false, check: async () => false });
+      vi.setSystemTime(Date.now() + adjustment);
+      await vi.advanceTimersByTimeAsync(90);
+      expect(finished).toBe(false);
+      expect(reg.get(watcher.id)?.status).toBe('running');
+      await vi.advanceTimersByTimeAsync(10);
+      expect(finished).toBe(true);
+      expect(reg.get(watcher.id)?.status).toBe('error');
+      await waiting;
+    } finally {
+      await reg.shutdown();
+      vi.useRealTimers();
+    }
+  });
   it('delivers shell output before releasing its dependency retention', async () => {
     const manager = new BashProcessManager(1);
     const outputBuffer = new CircularBuffer();

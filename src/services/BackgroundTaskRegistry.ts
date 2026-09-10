@@ -231,7 +231,8 @@ export class BackgroundTaskRegistry {
     // covers adapters whose state changes without an event while avoiding
     // hundreds of thousands of polls during multi-day waits.
     const pollMs = opts.pollMs ?? 5000;
-    const deadline = Date.now() + opts.timeoutMs;
+    // Duration budgets use a monotonic clock; wall time is only for timestamps.
+    const deadline = performance.now() + opts.timeoutMs;
 
     const ids = [...new Set(target === 'all'
       ? this.list().filter(t => t.status === 'running').map(t => t.id)
@@ -247,10 +248,10 @@ export class BackgroundTaskRegistry {
       // Disappearance is not completion. Return only a snapshot that accounts
       // for every requested dependency, including at timeout or interruption.
       if (missing.length) throw new MissingBackgroundTasksError(missing);
-      if (tasks.every(task => task.status !== 'running') || Date.now() >= deadline || opts.signal?.aborted) {
+      if (tasks.every(task => task.status !== 'running') || performance.now() >= deadline || opts.signal?.aborted) {
         return tasks.map(task => this.withOutput(task));
       }
-      await abortableDelay(Math.min(pollMs, Math.max(1, deadline - Date.now())), opts.signal);
+      await abortableDelay(Math.min(pollMs, Math.max(1, deadline - performance.now())), opts.signal);
     }
   }
 
@@ -281,9 +282,9 @@ export class BackgroundTaskRegistry {
     if (spec.watched) this.watchedIds.add(id);
 
     void (async () => {
-      const deadline = Date.now() + spec.timeoutMs;
-      while (!cancelled && Date.now() < deadline) {
-        const remaining = Math.max(1, deadline - Date.now());
+      const deadline = performance.now() + spec.timeoutMs;
+      while (!cancelled && performance.now() < deadline) {
+        const remaining = Math.max(1, deadline - performance.now());
         const checkTimeoutMs = Math.max(1_000, Math.min(30_000, spec.intervalMs, remaining));
         const checkController = new AbortController();
         const forwardAbort = () => checkController.abort();
@@ -302,7 +303,7 @@ export class BackgroundTaskRegistry {
           clearTimeout(checkTimer);
           controller.signal.removeEventListener('abort', forwardAbort);
         }
-        await abortableDelay(Math.min(spec.intervalMs, Math.max(0, deadline - Date.now())), controller.signal);
+        await abortableDelay(Math.min(spec.intervalMs, Math.max(0, deadline - performance.now())), controller.signal);
       }
       if (task.status === 'running') {
         if (cancelled) {
