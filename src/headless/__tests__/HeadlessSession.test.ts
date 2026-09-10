@@ -281,6 +281,74 @@ describe('HeadlessSession', () => {
     expect(out.events().filter(e => e.type === 'result')).toHaveLength(1);
   });
 
+  it('drains messages received during persistence as subsequent turns before closing', async () => {
+    const out = collector();
+    const stdin = new PassThrough();
+    const manager = sessionManagerStub();
+    let release!: () => void;
+    const saving = new Promise<void>(resolve => { release = resolve; });
+    vi.mocked(manager.saveSession).mockImplementationOnce(() => saving);
+    const interject = vi.spyOn(agent, 'addUserInterjection');
+    replies = ['First.', 'Second.', 'Third.'];
+    const run = (await session({
+      once: 'one', inputFormat: 'stream-json', outputFormat: 'stream-json', sessionId: 'save-boundary',
+    }, { stdin, stdout: out.stream, sessionManager: manager })).run();
+
+    await vi.waitFor(() => expect(manager.saveSession).toHaveBeenCalledTimes(1));
+    expect(agent.isProcessing()).toBe(false);
+    for (const content of ['two', 'three']) {
+      stdin.write(`${JSON.stringify({ type: 'user', message: { role: 'user', content } })}\n`);
+    }
+    stdin.end();
+    release();
+    await run;
+
+    expect(interject).not.toHaveBeenCalled();
+    const results = out.events().filter((e): e is Extract<WireEvent, { type: 'result' }> => e.type === 'result');
+    expect(results.map(r => [r.result, r.num_turns, r.subtype]))
+      .toEqual([['First.', 1, 'success'], ['Second.', 2, 'success'], ['Third.', 3, 'success']]);
+    expect(manager.saveSession).toHaveBeenCalledTimes(3);
+  });
+
+  it.each([false, true])('preserves the turn interruption state (%s) when interrupted during persistence', async interrupted => {
+    const out = collector();
+    const stdin = new PassThrough();
+    const manager = sessionManagerStub();
+    let release!: () => void;
+    const saving = new Promise<void>(resolve => { release = resolve; });
+    vi.mocked(manager.saveSession).mockImplementationOnce(() => saving);
+    const interrupt = vi.spyOn(agent, 'interrupt');
+    replies = interrupted ? [signal => new Promise<LLMResponse>(resolve => {
+      signal.addEventListener('abort', () =>
+        resolve({ content: '', tool_calls: [], interrupted: true }), { once: true });
+    })] : ['Done.'];
+    const run = (await session({
+      once: 'one', inputFormat: 'stream-json', outputFormat: 'stream-json', sessionId: 'interrupt-save',
+    }, { stdin, stdout: out.stream, sessionManager: manager })).run();
+
+    if (interrupted) {
+      await vi.waitFor(() => expect(modelClient.send).toHaveBeenCalled());
+      stdin.write(`${JSON.stringify({
+        type: 'control_request', request_id: 'early', request: { subtype: 'interrupt' },
+      })}\n`);
+    }
+    await vi.waitFor(() => expect(manager.saveSession).toHaveBeenCalledTimes(1));
+    stdin.write(`${JSON.stringify({
+      type: 'control_request', request_id: 'late', request: { subtype: 'interrupt' },
+    })}\n`);
+    stdin.end();
+    release();
+    await run;
+
+    expect(interrupt).toHaveBeenCalledTimes(interrupted ? 1 : 0);
+    expect(out.events()).toContainEqual(expect.objectContaining({
+      type: 'control_response', response: { subtype: 'success', request_id: 'late' },
+    }));
+    expect(out.events()).toContainEqual(expect.objectContaining({
+      type: 'result', subtype: interrupted ? 'error_during_execution' : 'success',
+    }));
+  });
+
   it('reports an interrupted turn then a successful wrap-up turn', async () => {
     const out = collector();
     const stdin = new PassThrough();

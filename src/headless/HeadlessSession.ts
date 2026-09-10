@@ -157,31 +157,44 @@ export class HeadlessSession {
     const { agent } = this.deps;
     let lastOutcome: RunOutcome | undefined;
     let active: Promise<void> | null = null;
+    const pending: string[] = [];
     let closed = false;
     let finish!: () => void;
     const finished = new Promise<void>(resolve => { finish = resolve; });
 
-    const startTurn = (message: string): void => {
+    const drain = (): void => {
+      if (active) return;
+      const message = pending.shift();
+      if (message === undefined) {
+        if (closed) finish();
+        return;
+      }
       active = this.runTurn(message)
         .then(outcome => { lastOutcome = outcome; })
         .finally(() => {
           active = null;
-          if (closed) finish();
+          drain();
         });
     };
 
     const input = new StreamJsonInput(this.deps.stdin ?? process.stdin, {
       onUser: text => {
-        if (active) {
+        // A headless turn also owns persistence and result publication, after
+        // the agent has stopped accepting interjections. Keep that finalization
+        // serial, but queue new work rather than appending it to a finished turn.
+        if (active && agent.isProcessing()) {
           agent.addUserInterjection(text);
           agent.interrupt({ kind: 'user_interjection' });
           return;
         }
-        startTurn(text);
+        pending.push(text);
+        drain();
       },
       onInterrupt: requestId => {
-        this.interruptedTurn = active !== null;
-        agent.interrupt();
+        if (active && agent.isProcessing()) {
+          this.interruptedTurn = true;
+          agent.interrupt();
+        }
         this.writer?.write({
           type: 'control_response',
           session_id: this.sessionId,
@@ -191,14 +204,20 @@ export class HeadlessSession {
       onError: error => { console.error('Error:', error.message); },
       onClose: () => {
         closed = true;
-        if (!active) finish();
+        drain();
       },
     });
 
+    // Admit the initial prompt before attaching input: a buffered stream must
+    // not start a competing turn ahead of --once.
+    if (this.options.once) pending.push(this.options.once);
+    drain();
     input.start();
-    if (this.options.once) startTurn(this.options.once);
-    await finished;
-    input.stop();
+    try {
+      await finished;
+    } finally {
+      input.stop();
+    }
 
     return lastOutcome ?? this.readOutcome();
   }

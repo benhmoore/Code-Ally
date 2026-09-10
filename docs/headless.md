@@ -81,6 +81,12 @@ A plain string `content` is also accepted. A message that arrives while a turn
 is running is delivered as an interjection into that turn; one that arrives
 while the session is idle starts a new turn.
 
+Once the agent has finished, the session saves and publishes that turn's result.
+Messages received during this finalization are queued as subsequent turns, in
+arrival order. Closing stdin drains this queue before the process exits. An
+interrupt received during finalization is acknowledged but does not change the
+finished turn's outcome.
+
 Interrupt the running turn:
 
 ```json
