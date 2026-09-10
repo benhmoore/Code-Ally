@@ -15,6 +15,9 @@ import { formatError } from '../utils/errorUtils.js';
 import { TOOL_LIMITS, TOOL_OUTPUT_ESTIMATES } from '../config/toolDefaults.js';
 import { rgPath } from '@vscode/ripgrep';
 import { spawn } from 'child_process';
+import { CONTEXT_SIZES, TOKEN_MANAGEMENT } from '../config/constants.js';
+import { tokenCounter } from '../services/TokenCounter.js';
+import { toModelToolResult } from '../utils/toolResultContent.js';
 import * as path from 'path';
 
 type OutputMode = 'files_with_matches' | 'content' | 'count';
@@ -54,7 +57,9 @@ For multi-step investigations with unknown scope, prefer explore() to preserve c
   /**
    * Validate GrepTool arguments
    */
-  validateArgs(args: Record<string, unknown>): { valid: boolean; error?: string; error_type?: string; suggestion?: string } | null {
+  validateArgs(
+    args: Record<string, unknown>
+  ): { valid: boolean; error?: string; error_type?: string; suggestion?: string } | null {
     // Note: Regex pattern validation is deferred to ripgrep execution
     // since JS RegExp and Rust regex have different syntax rules.
     // Invalid patterns will be caught and reported by ripgrep.
@@ -180,27 +185,18 @@ For multi-step investigations with unknown scope, prefer explore() to preserve c
     const pcre2 = Boolean(args.pcre2);
     const outputMode = (args.output_mode as OutputMode) || 'files_with_matches';
 
-    const linesAfter = Math.min(
-      Math.max(0, Number(args.after_context ?? args['-A']) || 0),
-      GrepTool.MAX_CONTEXT_LINES
-    );
+    const linesAfter = Math.min(Math.max(0, Number(args.after_context ?? args['-A']) || 0), GrepTool.MAX_CONTEXT_LINES);
     const linesBefore = Math.min(
       Math.max(0, Number(args.before_context ?? args['-B']) || 0),
       GrepTool.MAX_CONTEXT_LINES
     );
-    const linesContext = Math.min(
-      Math.max(0, Number(args.context ?? args['-C']) || 0),
-      GrepTool.MAX_CONTEXT_LINES
-    );
+    const linesContext = Math.min(Math.max(0, Number(args.context ?? args['-C']) || 0), GrepTool.MAX_CONTEXT_LINES);
 
     // If -C is provided, it overrides -A and -B
     const contextAfter = linesContext > 0 ? linesContext : linesAfter;
     const contextBefore = linesContext > 0 ? linesContext : linesBefore;
 
-    const maxResults = Math.min(
-      Number(args.max_results) || GrepTool.MAX_RESULTS,
-      GrepTool.MAX_RESULTS
-    );
+    const maxResults = Math.min(Number(args.max_results) || GrepTool.MAX_RESULTS, GrepTool.MAX_RESULTS);
 
     if (!pattern) {
       return this.formatErrorResponse(
@@ -222,27 +218,22 @@ For multi-step investigations with unknown scope, prefer explore() to preserve c
       if (focusManager && focusManager.isFocused()) {
         const validation = await focusManager.validatePathInFocus(absolutePath);
         if (!validation.success) {
-          return this.formatErrorResponse(
-            validation.message,
-            'permission_error'
-          );
+          return this.formatErrorResponse(validation.message, 'permission_error');
         }
       }
 
       // Check if path exists
       const validation = await validateExists(absolutePath);
       if (!validation.valid) {
-        return this.formatErrorResponse(
-          validation.error!,
-          'validation_error'
-        );
+        return this.formatErrorResponse(validation.error!, 'validation_error');
       }
 
       // Build ripgrep arguments
       const rgArgs: string[] = [
         '--json',
         '--no-ignore', // Don't use gitignore (we control filtering)
-        '-e', pattern,
+        '-e',
+        pattern,
       ];
 
       // Add case insensitive flag
@@ -309,94 +300,118 @@ For multi-step investigations with unknown scope, prefer explore() to preserve c
       }
 
       // Apply max_results limit globally
-      const matches = filteredMatches.slice(0, maxResults);
+      let matches = filteredMatches.slice(0, maxResults);
 
-      // Count statistics
-      const filesWithMatches = new Set<string>();
-      const fileCounts = new Map<string, number>();
+      const formatMatches = (matches: GrepMatch[]): ToolResult => {
+        // Count statistics
+        const filesWithMatches = new Set<string>();
+        const fileCounts = new Map<string, number>();
 
-      for (const match of matches) {
-        filesWithMatches.add(match.file);
-        fileCounts.set(match.file, (fileCounts.get(match.file) || 0) + 1);
-      }
+        for (const match of matches) {
+          filesWithMatches.add(match.file);
+          fileCounts.set(match.file, (fileCounts.get(match.file) || 0) + 1);
+        }
 
-      // Format results based on output mode
-      let content = '';
-      const responseData: any = {
-        output_mode: outputMode,
-        files_searched: filesWithMatches.size,
-        files_skipped: 0,
-        files_skipped_large: 0,
-        files_skipped_binary: 0,
-        files_skipped_error: 0,
+        // Format results based on output mode
+        let content = '';
+        const responseData: any = {
+          output_mode: outputMode,
+          files_searched: filesWithMatches.size,
+          files_skipped: 0,
+          files_skipped_large: 0,
+          files_skipped_binary: 0,
+          files_skipped_error: 0,
+        };
+
+        if (outputMode === 'files_with_matches') {
+          const fileList = Array.from(filesWithMatches);
+          content = fileList.join('\n');
+          responseData.files = fileList;
+          responseData.total_files = fileList.length;
+          responseData.limited_results = filteredMatches.length > matches.length;
+        } else if (outputMode === 'count') {
+          const countList: FileCount[] = Array.from(fileCounts.entries()).map(([file, count]) => ({ file, count }));
+
+          const contentLines = countList.map(fc => `${fc.count}:${fc.file}`);
+          content = contentLines.join('\n');
+          responseData.file_counts = countList;
+          responseData.total_files = countList.length;
+          responseData.total_matches = Array.from(fileCounts.values()).reduce((a, b) => a + b, 0);
+          responseData.limited_results = filteredMatches.length > matches.length;
+        } else {
+          // content mode - show matching lines with context
+          const contentLines: string[] = [];
+          for (const match of matches) {
+            // Add context before
+            if (match.before && match.before.length > 0) {
+              for (let i = 0; i < match.before.length; i++) {
+                const lineNum = match.line - match.before.length + i;
+                contentLines.push(`${match.file}:${lineNum}:${match.before[i]}`);
+              }
+            }
+            // Add matching line
+            contentLines.push(`${match.file}:${match.line}:${match.content}`);
+            // Add context after
+            if (match.after && match.after.length > 0) {
+              for (let i = 0; i < match.after.length; i++) {
+                const lineNum = match.line + i + 1;
+                contentLines.push(`${match.file}:${lineNum}:${match.after[i]}`);
+              }
+            }
+          }
+
+          content = contentLines.join('\n');
+          responseData.matches = matches;
+          responseData.total_matches = matches.length;
+          responseData.limited_results = filteredMatches.length > matches.length;
+
+          // Group matches by file for easier LLM navigation
+          const matchesByFile: Record<string, number> = {};
+          for (const match of matches) {
+            matchesByFile[match.file] = (matchesByFile[match.file] || 0) + 1;
+          }
+          responseData.matches_by_file = matchesByFile;
+        }
+
+        // Structured matches/files/counts are the model payload. The formatted
+        // duplicate belongs only to terminal rendering.
+        responseData.display_content = content;
+
+        return this.formatSuccessResponse(responseData);
       };
 
-      if (outputMode === 'files_with_matches') {
-        const fileList = Array.from(filesWithMatches);
-        content = fileList.join('\n');
-        responseData.files = fileList;
-        responseData.total_files = fileList.length;
-        responseData.limited_results = filteredMatches.length > maxResults;
-      } else if (outputMode === 'count') {
-        const countList: FileCount[] = Array.from(fileCounts.entries())
-          .map(([file, count]) => ({ file, count }));
-
-        const contentLines = countList.map((fc) => `${fc.count}:${fc.file}`);
-        content = contentLines.join('\n');
-        responseData.file_counts = countList;
-        responseData.total_files = countList.length;
-        responseData.total_matches = Array.from(fileCounts.values()).reduce((a, b) => a + b, 0);
-        responseData.limited_results = filteredMatches.length > maxResults;
-      } else {
-        // content mode - show matching lines with context
-        const contentLines: string[] = [];
-        for (const match of matches) {
-          // Add context before
-          if (match.before && match.before.length > 0) {
-            for (let i = 0; i < match.before.length; i++) {
-              const lineNum = match.line - match.before.length + i;
-              contentLines.push(`${match.file}:${lineNum}:${match.before[i]}`);
-            }
-          }
-          // Add matching line
-          contentLines.push(`${match.file}:${match.line}:${match.content}`);
-          // Add context after
-          if (match.after && match.after.length > 0) {
-            for (let i = 0; i < match.after.length; i++) {
-              const lineNum = match.line + i + 1;
-              contentLines.push(`${match.file}:${lineNum}:${match.after[i]}`);
-            }
-          }
+      const contextSize = registry.get('token_manager')?.getContextSize() ?? CONTEXT_SIZES.SMALL;
+      const budget = this.getOutputTokenAllowance(
+        Math.floor(contextSize * TOKEN_MANAGEMENT.READ_CONTEXT_MAX_PERCENT),
+        executionContext
+      );
+      let result = formatMatches(matches);
+      while (tokenCounter.count(JSON.stringify(toModelToolResult(result))) > budget) {
+        if (matches.length <= 1) {
+          return this.formatErrorResponse(
+            'Insufficient output budget for a complete search result.',
+            'validation_error',
+            'Narrow the search, reduce context lines, use files_with_matches, or issue fewer calls together.'
+          );
         }
-
-        content = contentLines.join('\n');
-        responseData.matches = matches;
-        responseData.total_matches = matches.length;
-        responseData.limited_results = filteredMatches.length > maxResults;
-
-        // Group matches by file for easier LLM navigation
-        const matchesByFile: Record<string, number> = {};
-        for (const match of matches) {
-          matchesByFile[match.file] = (matchesByFile[match.file] || 0) + 1;
-        }
-        responseData.matches_by_file = matchesByFile;
-
-        // Track reads for content mode - full lines were displayed
-        const readStateManager = registry.get('read_state_manager');
-        if (readStateManager) {
-          for (const match of matches) {
-            const startLine = match.line - (match.before?.length || 0);
-            const endLine = match.line + (match.after?.length || 0);
-            readStateManager.trackRead(match.file, startLine, endLine, readScopeId);
-          }
-        }
+        matches = matches.slice(0, Math.floor(matches.length / 2));
+        result = formatMatches(matches);
       }
 
-      // Structured matches/files/counts are the model payload. The formatted
-      // duplicate belongs only to terminal rendering.
-      responseData.display_content = content;
-
-      return this.formatSuccessResponse(responseData);
+      // Only admitted, complete lines authorize edits. Protect these records
+      // from the generic text truncator after recording their observation.
+      if (outputMode === 'content') {
+        const readStateManager = registry.get('read_state_manager');
+        for (const match of matches) {
+          readStateManager?.trackRead(
+            match.file,
+            match.line - (match.before?.length || 0),
+            match.line + (match.after?.length || 0),
+            readScopeId
+          );
+        }
+      }
+      return { ...result, _non_truncatable: true };
     } catch (error) {
       const errorMsg = formatError(error);
 
@@ -409,10 +424,7 @@ For multi-step investigations with unknown scope, prefer explore() to preserve c
         );
       }
 
-      return this.formatErrorResponse(
-        `Error searching files: ${errorMsg}`,
-        'system_error'
-      );
+      return this.formatErrorResponse(`Error searching files: ${errorMsg}`, 'system_error');
     }
   }
 
@@ -426,15 +438,15 @@ For multi-step investigations with unknown scope, prefer explore() to preserve c
       let stdout = '';
       let stderr = '';
 
-      process.stdout.on('data', (data) => {
+      process.stdout.on('data', data => {
         stdout += data.toString();
       });
 
-      process.stderr.on('data', (data) => {
+      process.stderr.on('data', data => {
         stderr += data.toString();
       });
 
-      process.on('close', (code) => {
+      process.on('close', code => {
         // Exit codes: 0 = matches found, 1 = no matches, 2+ = error
         if (code === 0 || code === 1) {
           resolve({ stdout, stderr });
@@ -443,7 +455,7 @@ For multi-step investigations with unknown scope, prefer explore() to preserve c
         }
       });
 
-      process.on('error', (error) => {
+      process.on('error', error => {
         reject(error);
       });
     });
@@ -454,7 +466,7 @@ For multi-step investigations with unknown scope, prefer explore() to preserve c
    */
   private parseRipgrepJson(stdout: string): GrepMatch[] {
     const matches: GrepMatch[] = [];
-    const lines = stdout.split('\n').filter((line) => line.trim() !== '');
+    const lines = stdout.split('\n').filter(line => line.trim() !== '');
 
     let currentMatch: GrepMatch | null = null;
     let contextBefore: string[] = [];
@@ -512,7 +524,6 @@ For multi-step investigations with unknown scope, prefer explore() to preserve c
 
     return matches;
   }
-
 
   /**
    * Format subtext for display in UI

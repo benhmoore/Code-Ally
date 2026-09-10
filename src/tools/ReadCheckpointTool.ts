@@ -57,11 +57,7 @@ export class ReadCheckpointTool extends BaseTool {
     const section = args.section as keyof typeof checkpoint.semanticState;
     const characters = Array.from(JSON.stringify(checkpoint.semanticState[section], null, 2));
     if (offset > characters.length) return this.formatErrorResponse('Offset exceeds the section length.', 'validation_error');
-    const published = registry.get('context_budget')?.get(agent.getInstanceId());
-    const assigned = this.currentCallId
-      ? executionContext?.outputBudget?.maxResultTokensByCallId.get(this.currentCallId)
-      : undefined;
-    const budget = Math.min(published?.maxToolResultTokens ?? 1024, assigned ?? Infinity);
+    const budget = this.getOutputTokenAllowance(1024, executionContext);
     let count = Math.min(limit, characters.length - offset);
     while (true) {
       const end = offset + count;

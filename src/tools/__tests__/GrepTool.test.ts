@@ -6,6 +6,9 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { GrepTool } from '../GrepTool.js';
 import { ActivityStream } from '@services/ActivityStream.js';
 import { resolveDisplayContent, toModelToolResult } from '../../utils/toolResultContent.js';
+import { ServiceRegistry } from '../../services/ServiceRegistry.js';
+import { ReadStateManager } from '../../services/ReadStateManager.js';
+import { tokenCounter } from '../../services/TokenCounter.js';
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import * as os from 'os';
@@ -66,6 +69,59 @@ describe('GrepTool', () => {
   });
 
   describe('execute', () => {
+    it.each(['content', 'count', 'files_with_matches'])(
+      'admits complete %s records within the assigned allowance', async output_mode => {
+        const registry = ServiceRegistry.getInstance();
+        const reads = new ReadStateManager();
+        const previous = registry.get('read_state_manager');
+        registry.registerInstance('read_state_manager', reads);
+        try {
+          await fs.writeFile(testFile1, Array.from({ length: 80 }, (_, i) => `match ${i} ${'value '.repeat(10)}`).join('\n'));
+          const result = await grepTool.execute(
+            { pattern: 'match', path: testFile1, output_mode, after_context: 1 }, 'bounded-search', undefined, false, false,
+            { outputBudget: { limitTokens: 350, maxResultTokensByCallId: new Map([['bounded-search', 350]]) } },
+          );
+          expect(result.success).toBe(true);
+          expect(result._non_truncatable).toBe(true);
+          expect(tokenCounter.count(JSON.stringify(toModelToolResult(result)))).toBeLessThanOrEqual(350);
+          if (output_mode === 'content') {
+            expect(result.limited_results).toBe(true);
+            expect(result.matches.length).toBeGreaterThan(0);
+            expect(result.matches.length).toBeLessThan(80);
+            for (let line = 1; line <= 80; line++) {
+              expect(reads.validateLinesRead(testFile1, line, line).success)
+                .toBe(result.matches.some((match: { line: number; after?: string[] }) =>
+                  line >= match.line && line <= match.line + (match.after?.length ?? 0)));
+            }
+          } else {
+            expect(reads.validateLinesRead(testFile1, 1, 1).success).toBe(false);
+          }
+        } finally {
+          if (previous) registry.registerInstance('read_state_manager', previous);
+          else registry['_services'].delete('read_state_manager');
+        }
+      },
+    );
+
+    it('does not authorize a line that cannot fit in the output allowance', async () => {
+      const registry = ServiceRegistry.getInstance();
+      const reads = new ReadStateManager();
+      const previous = registry.get('read_state_manager');
+      registry.registerInstance('read_state_manager', reads);
+      try {
+        await fs.writeFile(testFile1, `match ${'oversized '.repeat(1000)}`);
+        const result = await grepTool.execute(
+          { pattern: 'match', path: testFile1, output_mode: 'content' }, 'small-search', undefined, false, false,
+          { outputBudget: { limitTokens: 100, maxResultTokensByCallId: new Map([['small-search', 100]]) } },
+        );
+        expect(result.success).toBe(false);
+        expect(reads.validateLinesRead(testFile1, 1, 1).success).toBe(false);
+      } finally {
+        if (previous) registry.registerInstance('read_state_manager', previous);
+        else registry['_services'].delete('read_state_manager');
+      }
+    });
+
     it.each(['content', 'count', 'files_with_matches'])('separates readable display from structured %s output', async output_mode => {
       const result = await grepTool.execute({ pattern: 'test', path: tempDir, output_mode });
       expect(result.success).toBe(true);

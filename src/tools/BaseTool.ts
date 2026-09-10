@@ -527,6 +527,16 @@ export abstract class BaseTool {
     return 'default';
   }
 
+  /** Output admission ceiling for tools that retain complete structured records. */
+  protected getOutputTokenAllowance(fallback: number, executionContext?: ToolExecutionContext): number {
+    const context = executionContext ?? this.currentExecutionContext;
+    const published = this.getExecutionRegistry(context).get('context_budget')?.get(this.getReadScopeId(context));
+    const assigned = this.currentCallId
+      ? context?.outputBudget?.maxResultTokensByCallId.get(this.currentCallId)
+      : undefined;
+    return Math.min(published?.maxToolResultTokens ?? fallback, assigned ?? Infinity);
+  }
+
   /**
    * Emit an event to the activity stream.
    *
