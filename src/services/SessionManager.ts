@@ -231,7 +231,15 @@ export class SessionManager implements IService {
    * Get the file path for a session
    */
   private getSessionPath(sessionName: string): string {
-    return join(this.sessionsDir, `${sessionName}.json`);
+    return `${this.getSessionDirectory(sessionName)}.json`;
+  }
+
+  /** Session identities are single path components, never caller-supplied paths. */
+  private getSessionDirectory(sessionName: string): string {
+    if (!sessionName || sessionName === '.' || sessionName === '..' || /[/\\\0]/.test(sessionName)) {
+      throw new Error('Invalid session identifier');
+    }
+    return join(this.sessionsDir, sessionName);
   }
 
   private createEmptySession(sessionName: string): Session {
@@ -260,7 +268,7 @@ export class SessionManager implements IService {
     if (!/^[a-f0-9]{64}$/.test(ref.hash) || !Number.isSafeInteger(ref.message_count) || ref.message_count < 1) {
       throw new Error('Invalid transcript segment reference');
     }
-    const raw = await fs.readFile(join(this.sessionsDir, sessionName, 'transcript-segments', `${ref.hash}.json`), 'utf8');
+    const raw = await fs.readFile(join(this.getSessionDirectory(sessionName), 'transcript-segments', `${ref.hash}.json`), 'utf8');
     const parsed = JSON.parse(raw) as { hash?: string; messages?: Message[] };
     if (parsed.hash !== ref.hash || !Array.isArray(parsed.messages)
       || parsed.messages.length !== ref.message_count || this.transcriptHash(parsed.messages) !== ref.hash) {
@@ -280,7 +288,7 @@ export class SessionManager implements IService {
       await this.readTranscriptSegment(sessionName, ref);
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
-      const segmentDir = join(this.sessionsDir, sessionName, 'transcript-segments');
+      const segmentDir = join(this.getSessionDirectory(sessionName), 'transcript-segments');
       await fs.mkdir(segmentDir, { recursive: true });
       await atomicWriteFile(join(segmentDir, `${ref.hash}.json`),
         JSON.stringify({ schema_version: 1, hash: ref.hash, messages: snapshot }));
@@ -328,7 +336,7 @@ export class SessionManager implements IService {
     sessionName: string,
     refs: readonly { hash: string }[],
   ): Promise<void> {
-    const segmentDir = join(this.sessionsDir, sessionName, 'transcript-segments');
+    const segmentDir = join(this.getSessionDirectory(sessionName), 'transcript-segments');
     let files: string[];
     try {
       files = await fs.readdir(segmentDir);
@@ -425,6 +433,7 @@ export class SessionManager implements IService {
    * @returns Session data or null if not found
    */
   async loadSession(sessionName: string): Promise<Session | null> {
+    this.getSessionDirectory(sessionName);
     // Check cache first
     const cached = this.sessionCache.get(sessionName);
     if (cached) {
@@ -802,7 +811,7 @@ export class SessionManager implements IService {
    */
   async deleteSession(sessionName: string): Promise<boolean> {
     const sessionPath = this.getSessionPath(sessionName);
-    const sessionDir = sessionPath.replace('.json', ''); // Directory for session data (e.g., patches)
+    const sessionDir = this.getSessionDirectory(sessionName);
 
     try {
       // Delete session file
@@ -849,6 +858,7 @@ export class SessionManager implements IService {
    * @param sessionName - Session name or null to clear
    */
   setCurrentSession(sessionName: string | null): void {
+    if (sessionName !== null) this.getSessionDirectory(sessionName);
     this.currentSession = sessionName;
   }
 

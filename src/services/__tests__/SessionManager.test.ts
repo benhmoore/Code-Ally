@@ -65,6 +65,27 @@ describe('SessionManager', () => {
     });
   });
 
+  it.each(['', '.', '..', '../outside', 'nested/name', 'nested\\name', 'bad\0name'])('rejects non-component session identity %j', async name => {
+    expect(() => sessionManager.setCurrentSession(name)).toThrow('Invalid session identifier');
+    await expect(sessionManager.loadSession(name)).rejects.toThrow('Invalid session identifier');
+    await expect(sessionManager.createSession(name)).rejects.toThrow('Invalid session identifier');
+    await expect(sessionManager.deleteSession(name)).rejects.toThrow('Invalid session identifier');
+  });
+
+  it('deletes only the exact data directory for a session name containing .json', async () => {
+    const name = 'history.json-review';
+    await sessionManager.createSession(name);
+    const owned = join(tempDir, name);
+    const unrelated = join(tempDir, 'history-review.json');
+    await fs.mkdir(owned);
+    await fs.mkdir(unrelated);
+    await fs.writeFile(join(owned, 'owned.txt'), 'owned');
+    await fs.writeFile(join(unrelated, 'keep.txt'), 'keep');
+    expect(await sessionManager.deleteSession(name)).toBe(true);
+    await expect(fs.access(owned)).rejects.toThrow();
+    expect(await fs.readFile(join(unrelated, 'keep.txt'), 'utf8')).toBe('keep');
+  });
+
   describe('createSession', () => {
     it('should create a new session with auto-generated name', async () => {
       const sessionName = await sessionManager.createSession();
