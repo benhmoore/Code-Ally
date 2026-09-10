@@ -307,14 +307,27 @@ describe('RunSupervisor', () => {
     await expect(reopened.resumeRun(run.runId)).rejects.toThrow(/completed/);
   });
 
-  it.each(['open', 'sync'])('fails closed after journal %s failure without publishing completion', async boundary => {
+  it.each(['open', 'write', 'sync', 'close'])('fails closed after journal %s failure without publishing completion', async boundary => {
     const supervisor = createSupervisor();
     const run = await supervisor.startRun('recover commit failure', policy);
     const journalPath = join(dir, run.runId, 'journal.jsonl');
     if (boundary === 'open') vi.spyOn(fs, 'open').mockRejectedValueOnce(new Error('disk unavailable'));
     else {
       const handle = await fs.open(journalPath, 'a');
-      vi.spyOn(handle, 'sync').mockRejectedValueOnce(new Error('sync failed'));
+      if (boundary === 'write') {
+        vi.spyOn(handle, 'writeFile').mockImplementationOnce(async data => {
+          await handle.write(String(data).slice(0, 16));
+          throw new Error('partial append failed');
+        });
+      } else if (boundary === 'sync') {
+        vi.spyOn(handle, 'sync').mockRejectedValueOnce(new Error('sync failed'));
+      } else {
+        const close = handle.close.bind(handle);
+        vi.spyOn(handle, 'close').mockImplementationOnce(async () => {
+          await close();
+          throw new Error('close reported failure');
+        });
+      }
       vi.spyOn(fs, 'open').mockResolvedValueOnce(handle);
     }
     await expect(supervisor.claimComplete('unpublished')).rejects.toBeInstanceOf(RunPersistenceError);
@@ -328,6 +341,9 @@ describe('RunSupervisor', () => {
     if (boundary === 'open') {
       await reopened.resumeRun(run.runId);
       expect((await reopened.claimComplete('verified after recovery')).accepted).toBe(true);
+    } else if (boundary === 'write') {
+      await expect(reopened.resumeRun(run.runId)).rejects.toThrow(/journal/);
+      expect(await fs.readFile(journalPath, 'utf8')).toBe(journal);
     } else {
       // The complete append survived this injected sync failure. Recovery must
       // honor that evidence rather than blindly attempting completion again.
