@@ -1042,6 +1042,12 @@ export class Agent {
     this.turnManager.setMaxDuration(maxDuration);
     if (this.config.isSpecializedAgent) this.turnManager.resetTurn();
 
+    // Requirements are per turn for the root agent: a stream-json session sends
+    // many messages down one agent, and turn two must satisfy its requirements
+    // on its own calls rather than inherit turn one's. A delegated agent keeps
+    // its tracker for the whole objective, which may span several messages.
+    if (!this.config.isSpecializedAgent) this.requirementValidator.reset();
+
     // Runtime assertion: catch depth corruption bugs early
     // This should never happen if AgentTool validates depth correctly,
     // but if it does happen, fail fast with a clear error
