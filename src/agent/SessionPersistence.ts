@@ -43,6 +43,15 @@ export class SessionPersistence {
    * overwrite the main session.
    */
   async autoSave(): Promise<void> {
+    try {
+      await this.queueSave();
+    } catch (error) {
+      logger.error('[AGENT_SESSION]', this.instanceId, 'Failed to prepare auto-save session:', error);
+    }
+  }
+
+  /** Await snapshot admission; critical callers must observe preparation failures. */
+  private async queueSave(): Promise<void> {
     // Only root agent should save sessions
     if (this.agentDepth > 0) {
       logger.debug('[AGENT_SESSION]', this.instanceId, `Skipping auto-save for sub-agent (depth ${this.agentDepth})`);
@@ -53,21 +62,21 @@ export class SessionPersistence {
     const sessionManager = registry.get('session_manager');
     const todoManager = registry.get('todo_manager');
 
-    if (!sessionManager || typeof (sessionManager as any).autoSave !== 'function') {
+    if (!sessionManager) {
       return; // Session manager not available
     }
 
     // Get current session
-    const currentSession = (sessionManager as any).getCurrentSession();
+    const currentSession = sessionManager.getCurrentSession();
 
     // Create a new session if none exists and we have user messages
     if (!currentSession) {
       const hasUserMessages = this.conversationManager.getMessages().some(m => m.role === 'user');
-      if (hasUserMessages && typeof (sessionManager as any).ensureCurrentSession === 'function') {
+      if (hasUserMessages) {
         // Single-flighted in SessionManager: several auto-saves can reach here in
         // the same tick (one per appended message, plus the turn-start commit),
         // and minting a session per caller orphans all but the last one.
-        const { sessionName, created } = await (sessionManager as any).ensureCurrentSession();
+        const { sessionName, created } = await sessionManager.ensureCurrentSession();
         if (created) {
           logger.debug('[AGENT_SESSION]', this.instanceId, 'Created new session:', sessionName);
 
@@ -109,8 +118,8 @@ export class SessionPersistence {
       additionalDirectories = (additionalDirsManager as any).getAdditionalDirectories();
     }
 
-    // Auto-save (non-blocking, fire and forget)
-    (sessionManager as any).autoSave(
+    // Admission is asynchronous even though the eventual disk write is debounced.
+    const admitted = await sessionManager.autoSave(
       this.conversationManager.getMessages(),
       todos,
       idleMessages,
@@ -119,16 +128,18 @@ export class SessionPersistence {
       this.conversationManager.getTranscript(),
       this.conversationManager.getCheckpoint() ?? undefined,
       this.conversationManager.getProviderState(),
-    ).catch((error: Error) => {
-      logger.error('[AGENT_SESSION]', this.instanceId, 'Failed to auto-save session:', error);
-    });
+    );
+    if (!admitted) throw new Error('Session autosave snapshot was not admitted');
   }
 
   /** Persist a turn boundary before any model/tool side effect is attempted. */
   async commitTurnStart(): Promise<void> {
     if (this.agentDepth > 0) return;
-    await this.autoSave();
-    await ServiceRegistry.getInstance().get('session_manager')?.forceSave();
+    await this.queueSave();
+    const sessionManager = ServiceRegistry.getInstance().get('session_manager');
+    if (sessionManager && !await sessionManager.forceSave()) {
+      throw new Error('Session turn boundary was not persisted');
+    }
   }
 
   /** Durably replace history after a destructive conversation operation. */
@@ -156,7 +167,7 @@ export class SessionPersistence {
     checkpoint: ConversationCheckpointV1,
   ): Promise<boolean> {
     if (this.agentDepth > 0) return true;
-    await this.autoSave();
+    await this.queueSave();
     const sessionManager = ServiceRegistry.getInstance().get('session_manager');
     if (!sessionManager || typeof (sessionManager as any).commitConversationCheckpoint !== 'function') {
       return false;
