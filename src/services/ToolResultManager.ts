@@ -20,6 +20,12 @@ import { CONTEXT_THRESHOLDS, TOOL_OUTPUT_ESTIMATES } from '../config/toolDefault
 import { BUFFER_SIZES, TOKEN_MANAGEMENT } from '../config/constants.js';
 import { DEFAULT_CONFIG } from '../config/defaults.js';
 
+/** Runtime output policy is separate from the model-visible result payload. */
+export interface ToolResultProcessingOptions {
+  maxTokens?: number;
+  allowTruncation?: boolean;
+}
+
 /**
  * Truncation level definitions (for warning messages)
  */
@@ -109,21 +115,18 @@ export class ToolResultManager {
    * @param toolName Name of the tool that generated the result
    * @param rawResult The raw tool result string or ToolResult object
    * @param toolCallId Optional tool call ID for persisting large outputs
-   * @param maxTokensOverride Optional hard ceiling assigned by a shared batch budget
+   * @param options Output retention policy and optional shared-batch ceiling
    * @returns Processed (potentially truncated) tool result
    */
   async processToolResult(
     toolName: string,
     rawResult: string | any,
     toolCallId?: string,
-    maxTokensOverride?: number,
+    options: ToolResultProcessingOptions = {},
   ): Promise<string> {
     if (!rawResult) {
       return '';
     }
-
-    // Check if this is a non-truncatable result
-    const isNonTruncatable = typeof rawResult === 'object' && rawResult._non_truncatable === true;
 
     // Extract string content from object if needed
     const resultString = typeof rawResult === 'string' ? rawResult : JSON.stringify(rawResult);
@@ -137,7 +140,7 @@ export class ToolResultManager {
     this.updateToolStats(toolName, actualTokens);
 
     // If result is marked as non-truncatable, never truncate it
-    if (isNonTruncatable) {
+    if (options.allowTruncation === false) {
       return resultString;
     }
 
@@ -145,9 +148,9 @@ export class ToolResultManager {
     const remainingTokens = this.getRemainingContextBudget();
     const dynamicMaxTokens = Math.floor(remainingTokens * this.maxContextPercent);
     const contextAwareMaxTokens = Math.max(dynamicMaxTokens, this.minTokens);
-    const maxTokens = maxTokensOverride === undefined
+    const maxTokens = options.maxTokens === undefined
       ? contextAwareMaxTokens
-      : Math.max(1, Math.min(contextAwareMaxTokens, Math.floor(maxTokensOverride)));
+      : Math.max(1, Math.min(contextAwareMaxTokens, Math.floor(options.maxTokens)));
 
     // Get current context level for warning severity
     const contextPct = this.tokenManager.getContextUsagePercentage();
@@ -194,7 +197,7 @@ export class ToolResultManager {
       return this.preferSmallerResult(
         resultString,
         minimalNotice + '\n' + truncatedResult,
-        maxTokensOverride === undefined ? undefined : maxTokens,
+        options.maxTokens === undefined ? undefined : maxTokens,
       );
     }
 
@@ -205,7 +208,7 @@ export class ToolResultManager {
     return this.preferSmallerResult(
       resultString,
       fullNotice + '\n' + truncatedResult,
-      maxTokensOverride === undefined ? undefined : maxTokens,
+      options.maxTokens === undefined ? undefined : maxTokens,
     );
   }
 

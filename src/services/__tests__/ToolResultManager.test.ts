@@ -358,7 +358,7 @@ describe('ToolResultManager', () => {
         'grep',
         'matching line\n'.repeat(2_000),
         'call-grep',
-        120,
+        { maxTokens: 120 },
       );
 
       expect(tokenManager.estimateTokens(result)).toBeLessThanOrEqual(120);

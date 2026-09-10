@@ -1433,13 +1433,13 @@ export class ToolOrchestrator {
     }
 
     // Apply context-aware truncation if ToolResultManager is available
-    // Pass the full result object so it can check for _non_truncatable flag
+    // Retention policy must survive sanitization without leaking onto the wire.
     if (this.toolResultManager) {
       resultStr = await this.toolResultManager.processToolResult(
         toolName,
         resultWithoutExtras,
         toolCallId,
-        maxResultTokens,
+        { maxTokens: maxResultTokens, allowTruncation: result._non_truncatable !== true },
       );
     }
 

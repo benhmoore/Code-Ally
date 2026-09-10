@@ -13,6 +13,8 @@ import { TOOL_GUIDANCE } from '../../config/constants.js';
 import type { AgentConfig } from '../../types/index.js';
 import type { ToolCall } from '../../types/index.js';
 import { ServiceRegistry } from '../../services/ServiceRegistry.js';
+import { ToolResultManager } from '../../services/ToolResultManager.js';
+import { TokenManager } from '../TokenManager.js';
 
 describe('ToolOrchestrator Exploratory Tracking', () => {
   let orchestrator: ToolOrchestrator;
@@ -20,6 +22,18 @@ describe('ToolOrchestrator Exploratory Tracking', () => {
   let activityStream: ActivityStream;
   let mockAgent: IAgentForOrchestrator;
   let agentConfig: AgentConfig;
+
+  it('honors reserved output policy without putting runtime metadata on the model wire', async () => {
+    const results = new ToolResultManager(new TokenManager(2000));
+    (orchestrator as any).toolResultManager = results;
+    const content = 'exact source content '.repeat(2000);
+    const formatted = await (orchestrator as any).formatToolResult('reserved-output', {
+      success: true, content, _non_truncatable: true, _runtime_only: 'private',
+    }, 'reserved-call', 120);
+    expect(JSON.parse(formatted).content).toBe(content);
+    expect(formatted).not.toContain('_non_truncatable');
+    expect(formatted).not.toContain('_runtime_only');
+  });
 
   // Create a mock exploratory tool
   const createMockExploratoryTool = (name: string) => ({
