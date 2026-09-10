@@ -39,7 +39,7 @@ describe('ServiceRegistry', () => {
 
   beforeEach(() => {
     // Create a fresh registry for each test
-    // Note: This doesn't reset the singleton, but we'll use it directly
+    ServiceRegistry['_instance'] = undefined;
     registry = ServiceRegistry.getInstance();
     // Clear any existing services
     registry['_services'].clear();
@@ -187,6 +187,32 @@ describe('ServiceRegistry', () => {
   });
 
   describe('shutdown', () => {
+    it('waits for initialization before cleaning an owner, including direct aliases', async () => {
+      let finish!: () => void;
+      const service = new ServiceImplementingIService();
+      vi.spyOn(service, 'initialize').mockImplementation(() => new Promise<void>(resolve => { finish = resolve; }));
+      const cleanup = vi.spyOn(service, 'cleanup');
+      registry.registerSingleton('initializing', ServiceImplementingIService, () => service);
+      registry.get('initializing');
+      registry.registerInstance('alias', service);
+      const pending = registry.shutdown();
+      await Promise.resolve();
+      expect(cleanup).not.toHaveBeenCalled();
+      finish();
+      await pending;
+      expect(cleanup).toHaveBeenCalledOnce();
+    });
+
+    it('cleans partial resources even if initialization failed and surfaces the failure', async () => {
+      const service = new ServiceImplementingIService();
+      vi.spyOn(service, 'initialize').mockRejectedValue(new Error('initialization failed'));
+      const cleanup = vi.spyOn(service, 'cleanup');
+      registry.registerSingleton('initializing', ServiceImplementingIService, () => service);
+      registry.get('initializing');
+      await expect(registry.shutdown()).rejects.toThrow('Service registry cleanup failed');
+      expect(cleanup).toHaveBeenCalledOnce();
+    });
+
     it('should call cleanup on IService implementations', async () => {
       const service = new ServiceImplementingIService();
       registry.registerInstance('service', service);
@@ -206,7 +232,7 @@ describe('ServiceRegistry', () => {
       expect(registry.hasService('service2')).toBe(false);
     });
 
-    it('should handle cleanup errors gracefully', async () => {
+    it('retains failed cleanup and rejects rather than reporting success', async () => {
       const brokenService = {
         async initialize() {},
         async cleanup() {
@@ -214,13 +240,43 @@ describe('ServiceRegistry', () => {
         },
       };
 
-      const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
-
       registry.registerInstance('broken', brokenService);
-      await registry.shutdown();
+      const cleanup = vi.spyOn(brokenService, 'cleanup');
+      const pending = registry.shutdown();
+      await expect(pending).rejects.toThrow('Service registry cleanup failed');
+      expect(registry.hasService('broken')).toBe(true);
+      expect(registry.shutdown()).toBe(pending);
+      expect(cleanup).toHaveBeenCalledOnce();
+      expect(() => registry.registerInstance('another', {})).toThrow('cleanup failed');
+    });
 
-      expect(consoleSpy).toHaveBeenCalled();
-      consoleSpy.mockRestore();
+    it('cleans aliased resource owners once and shares concurrent shutdown', async () => {
+      const service = new ServiceImplementingIService();
+      const cleanup = vi.spyOn(service, 'cleanup');
+      registry.registerInstance('first', service);
+      registry.registerInstance('second', service);
+      const pending = registry.shutdown();
+      expect(registry.shutdown()).toBe(pending);
+      await pending;
+      expect(cleanup).toHaveBeenCalledOnce();
+    });
+
+    it('does not forget slow cleanup or admit new resources during its drain', async () => {
+      vi.useFakeTimers();
+      let finish!: () => void;
+      registry.registerCleanup('slow', () => new Promise<void>(resolve => { finish = resolve; }));
+      registry.registerSingleton('uncreated', SimpleService);
+      let settled = false;
+      const pending = registry.shutdown().then(() => { settled = true; });
+      try {
+        await vi.advanceTimersByTimeAsync(6000);
+        expect(settled).toBe(false);
+        expect(() => registry.registerCleanup('late', async () => {})).toThrow('shutting down');
+        expect(() => registry.get('uncreated')).toThrow('during shutdown');
+        finish();
+        await pending;
+        expect(vi.getTimerCount()).toBe(0);
+      } finally { finish?.(); vi.useRealTimers(); }
     });
   });
 

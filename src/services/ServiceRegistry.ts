@@ -107,13 +107,14 @@ export class ServiceDescriptor<T = unknown> {
       throw this._initError;
     }
   }
+
+  getCachedInstance(): T | undefined { return this._instance; }
 }
 
 /**
- * Maximum time to wait for a single cleanup function during shutdown.
- * Prevents a hung resource from blocking the entire shutdown.
+ * Warn about slow cleanup without inventing resource settlement.
  */
-const CLEANUP_TIMEOUT_MS = 5000;
+const CLEANUP_WARNING_MS = 5000;
 
 export class ServiceRegistry {
   private static _instance?: ServiceRegistry;
@@ -123,9 +124,10 @@ export class ServiceRegistry {
 
   /**
    * Ad-hoc cleanup functions registered by services or subsystems.
-   * Called during shutdown with a per-function timeout.
+   * Called during shutdown and awaited through actual settlement.
    */
   private _cleanupFns: Map<string, () => Promise<void>> = new Map();
+  private shutdownPromise?: Promise<void>;
 
   private constructor() {
     this._services = new Map();
@@ -151,6 +153,7 @@ export class ServiceRegistry {
     factory?: () => ServiceMap[K],
     dependencies?: Record<string, ServiceName>
   ): this {
+    this.assertRegistrationOpen();
     const descriptor = new ServiceDescriptor(
       serviceType,
       factory,
@@ -170,6 +173,7 @@ export class ServiceRegistry {
     factory?: () => ServiceMap[K],
     dependencies?: Record<string, ServiceName>
   ): this {
+    this.assertRegistrationOpen();
     const descriptor = new ServiceDescriptor(
       serviceType,
       factory,
@@ -184,6 +188,7 @@ export class ServiceRegistry {
    * Register an existing instance as a singleton
    */
   registerInstance<K extends ServiceName>(name: K, instance: ServiceMap[K]): this {
+    this.assertRegistrationOpen();
     this._services.set(name, instance);
     return this;
   }
@@ -204,6 +209,11 @@ export class ServiceRegistry {
     // Check descriptors
     if (this._descriptors.has(name)) {
       const descriptor = this._descriptors.get(name)!;
+      if (this.shutdownPromise) {
+        const existing = descriptor.getCachedInstance();
+        if (existing) return existing as ServiceMap[K];
+        throw new Error(`Cannot instantiate service '${name}' during shutdown`);
+      }
       const instance = descriptor.createInstance(this);
       return instance as ServiceMap[K];
     }
@@ -246,61 +256,85 @@ export class ServiceRegistry {
    * IService implementations (e.g., MCP connections, file watchers, timers).
    */
   registerCleanup(label: string, fn: () => Promise<void>): () => void {
+    this.assertRegistrationOpen();
     this._cleanupFns.set(label, fn);
     return () => { this._cleanupFns.delete(label); };
   }
 
   /**
    * Shutdown all services and cleanup resources.
-   * Each cleanup function is timeout-bounded to prevent hung resources
-   * from blocking the entire shutdown.
+   * Keep ownership until every cleanup settles. Failures remain observable;
+   * concurrent callers share one drain, and slow work is warned about, not detached.
    */
-  async shutdown(): Promise<void> {
-    const withTimeout = (label: string, fn: () => Promise<void>): Promise<void> =>
-      new Promise((resolve) => {
-        let settled = false;
-        const finish = () => {
-          if (settled) return;
-          settled = true;
-          clearTimeout(timer);
-          resolve();
-        };
-        const timer = setTimeout(() => {
-          logger.warn(`Cleanup timed out for ${label} (${CLEANUP_TIMEOUT_MS}ms)`);
-          finish();
-        }, CLEANUP_TIMEOUT_MS);
-        void fn()
-          .catch(error => { logger.error(`Error cleaning up ${label}:`, error); })
-          .finally(finish);
-      });
+  shutdown(): Promise<void> {
+    this.shutdownPromise ??= Promise.resolve().then(() => this.drainResources());
+    return this.shutdownPromise;
+  }
+
+  private assertRegistrationOpen(): void {
+    if (this.shutdownPromise) throw new Error('Service registry is shutting down or cleanup failed');
+  }
+
+  private async drainResources(): Promise<void> {
+    const cleanup = async (label: string, fn: () => Promise<void>): Promise<void> => {
+      const timer = setTimeout(() => {
+        logger.warn(`Cleanup still pending for ${label} after ${CLEANUP_WARNING_MS}ms`);
+      }, CLEANUP_WARNING_MS);
+      try { await fn(); }
+      catch (cause) { throw new Error(`Error cleaning up ${label}`, { cause }); }
+      finally { clearTimeout(timer); }
+    };
 
     const cleanupPromises: Promise<void>[] = [];
+    const owners = new Map<IService, { label: string; initializers: Array<() => Promise<void>> }>();
+    const cleanupOwner = (label: string, instance: unknown, initializer?: () => Promise<void>) => {
+      if (!isIService(instance)) return;
+      let owner = owners.get(instance);
+      if (!owner) {
+        owner = { label, initializers: [] };
+        owners.set(instance, owner);
+      }
+      if (initializer) owner.initializers.push(initializer);
+    };
 
     // Cleanup IService implementations
     for (const [name, instance] of this._services.entries()) {
-      if (isIService(instance)) {
-        cleanupPromises.push(withTimeout(`service:${name}`, () => instance.cleanup()));
-      }
+      cleanupOwner(`service:${name}`, instance);
     }
 
     for (const [name, descriptor] of this._descriptors.entries()) {
-      const inst = descriptor['_instance'];
-      if (inst && isIService(inst)) {
-        cleanupPromises.push(withTimeout(`descriptor:${name}`, () => inst.cleanup()));
-      }
+      const inst = descriptor.getCachedInstance();
+      cleanupOwner(`descriptor:${name}`, inst, () => descriptor.ensureInitialized());
+    }
+
+    for (const [instance, owner] of owners) {
+      cleanupPromises.push(cleanup(owner.label, async () => {
+        const initialization = await Promise.allSettled(owner.initializers.map(initialize => initialize()));
+        const failures: unknown[] = initialization.filter(result => result.status === 'rejected').map(result => result.reason);
+        // Initialization failure does not remove responsibility for partial resources.
+        try { await instance.cleanup(); } catch (error) { failures.push(error); }
+        if (failures.length) throw new AggregateError(failures, 'Service lifecycle failed during shutdown');
+      }));
     }
 
     // Cleanup ad-hoc registered functions
     for (const [label, fn] of this._cleanupFns.entries()) {
-      cleanupPromises.push(withTimeout(`cleanup:${label}`, fn));
+      cleanupPromises.push(cleanup(`cleanup:${label}`, fn));
     }
 
-    await Promise.all(cleanupPromises);
+    const results = await Promise.allSettled(cleanupPromises);
+    const failures = results.filter(result => result.status === 'rejected');
+    if (failures.length) {
+      throw new AggregateError(failures.map(result => result.reason), 'Service registry cleanup failed');
+    }
 
     // Clear all registrations
     this._services.clear();
     this._descriptors.clear();
     this._cleanupFns.clear();
+    // A fully drained container may be explicitly populated again. Failed
+    // cleanup remains latched: retrying arbitrary cleanup effects is unsafe.
+    this.shutdownPromise = undefined;
   }
 
   /**
