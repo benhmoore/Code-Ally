@@ -5,6 +5,7 @@ import {
   mergeSemanticCheckpoint,
   parseSemanticCheckpoint,
   renderCheckpointForModel,
+  restoreCheckpointDiagnostics,
 } from '../compaction/CheckpointReducer.js';
 import { emptySemanticCheckpoint, type SemanticCheckpointStateV1 } from '../compaction/types.js';
 import type { Message } from '../../types/index.js';
@@ -23,6 +24,40 @@ function toolResult(overrides: Partial<Message> & { id: string; content: string 
 function envelopeContent(callId: string, payload: Record<string, unknown>): string {
   return `[Tool Call ID: ${callId}]\n${JSON.stringify(payload, null, 2)}`;
 }
+
+describe('checkpoint diagnostic provenance', () => {
+  const literal = 'expected "a   b"\nactual "a  b"';
+  const evidence = [{ text: 'Failure', sourceMessageIds: ['tool-1'], exactError: literal }];
+
+  it('restores omitted or rewritten diagnostics by original source identity', () => {
+    for (const exactError of [undefined, 'invented error']) {
+      const proposed = emptySemanticCheckpoint();
+      proposed.blockers = [{ text: 'Repair the failure', sourceMessageIds: ['tool-1', 'read-1'], exactError }];
+      const restored = restoreCheckpointDiagnostics(proposed, evidence);
+      expect(restored.blockers[0]!.exactError).toBe(literal);
+      expect(proposed.blockers[0]!.exactError).toBe(exactError);
+      expect(restoreCheckpointDiagnostics(restored, evidence)).toEqual(restored);
+    }
+  });
+
+  it('does not invent diagnostics for missing or ambiguous evidence', () => {
+    const proposed = emptySemanticCheckpoint();
+    proposed.blockers = [
+      { text: 'Unknown', sourceMessageIds: ['unknown'], exactError: 'invented' },
+      { text: 'Two failures', sourceMessageIds: ['tool-1', 'tool-2'], exactError: 'combined' },
+    ];
+    const restored = restoreCheckpointDiagnostics(proposed, [
+      ...evidence, { text: 'Other failure', sourceMessageIds: ['tool-2'], exactError: 'different' },
+    ]);
+    expect(restored.blockers.every(blocker => blocker.exactError === undefined)).toBe(true);
+  });
+
+  it('excludes model-authored exact diagnostic fields from reducer output', () => {
+    const proposed = emptySemanticCheckpoint();
+    proposed.blockers = [{ text: 'Failure', sourceMessageIds: ['tool-1'], exactError: 'invented' }];
+    expect(parseSemanticCheckpoint(JSON.stringify(proposed), ['tool-1']).blockers).toEqual([]);
+  });
+});
 
 describe('renderCheckpointForModel', () => {
   it('makes newer user instructions authoritative over historical active work', () => {

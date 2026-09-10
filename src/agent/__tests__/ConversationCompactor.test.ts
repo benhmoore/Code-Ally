@@ -14,6 +14,34 @@ import { emptySemanticCheckpoint } from '../compaction/types.js';
 
 const signal = new AbortController().signal;
 
+it('grounds reducer diagnostics in source evidence across successive reductions', async () => {
+  const client = chatClient();
+  const compactor = new ConversationCompactor(
+    client, new ConversationManager(), new TokenManager(16_384), new ActivityStream(), vi.fn(),
+  );
+  const exactError = 'expected "a   b"\nactual "a  b"';
+  let state = emptySemanticCheckpoint();
+  state.blockers = [{ text: 'Observed failure', sourceMessageIds: ['failure'], exactError }];
+  const proposed = emptySemanticCheckpoint();
+  proposed.blockers = [{ text: 'Check the source mismatch', sourceMessageIds: ['failure'] }];
+  client.send.mockResolvedValue({ role: 'assistant', content: JSON.stringify(proposed) });
+  for (let generation = 0; generation < 2; generation++) {
+    state = await (compactor as any).reduceStructured(
+      [{ id: 'next', role: 'user', content: 'Continue.' }],
+      state, ['failure', 'next'], undefined, signal,
+    );
+    expect(state.blockers[0]!.exactError).toBe(exactError);
+  }
+  proposed.blockers = [];
+  proposed.nextActions = [{ text: 'Run verification', sourceMessageIds: ['next'] }];
+  client.send.mockResolvedValue({ role: 'assistant', content: JSON.stringify(proposed) });
+  state = await (compactor as any).reduceStructured(
+    [{ id: 'next', role: 'user', content: 'Continue.' }],
+    state, ['failure', 'next'], undefined, signal,
+  );
+  expect(state.blockers).toEqual([]);
+});
+
 it('does not send a reducer request when authoritative input cannot fit', async () => {
   const client = chatClient();
   const compactor = new ConversationCompactor(
