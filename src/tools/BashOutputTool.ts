@@ -85,18 +85,20 @@ export class BashOutputTool extends BaseTool {
     // Get process manager from registry
     const registry = ServiceRegistry.getInstance();
     const processManager = registry.get('bash_process_manager');
+    const taskRegistry = registry.get('background_task_registry');
 
-    if (!processManager) {
+    if (!processManager || !taskRegistry) {
       return this.formatErrorResponse(
-        'BashProcessManager not available',
+        'Background process services not available',
         'system_error'
       );
     }
 
     // Get process info
     const processInfo = processManager.getProcess(shellId);
+    const task = taskRegistry.get(shellId);
 
-    if (!processInfo) {
+    if (!processInfo || !task) {
       return this.formatErrorResponse(
         `Background shell ${shellId} not found`,
         'user_error',
@@ -119,7 +121,7 @@ export class BashOutputTool extends BaseTool {
 
     const returnedLineCount = lines.length;
     const totalBufferSize = processInfo.outputBuffer.size();
-    processManager.acknowledgeCompletedResults([shellId]);
+    taskRegistry.acknowledgeResults([task]);
 
     // Format response with optional filter_applied field
     return this.formatSuccessResponse({
