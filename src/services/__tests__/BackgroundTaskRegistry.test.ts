@@ -7,6 +7,7 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { BackgroundTaskRegistry, MissingBackgroundTasksError } from '../BackgroundTaskRegistry.js';
+import { BashProcessManager, CircularBuffer } from '../BashProcessManager.js';
 
 function fakeAgentManager(tasks: any[] = []) {
   return {
@@ -16,13 +17,37 @@ function fakeAgentManager(tasks: any[] = []) {
   } as any;
 }
 function fakeBashManager(processes: any[] = []) {
-  return { listProcesses: () => processes } as any;
+  return { listProcesses: () => processes, acknowledgeCompletedResults: vi.fn() } as any;
 }
 function fakeStream() {
   return { emit: vi.fn() } as any;
 }
 
 describe('BackgroundTaskRegistry', () => {
+  it('delivers shell output before releasing its dependency retention', async () => {
+    const manager = new BashProcessManager(1);
+    const outputBuffer = new CircularBuffer();
+    outputBuffer.append('verification passed');
+    manager.addProcess({ id: 'verification', status: 'exited', exitCode: 0, exitSignal: null, startTime: 1, exitTime: 2, blocksCompletion: true, outputBuffer } as any);
+    const registry = new BackgroundTaskRegistry(fakeAgentManager(), manager, fakeStream());
+    expect(registry.get('verification')?.result).toBeNull();
+    const results = await registry.waitFor(['verification'], { timeoutMs: 1000 });
+    expect(results[0].result).toBe('verification passed');
+    expect(registry.getResult('verification')?.result).toBe('verification passed');
+    expect(() => manager.addProcess({ id: 'next', status: 'running' } as any)).toThrow();
+    registry.acknowledgeResults(results);
+    manager.addProcess({ id: 'next', status: 'running' } as any);
+    expect(manager.getProcess('verification')).toBeUndefined();
+  });
+  it('acknowledges only settled shell results with their process owner', () => {
+    const manager = fakeBashManager();
+    const reg = new BackgroundTaskRegistry(fakeAgentManager(), manager, fakeStream());
+    reg.acknowledgeResults([
+      { id: 'done', kind: 'shell', status: 'done' },
+      { id: 'running', kind: 'shell', status: 'running' },
+    ] as any);
+    expect(manager.acknowledgeCompletedResults).toHaveBeenCalledWith(['done']);
+  });
   it('rejects partially missing dependencies instead of reporting the surviving task as complete', async () => {
     const reg = new BackgroundTaskRegistry(fakeAgentManager([
       { id: 'done', agentType: 'x', status: 'done', startTime: 1, endTime: 2, result: 'ok', error: null },

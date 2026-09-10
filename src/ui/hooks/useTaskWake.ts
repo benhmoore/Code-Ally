@@ -57,7 +57,7 @@ export function useTaskWake({ isThinking, activeAgentId, submit }: UseTaskWakePa
     pendingRef.current.clear();
 
     const tasks = ids.flatMap((id) => {
-      const t = taskRegistry.get(id);
+      const t = taskRegistry.getResult(id);
       return t ? [t] : [];
     });
     const sections = tasks.map((t) => {

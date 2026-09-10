@@ -24,6 +24,28 @@ function processInfo(overrides: Partial<ProcessInfo> = {}): ProcessInfo {
 }
 
 describe('BashProcessManager lifecycle', () => {
+  it('retains an unconsumed completed dependency under capacity pressure', () => {
+    const manager = new BashProcessManager(1);
+    const required = processInfo({ id: 'required', status: 'exited', exitCode: 0, exitTime: Date.now(), blocksCompletion: true });
+    manager.addProcess(required);
+    expect(() => manager.addProcess(processInfo({ id: 'next' }))).toThrow(/pending dependency results/);
+    expect(manager.getProcess('required')).toBe(required);
+    manager.acknowledgeCompletedResults(['required']);
+    manager.addProcess(processInfo({ id: 'next' }));
+    expect(manager.getProcess('required')).toBeUndefined();
+  });
+
+  it('does not acknowledge a running process or pin ordinary completed history', () => {
+    const manager = new BashProcessManager(1);
+    const required = processInfo({ blocksCompletion: true });
+    manager.addProcess(required);
+    manager.acknowledgeCompletedResults([required.id]);
+    required.status = 'exited';
+    expect(() => manager.addProcess(processInfo({ id: 'next' }))).toThrow();
+    required.blocksCompletion = false;
+    manager.addProcess(processInfo({ id: 'next' }));
+    expect(manager.getProcess(required.id)).toBeUndefined();
+  });
   afterEach(() => vi.restoreAllMocks());
 
   it('participates in registry cleanup by shutting down managed processes', async () => {

@@ -119,6 +119,7 @@ export class BashOutputTool extends BaseTool {
 
     const returnedLineCount = lines.length;
     const totalBufferSize = processInfo.outputBuffer.size();
+    processManager.acknowledgeCompletedResults([shellId]);
 
     // Format response with optional filter_applied field
     return this.formatSuccessResponse({

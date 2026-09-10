@@ -173,6 +173,19 @@ export class BackgroundTaskRegistry {
     return this.list().find((t) => t.id === id);
   }
 
+  /** Materialize output only for delivery, not on every status poll. */
+  getResult(id: string): BackgroundTask | undefined {
+    const task = this.get(id);
+    return task ? this.withOutput(task) : undefined;
+  }
+
+  private withOutput(task: BackgroundTask): BackgroundTask {
+    if (task.kind !== 'shell' || task.status === 'running') return task;
+    const process = this.bashManager.getProcess(task.id);
+    if (!process) throw new MissingBackgroundTasksError([task.id]);
+    return { ...task, result: process.outputBuffer.getLines().join('\n') || null };
+  }
+
   /**
    * A synchronous consumer already received these settled results (for
    * example, through `wait`). Prevent the passive delivery path from injecting
@@ -183,6 +196,8 @@ export class BackgroundTaskRegistry {
       .filter((task) => task.kind === 'agent' && task.status !== 'running')
       .map((task) => task.id);
     this.agentManager.acknowledgeCompletedResults(settledAgentIds);
+    const settledShellIds = tasks.filter(task => task.kind === 'shell' && task.status !== 'running').map(task => task.id);
+    if (settledShellIds.length) this.bashManager.acknowledgeCompletedResults(settledShellIds);
     for (const task of tasks) {
       if (task.status !== 'running') this.clearWatched(task.id);
     }
@@ -232,7 +247,9 @@ export class BackgroundTaskRegistry {
       // Disappearance is not completion. Return only a snapshot that accounts
       // for every requested dependency, including at timeout or interruption.
       if (missing.length) throw new MissingBackgroundTasksError(missing);
-      if (tasks.every(task => task.status !== 'running') || Date.now() >= deadline || opts.signal?.aborted) return tasks;
+      if (tasks.every(task => task.status !== 'running') || Date.now() >= deadline || opts.signal?.aborted) {
+        return tasks.map(task => this.withOutput(task));
+      }
       await abortableDelay(Math.min(pollMs, Math.max(1, deadline - Date.now())), opts.signal);
     }
   }

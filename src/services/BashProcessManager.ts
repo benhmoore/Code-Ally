@@ -150,6 +150,7 @@ export interface ProcessInfo {
  */
 export class BashProcessManager {
   private readonly processes: Map<string, ProcessInfo> = new Map();
+  private readonly acknowledgedResults = new Set<string>();
   private readonly maxProcesses: number;
 
   constructor(maxProcesses: number = 10) {
@@ -181,7 +182,7 @@ export class BashProcessManager {
       if (!removed) {
         throw new Error(
           `Process limit reached (${this.maxProcesses}). ` +
-          `Kill an existing process before starting a new one.`
+          `Read pending dependency results or stop an existing process before starting a new one.`
         );
       }
 
@@ -190,6 +191,7 @@ export class BashProcessManager {
       );
     }
 
+    this.acknowledgedResults.delete(info.id);
     this.processes.set(info.id, info);
     logger.debug(`[BashProcessManager] Added process ${info.id} (pid: ${info.pid})`);
   }
@@ -222,10 +224,18 @@ export class BashProcessManager {
    *
    * @param id - Process identifier
    */
-  removeProcess(id: string): void {
+  private removeProcess(id: string): void {
     const removed = this.processes.delete(id);
+    this.acknowledgedResults.delete(id);
     if (removed) {
       logger.debug(`[BashProcessManager] Removed process ${id} from tracking`);
+    }
+  }
+
+  /** A completed dependency may be evicted only after its result was delivered. */
+  acknowledgeCompletedResults(ids: readonly string[]): void {
+    for (const id of ids) {
+      if (this.processes.get(id)?.status === 'exited') this.acknowledgedResults.add(id);
     }
   }
 
@@ -392,6 +402,7 @@ export class BashProcessManager {
 
     // Clear all processes from tracking
     this.processes.clear();
+    this.acknowledgedResults.clear();
     logger.info('[BashProcessManager] Shutdown complete');
   }
 
@@ -422,7 +433,9 @@ export class BashProcessManager {
 
     // Find the oldest completed process
     for (const info of this.processes.values()) {
-      if (info.status === 'exited' && info.startTime < oldestTime) {
+      if (info.status === 'exited'
+        && (!info.blocksCompletion || this.acknowledgedResults.has(info.id))
+        && info.startTime < oldestTime) {
         oldestCompleted = info;
         oldestTime = info.startTime;
       }
