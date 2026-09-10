@@ -41,7 +41,7 @@ import { ScheduledTaskManager, ScheduledTask, presetPolicy } from './services/Sc
 import { SchedulerInstaller } from './services/SchedulerInstaller.js';
 import { generateShortId } from './utils/id.js';
 import { atomicWriteFile } from './utils/atomicFile.js';
-import { HeadlessSession, isHeadlessRun } from './headless/index.js';
+import { HeadlessSession, isHeadlessRun, resolveStructuredOutputSchema } from './headless/index.js';
 
 let terminalOutputAvailable = true;
 
@@ -924,6 +924,10 @@ async function main() {
     const parser = new ArgumentParser();
     const options = parser.parse();
 
+    // Resolved before any service exists: a schema the run cannot honor must
+    // fail at startup, not halfway through a turn.
+    const structuredOutputSchema = resolveStructuredOutputSchema(options);
+
     // Initialize ProfileManager EARLY (before any other services)
     const profileManager = new ProfileManager();
     await profileManager.initialize();
@@ -1261,6 +1265,13 @@ async function main() {
     const { createBuiltInTools } = await import('./tools/createBuiltInTools.js');
     const tools = createBuiltInTools(activityStream, config);
 
+    // The caller's schema is a tool for this run only, so interactive sessions
+    // never see it in their catalog.
+    if (structuredOutputSchema) {
+      const { StructuredOutputTool } = await import('./tools/StructuredOutputTool.js');
+      tools.push(new StructuredOutputTool(activityStream, structuredOutputSchema));
+    }
+
     // Initialize marketplace plugin system
     const { MarketplaceManager } = await import('./marketplace/MarketplaceManager.js');
     const { PluginManager } = await import('./marketplace/PluginManager.js');
@@ -1532,6 +1543,17 @@ async function main() {
       };
     }
 
+    // The reminder loop is what forces the call: the turn cannot end until the
+    // model has recorded its answer through the structured-output tool.
+    if (structuredOutputSchema) {
+      const { STRUCTURED_OUTPUT_TOOL } = await import('./tools/StructuredOutputTool.js');
+      agentConfig.requirements = {
+        required_tools_all: [STRUCTURED_OUTPUT_TOOL],
+        reminder_message:
+          `Record your final answer with the ${STRUCTURED_OUTPUT_TOOL} tool before ending your turn.`,
+      };
+    }
+
     const agent = new Agent(
       agentModelClient,
       toolManager,
@@ -1618,6 +1640,11 @@ async function main() {
         model: agentModelClient.modelName,
         toolNames: toolManager.getAllTools().map(tool => tool.name),
       });
+      if (structuredOutputSchema) {
+        registry.registerInstance('structured_output_sink', {
+          set: value => headless.setStructuredOutput(value),
+        });
+      }
       const outcome = await headless.run();
       await cleanExit(exitCodeForRunOutcome(outcome));
       return;

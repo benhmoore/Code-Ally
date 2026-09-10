@@ -5,6 +5,7 @@ export {
   type HeadlessSessionDeps,
 } from './HeadlessSession.js';
 export { JsonlEventWriter, type JsonlEventWriterOptions } from './JsonlEventWriter.js';
+export { parseJsonSchemaOption, resolveStructuredOutputSchema } from './jsonSchemaOption.js';
 export {
   StreamJsonInput,
   parseStreamJsonLine,
