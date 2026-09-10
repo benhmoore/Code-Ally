@@ -421,6 +421,45 @@ describe('RequirementValidator', () => {
     });
   });
 
+  describe('failed attempts in the reminder', () => {
+    it('names a required tool that was called and failed', () => {
+      validator.setRequirements({ required_tools_all: ['structured-output'] });
+      validator.recordToolCall('structured-output', false);
+
+      const { met, reason } = validator.checkRequirements();
+      expect(met).toBe(false);
+      expect(reason).toContain('Called and failed so far: structured-output');
+    });
+
+    it('keeps the note out once the tool finally succeeds', () => {
+      validator.setRequirements({ required_tools_all: ['structured-output', 'read'] });
+      validator.recordToolCall('structured-output', false);
+      validator.recordToolCall('structured-output', true);
+
+      expect(validator.checkRequirements().reason).not.toContain('Called and failed');
+    });
+
+    it('carries the note on a custom reminder, which cannot know the call was tried', () => {
+      validator.setRequirements({
+        required_tools_all: ['structured-output'],
+        reminder_message: 'Record your final answer.',
+      });
+      validator.recordToolCall('structured-output', false);
+
+      expect(validator.getReminderMessage()).toBe(
+        "Record your final answer. Called and failed so far: structured-output. Read that call's error and correct it."
+      );
+    });
+
+    it('clears failed attempts on reset', () => {
+      validator.setRequirements({ required_tools_all: ['structured-output'] });
+      validator.recordToolCall('structured-output', false);
+      validator.reset();
+
+      expect(validator.checkRequirements().reason).not.toContain('Called and failed');
+    });
+  });
+
   describe('complex requirement combinations', () => {
     it('should handle multiple requirement types together', () => {
       validator.setRequirements({

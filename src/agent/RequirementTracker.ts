@@ -136,6 +136,7 @@ export interface AgentRequirements {
 export class RequirementValidator {
   private requirements?: AgentRequirements;
   private successfulToolCalls: Set<string> = new Set();
+  private failedToolCalls: Set<string> = new Set();
   private retryCount: number = 0;
   private instanceId: string;
 
@@ -170,12 +171,27 @@ export class RequirementValidator {
       return; // No requirements to track
     }
 
+    // Requirement lists are written by humans and may use either spelling,
+    // so both sides of the comparison are normalized.
+    const name = normalizeToolName(toolName);
     if (success) {
-      // Requirement lists are written by humans and may use either spelling,
-      // so both sides of the comparison are normalized.
-      this.successfulToolCalls.add(normalizeToolName(toolName));
+      this.successfulToolCalls.add(name);
       logger.debug('[REQUIREMENT_TRACKER]', this.instanceId, 'Recorded successful tool call:', toolName, '- Total successful calls:', this.successfulToolCalls.size);
+      return;
     }
+
+    // A required tool that was called and refused is a different situation
+    // from one that was never called, and it is the whole diagnosis when a
+    // turn ends without the result a requirement exists to force.
+    this.failedToolCalls.add(name);
+    logger.debug('[REQUIREMENT_TRACKER]', this.instanceId, 'Recorded failed tool call:', toolName);
+  }
+
+  /** Tools called this turn that never succeeded, named in every reminder. */
+  private failureNote(): string {
+    const failed = [...this.failedToolCalls].filter(name => !this.successfulToolCalls.has(name));
+    if (failed.length === 0) return '';
+    return ` Called and failed so far: ${failed.join(', ')}. Read that call's error and correct it.`;
   }
 
   /**
@@ -193,7 +209,7 @@ export class RequirementValidator {
     if (reqs.require_tool_use && this.successfulToolCalls.size === 0) {
       return {
         met: false,
-        reason: 'You must use at least one tool successfully before completing this task.',
+        reason: `You must use at least one tool successfully before completing this task.${this.failureNote()}`,
       };
     }
 
@@ -201,7 +217,7 @@ export class RequirementValidator {
     if (reqs.minimum_tool_calls !== undefined && this.successfulToolCalls.size < reqs.minimum_tool_calls) {
       return {
         met: false,
-        reason: `You must make at least ${reqs.minimum_tool_calls} successful tool call(s). Current: ${this.successfulToolCalls.size}`,
+        reason: `You must make at least ${reqs.minimum_tool_calls} successful tool call(s). Current: ${this.successfulToolCalls.size}${this.failureNote()}`,
       };
     }
 
@@ -213,7 +229,7 @@ export class RequirementValidator {
       if (!hasOne) {
         return {
           met: false,
-          reason: `You must use at least one of these tools: ${reqs.required_tools_one_of.join(', ')}`,
+          reason: `You must use at least one of these tools: ${reqs.required_tools_one_of.join(', ')}${this.failureNote()}`,
         };
       }
     }
@@ -226,7 +242,7 @@ export class RequirementValidator {
       if (missing.length > 0) {
         return {
           met: false,
-          reason: `You must use all of these tools: ${reqs.required_tools_all.join(', ')}. Missing: ${missing.join(', ')}`,
+          reason: `You must use all of these tools: ${reqs.required_tools_all.join(', ')}. Missing: ${missing.join(', ')}${this.failureNote()}`,
         };
       }
     }
@@ -264,9 +280,10 @@ export class RequirementValidator {
       return 'Please complete the required actions before finishing.';
     }
 
-    // Use custom message if provided
+    // Use custom message if provided. The failure note still rides along: a
+    // caller-written reminder cannot know that the call was already tried.
     if (this.requirements.reminder_message) {
-      return this.requirements.reminder_message;
+      return `${this.requirements.reminder_message}${this.failureNote()}`;
     }
 
     // Generate message based on which requirement is not met
@@ -283,6 +300,7 @@ export class RequirementValidator {
    */
   reset(): void {
     this.successfulToolCalls.clear();
+    this.failedToolCalls.clear();
     this.retryCount = 0;
     logger.debug('[REQUIREMENT_TRACKER]', this.instanceId, 'Tracker reset');
   }
