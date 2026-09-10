@@ -109,7 +109,10 @@ export class RunSupervisor {
           inFlightNonIdempotent.add(callId);
         }
         if (event.type === 'tool_unknown' && typeof callId === 'string') this.unknownEffects.add(callId);
-        if ((event.type === 'tool_succeeded' || event.type === 'tool_failed') && typeof callId === 'string') {
+        // A verified reconciliation settles ambiguity just as definitively as
+        // an observed tool result. Replay must preserve that decision across
+        // every later process replacement, including crash-left running calls.
+        if (['tool_succeeded', 'tool_failed', 'tool_reconciled'].includes(event.type) && typeof callId === 'string') {
           this.unknownEffects.delete(callId);
           inFlightNonIdempotent.delete(callId);
         }

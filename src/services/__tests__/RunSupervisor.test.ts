@@ -64,6 +64,37 @@ describe('RunSupervisor', () => {
     expect((await supervisor.claimComplete('verified after repair')).accepted).toBe(true);
   });
 
+  it('preserves reconciled effects and objective identity across repeated restarts', async () => {
+    let supervisor = new RunSupervisor(dir);
+    await supervisor.initialize();
+    const run = await supervisor.startRun('finish the multi-day migration', policy);
+    await supervisor.toolStarted('publish-verified', 'bash', 'non_idempotent');
+    await supervisor.toolFinished('publish-verified', 'bash', 'non_idempotent', 'unknown');
+    expect(await supervisor.reconcileToolEffect('publish-verified', 'applied', 'Verified durable destination state')).toBe(true);
+    await supervisor.toolStarted('publish-ambiguous', 'bash', 'non_idempotent');
+
+    for (let restart = 0; restart < 12; restart++) {
+      await supervisor.rolloverEpoch('execution budget renewal');
+      await supervisor.interruptForShutdown('scheduled process replacement');
+      supervisor = new RunSupervisor(dir);
+      await supervisor.initialize();
+      const resumed = await supervisor.resumeRun(run.runId);
+      expect(resumed.objective).toBe(run.objective);
+      expect(resumed.epoch).toBe(restart + 1);
+      const result = await supervisor.claimComplete('not yet');
+      expect(result.accepted).toBe(false);
+      expect(result.blockers.join(' ')).toContain('publish-ambiguous');
+      expect(result.blockers.join(' ')).not.toContain('publish-verified');
+    }
+
+    expect(await supervisor.reconcileToolEffect('publish-ambiguous', 'not_applied', 'Destination proves no effect')).toBe(true);
+    await supervisor.interruptForShutdown('final restart');
+    supervisor = new RunSupervisor(dir);
+    await supervisor.initialize();
+    await supervisor.resumeRun(run.runId);
+    expect((await supervisor.claimComplete('verified migration')).accepted).toBe(true);
+  });
+
   it('does not let an ordinary long-running background server hold completion open', async () => {
     ServiceRegistry.getInstance().registerInstance('background_task_registry', {
       list: () => [{
