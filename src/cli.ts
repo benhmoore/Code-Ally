@@ -135,31 +135,11 @@ async function performCleanExit(): Promise<void> {
   // Flush pending session saves if registry exists
   const ServiceRegistry = (await import('./services/ServiceRegistry.js')).ServiceRegistry;
   const registry = ServiceRegistry.getInstance();
-  try {
-    const runSupervisor = registry.get('run_supervisor');
-    await runSupervisor?.interruptForShutdown('Owning Code-Ally process closed');
-
-    const agent = registry.get('agent');
-    agent?.interrupt({ kind: 'user_cancel' });
-
-    const backgroundTaskRegistry = registry.get('background_task_registry');
-    await backgroundTaskRegistry?.shutdown();
-
-    // Shutdown background bash processes if manager exists
-    const bashProcessManager = registry.get('bash_process_manager');
-    if (bashProcessManager && typeof bashProcessManager.shutdown === 'function') {
-      await bashProcessManager.shutdown();
-    }
-
-    // Shutdown background agents if manager exists
-    const backgroundAgentManager = registry.get('background_agent_manager');
-    if (backgroundAgentManager && typeof backgroundAgentManager.shutdown === 'function') {
-      await backgroundAgentManager.shutdown();
-    }
-
-    await registry.shutdown();
-  } catch (error) {
-    // Ignore errors during shutdown - already exiting
+  const { shutdownApplication } = await import('./services/shutdownApplication.js');
+  const failures = await shutdownApplication(registry);
+  if (failures.length) {
+    if (requestedExitCode === 0) requestedExitCode = 1;
+    for (const failure of failures) logger.error(failure.message, failure.cause);
   }
 
   // Wait for stdout to drain before exiting
