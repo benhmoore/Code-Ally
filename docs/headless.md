@@ -86,6 +86,14 @@ The session answers with a `control_response` carrying the same `request_id`.
 The interrupted turn still emits its own `result`, with subtype
 `error_during_execution`.
 
+A message sent right after an interrupt lands one of two ways, decided by
+whether the turn has finished unwinding: as an interjection continuing that
+turn, giving one `result` that carries both the `error_during_execution`
+subtype and the final answer, or as a fresh turn, giving a bare
+`error_during_execution` result followed by a `success` one. Both are correct.
+Read the answer off `structured_output` or `result`, never off the subtype
+alone.
+
 A line that is not valid JSON, or not one of these two shapes, is reported on
 stderr and the session keeps reading. The process exits when stdin closes and
 the current turn has ended.

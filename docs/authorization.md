@@ -49,8 +49,13 @@ works:
 | `Edit`, `MultiEdit` | `apply-patch` |
 | `Task` | `agent` |
 | `TodoWrite` | `todo-write` |
-| `mcp__github__create_issue` | `mcp-github-create_issue` |
+| `mcp__github__create_issue` | `mcp-github-create-issue` |
 | `mcp__github__*` | every tool from the `github` MCP server |
+| `mcp__plugin_gitea-mcp_gitea__gitea_clone` | `mcp-gitea-gitea-clone` |
+
+A server a plugin provides is named `plugin_<plugin>_<server>` by Claude Code
+and by its bare server key here, so only the last segment carries over. Each
+part is then kebab-cased, matching how MCP tools are registered.
 
 The same normalization applies to `required_tools_all` and
 `required_tools_one_of` in agent requirements, so a list written either way

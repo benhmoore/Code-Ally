@@ -16,6 +16,8 @@ Code Ally gives you an AI that lives where you work—your terminal. It reads yo
 - **Plugins** — Extend with custom tools and agents in Python or Node.js
 - **Change tracking** — Full undo support for file modifications
 - **Session persistence** — Resume conversations across restarts
+- **Hooks** — Run your own commands at session and tool boundaries to enforce policy
+- **Headless mode** — Drive Ally over a JSON protocol and read typed results back
 
 ## Recommended Models
 
