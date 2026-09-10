@@ -160,6 +160,18 @@ describe('extractSemanticCheckpoint', () => {
     expect(state.blockers[0]!.exactError).toContain('exited with status 1');
   });
 
+  it('preserves significant whitespace in literal error evidence', () => {
+    const exactError = '  Expected: "value   # note"\n\tActual: "value  # note"\n';
+    const preserved = extractSemanticCheckpoint([toolResult({
+      id: 'literal-error',
+      name: 'apply-patch',
+      content: envelopeContent('literal-error-call', { success: false, error: exactError }),
+    })]);
+    expect(preserved.blockers[0]!.exactError).toBe(exactError);
+    const carried = extractSemanticCheckpoint([], preserved);
+    expect(carried.blockers[0]!.exactError).toBe(exactError);
+  });
+
   it('classifies structured tool failures as blockers with the exact error', () => {
     const messages: Message[] = [
       toolResult({

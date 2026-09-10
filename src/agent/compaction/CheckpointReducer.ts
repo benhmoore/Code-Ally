@@ -152,8 +152,12 @@ function toolResultFailed(
 }
 
 function toolErrorText(payload: string, envelope: Record<string, unknown> | null): string {
-  const envelopeError = typeof envelope?.error === 'string' ? envelope.error.trim() : '';
-  return oneLine(envelopeError || payload).slice(0, TOOL_ERROR_MAX_CHARS);
+  const envelopeError = typeof envelope?.error === 'string' && envelope.error.trim().length > 0
+    ? envelope.error
+    : payload;
+  // Diagnostics may quote whitespace-sensitive source. Bound the retained
+  // excerpt without rewriting tabs, line breaks, or repeated spaces.
+  return envelopeError.slice(0, TOOL_ERROR_MAX_CHARS);
 }
 
 /**
