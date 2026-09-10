@@ -50,6 +50,7 @@
     "commander": "^14.0.1",
     "diff": "^8.0.2",
     "fast-glob": "^3.3.2",
+    "fs-native-extensions": "^1.5.1",
     "ink": "^4.4.1",
     "marked": "^16.4.1",
     "openai": "^7.4.0",

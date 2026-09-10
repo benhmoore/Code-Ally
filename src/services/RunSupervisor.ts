@@ -5,6 +5,7 @@ import { getProjectRunsDir } from '../config/paths.js';
 import { atomicWriteFile } from '../utils/atomicFile.js';
 import type { RunPolicy } from './RunPolicyManager.js';
 import { ServiceRegistry } from './ServiceRegistry.js';
+import { FileOwnership } from '../utils/FileOwnership.js';
 
 export type RunStatus =
   | 'running'
@@ -44,7 +45,7 @@ export interface RunJournalEvent {
 }
 
 /**
- * Process-local owner for durable objectives. The journal survives a crash, but
+ * Exclusive process owner for durable objectives. The journal survives a crash, but
  * this service never restarts work after the owning process has closed.
  */
 export class RunSupervisor {
@@ -52,16 +53,20 @@ export class RunSupervisor {
   private sequence = 0;
   private writeQueue: Promise<void> = Promise.resolve();
   private readonly unknownEffects = new Set<string>();
+  private ownership?: FileOwnership;
+  private activationQueue: Promise<unknown> = Promise.resolve();
 
   constructor(private readonly runsDir = getProjectRunsDir()) {}
 
   async initialize(): Promise<void> {
     await fs.mkdir(this.runsDir, { recursive: true });
-    // A state left running has no live owner after process startup. Reconcile it
-    // to interrupted, but never execute it; only resumeRun may reactivate it.
+    // Reconcile only while holding ownership. A different process may still be
+    // executing the objective, even if its last write was arbitrarily long ago.
     const entries = await fs.readdir(this.runsDir, { withFileTypes: true });
     await Promise.all(entries.filter((entry) => entry.isDirectory()).map(async (entry) => {
       const statePath = path.join(this.runsDir, entry.name, 'state.json');
+      const ownership = await FileOwnership.acquire(path.join(this.runsDir, entry.name, 'owner.lock'));
+      if (!ownership) return;
       try {
         const snapshot = JSON.parse(await fs.readFile(statePath, 'utf8')) as RunSnapshot;
         if (snapshot.version !== 1 || !['running', 'waiting_retry'].includes(snapshot.status)) return;
@@ -70,6 +75,7 @@ export class RunSupervisor {
         snapshot.outcome = { kind: 'cancelled', reason: 'Previous Code-Ally process ended without a clean handoff' };
         await atomicWriteFile(statePath, `${JSON.stringify(snapshot, null, 2)}\n`);
       } catch { /* corrupt run state remains inspectable on disk */ }
+      finally { await ownership.release(); }
     }));
   }
 
@@ -89,7 +95,26 @@ export class RunSupervisor {
 
   /** Explicitly resume a journaled run. Startup never calls this automatically. */
   async resumeRun(runId: string): Promise<RunSnapshot> {
+    return this.serializeActivation(() => this.resumeOwnedRun(runId));
+  }
+
+  private async resumeOwnedRun(runId: string): Promise<RunSnapshot> {
     if (this.isRunning()) throw new Error('A durable objective is already running');
+    await this.releaseOwnership();
+    const ownership = await FileOwnership.acquire(path.join(this.runDir(runId), 'owner.lock'));
+    if (!ownership) throw new Error(`Run ${runId} is owned by another live supervisor`);
+    this.ownership = ownership;
+    try {
+      return await this.recoverRun(runId);
+    } catch (error) {
+      this.active = undefined;
+      await ownership.release();
+      this.ownership = undefined;
+      throw error;
+    }
+  }
+
+  private async recoverRun(runId: string): Promise<RunSnapshot> {
     const statePath = path.join(this.runDir(runId), 'state.json');
     const snapshot = JSON.parse(await fs.readFile(statePath, 'utf8')) as RunSnapshot;
     if (snapshot.version !== 1 || snapshot.runId !== runId) throw new Error('Invalid run state');
@@ -153,13 +178,23 @@ export class RunSupervisor {
   }
 
   async startRun(objective: string, policy: RunPolicy): Promise<RunSnapshot> {
+    return this.serializeActivation(() => this.startOwnedRun(objective, policy));
+  }
+
+  private async startOwnedRun(objective: string, policy: RunPolicy): Promise<RunSnapshot> {
     if (this.isRunning()) return this.active!;
+    await this.releaseOwnership();
+    const runId = randomUUID();
+    await fs.mkdir(this.runDir(runId), { recursive: true });
+    const ownership = await FileOwnership.acquire(path.join(this.runDir(runId), 'owner.lock'));
+    if (!ownership) throw new Error(`Run ${runId} is owned by another live supervisor`);
+    this.ownership = ownership;
     const now = Date.now();
     this.sequence = 0;
     this.unknownEffects.clear();
     this.active = {
       version: 1,
-      runId: randomUUID(),
+      runId,
       objective,
       policy: { ...policy },
       status: 'running',
@@ -167,12 +202,20 @@ export class RunSupervisor {
       startedAt: now,
       updatedAt: now,
     };
-    await this.record('run_started', { objective });
+    try {
+      await this.record('run_started', { objective });
+    } catch (error) {
+      this.active = undefined;
+      await ownership.release();
+      this.ownership = undefined;
+      throw error;
+    }
     return this.active;
   }
 
   async record(type: string, data?: Record<string, unknown>): Promise<void> {
     if (!this.active) return;
+    if (!this.ownership) throw new Error('Cannot journal a run without exclusive ownership');
     this.active.updatedAt = Date.now();
     const event: RunJournalEvent = {
       sequence: ++this.sequence,
@@ -307,10 +350,17 @@ export class RunSupervisor {
   }
 
   async interruptForShutdown(reason: string): Promise<void> {
-    if (!this.active || !this.isRunning()) return;
-    this.active.status = 'interrupted';
-    this.active.outcome = { kind: 'cancelled', reason };
-    await this.record('run_interrupted', { reason });
+    await this.serializeActivation(async () => {
+      try {
+        if (this.active && this.isRunning()) {
+          this.active.status = 'interrupted';
+          this.active.outcome = { kind: 'cancelled', reason };
+          await this.record('run_interrupted', { reason });
+        }
+      } finally {
+        await this.releaseOwnership();
+      }
+    });
   }
 
   async flush(): Promise<void> {
@@ -318,6 +368,28 @@ export class RunSupervisor {
   }
 
   private runDir(runId: string): string {
+    if (!runId || runId === '.' || runId === '..' || /[/\\]/.test(runId)) {
+      throw new Error('Invalid run identifier');
+    }
     return path.join(this.runsDir, runId);
+  }
+
+  private serializeActivation<T>(operation: () => Promise<T>): Promise<T> {
+    const result = this.activationQueue.then(operation);
+    this.activationQueue = result.catch(() => undefined);
+    return result;
+  }
+
+  private async releaseOwnership(): Promise<void> {
+    // Stop admitting journal writes before draining those already accepted.
+    // Ownership is retained through terminal tool-result bookkeeping, until
+    // shutdown or the next objective explicitly retires this run.
+    const ownership = this.ownership;
+    this.ownership = undefined;
+    try {
+      await this.flush();
+    } finally {
+      await ownership?.release();
+    }
   }
 }
