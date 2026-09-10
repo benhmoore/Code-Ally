@@ -50,6 +50,34 @@ describe('explicit session snapshot ownership', () => {
     }
   });
 
+  it('reads session fields independently of archived conversation contents', async () => {
+    const transcript: Message[] = Array.from({ length: 130 }, (_, index) => ({
+      id: `history-${index}`, role: 'user', content: `message ${index}`,
+    }));
+    await manager.saveSession('owned', transcript.slice(-1), transcript);
+    const todos: TodoItem[] = [{ id: 'next', task: 'continue', status: 'pending' }];
+    const projectContext = {
+      languages: ['Python'], frameworks: [], hasGit: false,
+      scale: 'small' as const, detectedAt: new Date().toISOString(),
+    };
+    await manager.updateSession('owned', {
+      todos, idle_messages: ['waiting'], project_context: projectContext,
+    });
+    const reader = new SessionManager({ sessionsDir: dir });
+    reader.setCurrentSession('owned');
+    const readSegment = vi.spyOn(reader as any, 'readTranscriptSegment');
+    const loadedTodos = await reader.getTodos();
+    expect(loadedTodos).toEqual(todos);
+    expect(await reader.getIdleMessages()).toEqual(['waiting']);
+    expect(await reader.getProjectContext()).toEqual(projectContext);
+    expect(readSegment).not.toHaveBeenCalled();
+    loadedTodos[0]!.task = 'caller mutation';
+    expect(await reader.getTodos()).toEqual(todos);
+    expect(await reader.getTodos('absent')).toEqual([]);
+    expect(await reader.getIdleMessages('absent')).toEqual([]);
+    expect(await reader.getProjectContext('absent')).toBeNull();
+  });
+
   it.each(['save', 'replace', 'checkpoint'] as const)('owns messages and related state at %s admission', async mode => {
     const messages: Message[] = [{ id: 'm1', role: 'user', content: 'submitted' }];
     const transcript = structuredClone(messages);

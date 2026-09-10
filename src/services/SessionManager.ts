@@ -1157,7 +1157,7 @@ export class SessionManager implements IService {
     const name = sessionName ?? this.currentSession;
     if (!name) return [];
 
-    const session = await this.loadSession(name);
+    const session = await this.loadSessionManifest(name);
     return session?.todos ?? [];
   }
 
@@ -1171,7 +1171,7 @@ export class SessionManager implements IService {
     const name = sessionName ?? this.currentSession;
     if (!name) return [];
 
-    const session = await this.loadSession(name);
+    const session = await this.loadSessionManifest(name);
     const messages = session?.idle_messages ?? [];
     logger.debug(`[SESSION] getIdleMessages for ${name}: ${messages.length} messages - ${JSON.stringify(messages.slice(0, 3))}...`);
     return messages;
@@ -1187,7 +1187,7 @@ export class SessionManager implements IService {
     const name = sessionName ?? this.currentSession;
     if (!name) return null;
 
-    const session = await this.loadSession(name);
+    const session = await this.loadSessionManifest(name);
     return session?.project_context ?? null;
   }
 
