@@ -5,6 +5,8 @@ describe('runtime tool selection', () => {
   it('exposes checkpoint retrieval only when there is a checkpoint to read', () => {
     expect(getRuntimeToolExclusions({ planModeActive: false })).toContain('read-checkpoint');
     expect(getRuntimeToolExclusions({ planModeActive: false, hasCheckpoint: true })).not.toContain('read-checkpoint');
+    expect(getRuntimeToolExclusions({ planModeActive: false })).toContain('read-history');
+    expect(getRuntimeToolExclusions({ planModeActive: false, hasCheckpoint: true })).not.toContain('read-history');
   });
 
   it('hides stateful and intent-specific tools on an ordinary first turn', () => {
@@ -17,6 +19,7 @@ describe('runtime tool selection', () => {
       'agent-ask',
       'cleanup-call',
       'read-checkpoint',
+      'read-history',
       'bash-output',
       'kill-shell',
       'cancel-agent',

@@ -15,6 +15,7 @@ export { WaitTool } from './WaitTool.js';
 export { WatchTool } from './WatchTool.js';
 export { ReadTool } from './ReadTool.js';
 export { ReadCheckpointTool } from './ReadCheckpointTool.js';
+export { ReadHistoryTool } from './ReadHistoryTool.js';
 export { GrepTool } from './GrepTool.js';
 export { GlobTool } from './GlobTool.js';
 export { LsTool } from './LsTool.js';
