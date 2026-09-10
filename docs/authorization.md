@@ -32,6 +32,12 @@ For each tool call, in order:
    were given. Auto-confirm, auto-allow mode, session trust and the
    interactive prompt all still apply.
 
+Step 5 has no prompt to fall back on in a headless run, so a tool that
+requires confirmation and is not named by `--allowed-tools` is refused with
+`Automatic run cannot request permission for <tool>`. Name every tool an
+unattended run needs; a partial allow list reads as a working config and fails
+at the first unnamed call.
+
 Step 5 is what separates these flags from a scheduled task. A scheduled task
 runs under a code-owned policy preset that denies anything it does not name,
 because an unattended run has nobody to ask. Combining `--scheduled-task` with
