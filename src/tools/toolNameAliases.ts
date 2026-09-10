@@ -8,6 +8,8 @@
  * name here so one config file works under either host.
  */
 
+import { toKebabCase } from '../utils/namingValidation.js';
+
 const CLAUDE_BUILTIN_ALIASES: Readonly<Record<string, string>> = {
   bash: 'bash',
   read: 'read',
@@ -26,14 +28,28 @@ const CLAUDE_BUILTIN_ALIASES: Readonly<Record<string, string>> = {
 };
 
 const MCP_CLAUDE_PATTERN = /^mcp__(.+?)__(.+)$/;
+// Claude names a plugin-provided server `plugin_<plugin>_<server>`; Ally names
+// it by the bare server key, so only the last segment carries over.
+const CLAUDE_PLUGIN_SERVER_PATTERN = /^plugin_.+_([^_]+)$/;
 
 /** Resolve any accepted spelling of a tool name to its Ally name. */
 export function normalizeToolName(name: string): string {
   const trimmed = name.trim();
   const mcp = MCP_CLAUDE_PATTERN.exec(trimmed);
-  if (mcp) return `mcp-${mcp[1]}-${mcp[2]}`;
+  if (mcp) {
+    const server = CLAUDE_PLUGIN_SERVER_PATTERN.exec(mcp[1]!)?.[1] ?? mcp[1]!;
+    return `mcp-${mcpPart(server)}-${mcpPart(mcp[2]!)}`;
+  }
   const lower = trimmed.toLowerCase();
   return CLAUDE_BUILTIN_ALIASES[lower] ?? lower;
+}
+
+/** Mirror of `MCPTool` naming: each part is kebab-case, `*` survives for globs. */
+function mcpPart(value: string): string {
+  return value
+    .split('*')
+    .map((segment) => toKebabCase(segment))
+    .join('*');
 }
 
 /**
