@@ -63,7 +63,7 @@ describe('ReadTool', () => {
       const result = await readTool.execute(
         { file_path: testFile, offset: 1, limit: 1 }, 'bounded-read', undefined, false, false,
         { outputBudget: {
-          limitTokens: 1, estimatedTokens: 1, rejectedCallIds: new Set(),
+          limitTokens: 1,
           maxResultTokensByCallId: new Map([['bounded-read', 1]]),
         } },
       );
@@ -100,7 +100,7 @@ describe('ReadTool', () => {
       expect(result.suggestion).toContain('known-small');
     });
 
-    it('does not execute when its parallel group exceeds the shared output budget', async () => {
+    it('accepts a small read within its shared output allowance', async () => {
       const result = await readTool.execute(
         { file_path: testFile },
         'read-over-budget',
@@ -110,16 +110,13 @@ describe('ReadTool', () => {
         {
           outputBudget: {
             limitTokens: 1_000,
-            estimatedTokens: 1_600,
-            rejectedCallIds: new Set(['read-over-budget']),
-            maxResultTokensByCallId: new Map(),
+            maxResultTokensByCallId: new Map([['read-over-budget', 500]]),
           },
         },
       );
 
-      expect(result.success).toBe(false);
-      expect(result.error).toContain('combined non-truncatable outputs');
-      expect(result.suggestion).toContain('split the reads');
+      expect(result.success).toBe(true);
+      expect(result.content).toContain('Line 5');
     });
 
     it('should include line numbers', async () => {

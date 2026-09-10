@@ -15,6 +15,10 @@ import type { ToolCall } from '../../types/index.js';
 import { ServiceRegistry } from '../../services/ServiceRegistry.js';
 import { ToolResultManager } from '../../services/ToolResultManager.js';
 import { TokenManager } from '../TokenManager.js';
+import { ReadTool } from '../../tools/ReadTool.js';
+import { promises as fs } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 describe('ToolOrchestrator Exploratory Tracking', () => {
   let orchestrator: ToolOrchestrator;
@@ -242,17 +246,42 @@ describe('ToolOrchestrator Exploratory Tracking', () => {
   });
 
   describe('Batch output budgeting', () => {
-    it('reserves one shared allowance for non-truncatable results in call order', () => {
+    it('admits six small read results within one bounded batch', async () => {
+      const dir = await fs.mkdtemp(join(tmpdir(), 'ally-read-batch-'));
+      const file = join(dir, 'source.txt');
+      await fs.writeFile(file, Array.from({ length: 40 }, (_, index) => `line ${index}`).join('\n'));
+      const read = new ReadTool(activityStream);
+      const agent = { ...mockAgent, getInstanceId: vi.fn().mockReturnValue('agent-budget') };
+      const local = new ToolOrchestrator(new ToolManager([read]), activityStream, agent, agentConfig);
+      const get = vi.spyOn(ServiceRegistry.getInstance(), 'get').mockImplementation(((name: string) => {
+        if (name !== 'context_budget') return null;
+        return { get: () => ({ usableBudget: 10_000, maxToolBatchTokens: 3_000, maxToolResultTokens: 1_500 }) };
+      }) as any);
+      try {
+        const calls = Array.from({ length: 6 }, (_, index) => createToolCall('read', `read-${index}`));
+        const outputBudget = (local as any).createBatchOutputBudget(calls);
+        expect([...outputBudget.maxResultTokensByCallId.values()]).toEqual(Array(6).fill(500));
+        const results = await Promise.all(calls.map((call, index) => read.execute(
+          { file_path: file, offset: index * 6 + 1, limit: 6 },
+          call.id, undefined, false, false, { outputBudget },
+        )));
+        expect(results.every(result => result.success)).toBe(true);
+        expect(results.map(result => result.total_lines)).toEqual(Array(6).fill(6));
+      } finally {
+        get.mockRestore();
+        await fs.rm(dir, { recursive: true, force: true });
+      }
+    });
+
+    it('assigns enforceable shares to both reads and truncatable outputs', () => {
       const budgetedTool = {
         name: 'read',
         description: 'Read',
-        requiresReservedContext: true,
         getEstimatedOutputSize: () => 800,
       };
       const ordinaryTool = {
         name: 'grep',
         description: 'Grep',
-        requiresReservedContext: false,
         getEstimatedOutputSize: () => 600,
       };
       const tm = new ToolManager([budgetedTool as any, ordinaryTool as any]);
@@ -277,9 +306,9 @@ describe('ToolOrchestrator Exploratory Tracking', () => {
         ]);
 
         expect(budget.limitTokens).toBe(1_000);
-        expect(budget.estimatedTokens).toBe(1_600);
-        expect([...budget.rejectedCallIds]).toEqual(['read-2']);
-        expect([...budget.maxResultTokensByCallId]).toEqual([['grep-1', 200]]);
+        expect([...budget.maxResultTokensByCallId]).toEqual([
+          ['read-1', 333], ['grep-1', 333], ['read-2', 333],
+        ]);
       } finally {
         get.mockRestore();
       }
@@ -289,7 +318,6 @@ describe('ToolOrchestrator Exploratory Tracking', () => {
       const ordinaryTool = {
         name: 'grep',
         description: 'Grep',
-        requiresReservedContext: false,
       };
       const tm = new ToolManager([ordinaryTool as any]);
       const agent = { ...mockAgent, getInstanceId: vi.fn().mockReturnValue('agent-budget') };

@@ -214,12 +214,6 @@ export abstract class BaseTool {
   readonly alwaysShowFullOutput: boolean = false;
 
   /**
-   * Whether this tool's result must fit in conversation without truncation.
-   * The orchestrator reserves a shared batch allowance for tools that opt in.
-   */
-  readonly requiresReservedContext: boolean = false;
-
-  /**
    * Whether this tool should collapse its children when complete
    * Set to true for tools that should hide their output/children after completion
    * (e.g., subagents that should show only their summary line)
@@ -419,17 +413,6 @@ export abstract class BaseTool {
           await this.validateFilesystemArgs(args);
           if (abortSignal?.aborted) {
             throw new Error('AbortError: Tool execution was interrupted');
-          }
-
-          const outputBudget = executionContext?.outputBudget;
-          if (this.requiresReservedContext && callId && outputBudget?.rejectedCallIds.has(callId)) {
-            return this.formatErrorResponse(
-              `The combined non-truncatable outputs requested in this tool batch reserve `
-              + `${outputBudget.estimatedTokens} tokens, exceeding the safe batch budget of `
-              + `${outputBudget.limitTokens} tokens.`,
-              'validation_error',
-              'Reduce each read range, issue fewer parallel reads, or split the reads across model turns.'
-            );
           }
 
           return await this.executeImpl(args, callId, isUserInitiated, isContextFile, executionContext);

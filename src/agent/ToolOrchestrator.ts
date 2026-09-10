@@ -325,10 +325,8 @@ export class ToolOrchestrator {
 
   /**
    * Allocate retained-tail space across an entire assistant tool-call group.
-   * Non-truncatable calls reserve their full published ceiling in assistant
-   * order; calls that cannot fit are rejected before execution. Truncatable
-   * calls share what remains so parallel results cannot each independently
-   * consume the whole context allowance.
+   * Each call receives an enforceable share, independent of tool type. Reads
+   * reject oversized prepared output; other tools may truncate their output.
    */
   private createBatchOutputBudget(toolCalls: readonly ToolCall[]): ToolExecutionContext['outputBudget'] | undefined {
     if (toolCalls.length < 2) return undefined;
@@ -337,38 +335,15 @@ export class ToolOrchestrator {
     const snapshot = ServiceRegistry.getInstance().get('context_budget')?.get(agentId);
     if (!snapshot) return undefined;
 
-    // Reserve the published per-result ceiling, not a hopeful average. A
-    // non-truncatable tool is allowed to return anything up to that ceiling;
-    // reserving less recreates the exact overcommit this guard prevents.
-    const estimates = toolCalls.map(call => {
-      const tool = this.toolManager.getTool(call.function.name);
-      return tool?.requiresReservedContext ? snapshot.maxToolResultTokens : 0;
-    });
-    const estimatedTokens = estimates.reduce((sum, estimate) => sum + estimate, 0);
-
-    let reserved = 0;
-    const rejectedCallIds = new Set<string>();
-    for (let index = 0; index < toolCalls.length; index++) {
-      const estimate = estimates[index] ?? 0;
-      if (estimate === 0) continue;
-      if (reserved + estimate <= snapshot.maxToolBatchTokens) reserved += estimate;
-      else rejectedCallIds.add(toolCalls[index]!.id);
-    }
-
-    const truncatableCalls = toolCalls.filter((call, index) =>
-      (estimates[index] ?? 0) === 0 && !rejectedCallIds.has(call.id)
-    );
-    const remaining = Math.max(0, snapshot.maxToolBatchTokens - reserved);
-    const sharedLimit = truncatableCalls.length > 0
-      ? Math.max(1, Math.min(snapshot.maxToolResultTokens, Math.floor(remaining / truncatableCalls.length)))
-      : 0;
+    const sharedLimit = Math.max(0, Math.min(
+      snapshot.maxToolResultTokens,
+      Math.floor(snapshot.maxToolBatchTokens / toolCalls.length),
+    ));
     const maxResultTokensByCallId = new Map<string, number>();
-    for (const call of truncatableCalls) maxResultTokensByCallId.set(call.id, sharedLimit);
+    for (const call of toolCalls) maxResultTokensByCallId.set(call.id, sharedLimit);
 
     return {
       limitTokens: snapshot.maxToolBatchTokens,
-      estimatedTokens,
-      rejectedCallIds,
       maxResultTokensByCallId,
     };
   }

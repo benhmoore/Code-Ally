@@ -657,14 +657,11 @@ export interface ToolExecutionContext {
   /** Form response data from user interaction (populated after form submission) */
   formResponse?: Record<string, any>;
   /**
-   * Shared allowance for non-truncatable outputs produced by one assistant
-   * tool-call group. Calls listed here still pass normal validation, but return
-   * a bounded context-budget error before execution.
+   * Shared output allowance for one assistant tool-call group. Non-truncatable
+   * tools enforce their assigned ceiling before accepting prepared output.
    */
   outputBudget?: {
     limitTokens: number;
-    estimatedTokens: number;
-    rejectedCallIds: ReadonlySet<string>;
     /** Per-call payload ceilings whose sum fits within limitTokens. */
     maxResultTokensByCallId: ReadonlyMap<string, number>;
   };

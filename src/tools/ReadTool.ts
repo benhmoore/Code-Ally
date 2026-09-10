@@ -28,7 +28,6 @@ export class ReadTool extends BaseTool {
     'Read file text by line and column.';
   readonly capabilities = [ToolCapability.FsRead] as const;
   readonly isExploratoryTool = true;
-  readonly requiresReservedContext = true;
   readonly hideOutput = true; // Hide file content from user, show summary in subtext
 
   readonly usageGuidance = `**When to use read:**
