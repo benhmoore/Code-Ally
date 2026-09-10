@@ -975,24 +975,26 @@ export class Agent {
       throw new Error('Agent is already processing a turn; submit this message as an interjection instead.');
     }
 
-    // UserPromptSubmit belongs to the session, so only the root agent fires it.
-    // A block answers the user directly, with no model call.
-    const hookRunner = ServiceRegistry.getInstance().get('hook_runner');
-    if (!this.config.isSpecializedAgent && hookRunner?.hasHooks('UserPromptSubmit')) {
-      const verdict = await hookRunner.run('UserPromptSubmit', { prompt: message });
-      if (verdict.kind === 'block') return verdict.reason;
-      if (verdict.additionalContext.length > 0) {
-        message = [message, ...verdict.additionalContext].join('\n\n');
-      }
-    }
-
     // Claim the agent before the first await. Preparation and finalization are
     // part of the turn too; allowing another sendMessage during either phase
-    // corrupts the shared interruption, context, and lifecycle state.
+    // corrupts the shared interruption, context, and lifecycle state. A hook
+    // can hold its await open for its whole timeout, so it runs claimed and
+    // the finally below releases the claim on its block path too.
     this.turnAdmissionActive = true;
     let finishTurn!: () => void;
     this.turnCompletion = new Promise<void>(resolve => { finishTurn = resolve; });
     try {
+      // UserPromptSubmit belongs to the session, so only the root agent fires
+      // it. A block answers the user directly, with no model call.
+      const hookRunner = ServiceRegistry.getInstance().get('hook_runner');
+      if (!this.config.isSpecializedAgent && hookRunner?.hasHooks('UserPromptSubmit')) {
+        const verdict = await hookRunner.run('UserPromptSubmit', { prompt: message });
+        if (verdict.kind === 'block') return verdict.reason;
+        if (verdict.additionalContext.length > 0) {
+          message = [message, ...verdict.additionalContext].join('\n\n');
+        }
+      }
+
       const waitedForOperation = this.conversationOperations.hasWork;
       if (waitedForOperation) await this.conversationOperations.drain();
       if (this.closing) throw new Error('Agent is closing and cannot begin the admitted turn');
