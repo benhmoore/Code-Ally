@@ -85,6 +85,9 @@ export async function runFleetDelegation(p: FleetDelegationParams): Promise<Flee
       status = 'error';
       task.error = [task.error, `Delegation cleanup failed: ${formatError(error)}`].filter(Boolean).join('\n');
     }
+    if (cleanupFailures.length) {
+      task.finalizationError = new AggregateError(cleanupFailures, 'Delegation cleanup failed');
+    }
     task.status = status;
     task.endTime = Date.now();
     try {
@@ -111,9 +114,10 @@ export async function runFleetDelegation(p: FleetDelegationParams): Promise<Flee
     } catch (error) {
       task.status = 'error';
       task.error = [task.error, `Delegation publication failed: ${formatError(error)}`].filter(Boolean).join('\n');
-      throw new AggregateError([...cleanupFailures, error], 'Delegation finalization failed');
+      task.finalizationError = new AggregateError([...cleanupFailures, error], 'Delegation finalization failed');
+      throw task.finalizationError;
     }
-    if (cleanupFailures.length) throw new AggregateError(cleanupFailures, 'Delegation cleanup failed');
+    if (task.finalizationError) throw task.finalizationError;
   });
   // Observe detached rejection without replacing the authoritative promise.
   void task.promise.catch(error => logger.error(`[fleetDelegation] Finalization failed for ${task.id}:`, error));

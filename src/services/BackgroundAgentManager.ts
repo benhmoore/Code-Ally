@@ -51,13 +51,15 @@ export interface BackgroundAgentTask {
   result: string | null;
   /** Error message (populated when status === 'error') */
   error: string | null;
+  /** Resource release or completion publication failure; delivery cannot discharge it. */
+  finalizationError: Error | null;
   /** Unix timestamp when the run started */
   startTime: number;
   /** Unix timestamp when the run settled (null while running) */
   endTime: number | null;
   /** Whether the result has been drained into the parent conversation yet */
   consumed: boolean;
-  /** The run promise (awaited by the tool for foreground; detached for background) */
+  /** Complete execution, cleanup, and publication settlement (rejects on finalization failure). */
   promise: Promise<void>;
   /** The sub-agent instance — used for cancellation, transcript + token reads */
   subAgent: Agent;
@@ -127,6 +129,7 @@ export class BackgroundAgentManager {
       status: 'running',
       result: null,
       error: null,
+      finalizationError: null,
       startTime: Date.now(),
       endTime: null,
       consumed: false,
@@ -175,6 +178,10 @@ export class BackgroundAgentManager {
   }
 
   removeTask(id: string): void {
+    const task = this.tasks.get(id);
+    if (task?.status === 'running' || task?.finalizationError) {
+      throw new Error(`Cannot remove agent ${id} before successful finalization`);
+    }
     if (this.tasks.delete(id)) {
       logger.debug(`[BackgroundAgentManager] Removed agent ${id} from tracking`);
     }
@@ -336,16 +343,16 @@ export class BackgroundAgentManager {
   }
 
   /**
-   * Remove the oldest settled (non-running) run from tracking.
+   * Remove the oldest consumed run whose finalization succeeded.
    *
-   * @returns true if a run was removed, false if all runs are still running
+   * @returns true if a run was removed, false if every run still requires retention
    */
   private removeOldestCompleted(): boolean {
     let oldest: BackgroundAgentTask | null = null;
     let oldestTime = Infinity;
 
     for (const task of this.tasks.values()) {
-      if (task.status !== 'running' && task.consumed && task.startTime < oldestTime) {
+      if (task.status !== 'running' && !task.finalizationError && task.consumed && task.startTime < oldestTime) {
         oldest = task;
         oldestTime = task.startTime;
       }

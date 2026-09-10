@@ -77,4 +77,40 @@ describe('delegation settlement ownership', () => {
     expect(params.run).not.toHaveBeenCalled();
     expect(params.cleanup).toHaveBeenCalledOnce();
   });
+
+  it('does not evict a consumed finalization failure under retention pressure', async () => {
+    const params = fixture();
+    params.manager = new BackgroundAgentManager(1);
+    params.runInBackground = true;
+    params.cleanup = vi.fn(async () => { throw new Error('release failed'); });
+    await runFleetDelegation(params);
+    const failed = params.manager.listTasks()[0];
+    await expect(failed.promise).rejects.toThrow('Delegation cleanup failed');
+    params.manager.acknowledgeCompletedResults([failed.id]);
+    expect(() => params.manager.removeTask(failed.id)).toThrow('successful finalization');
+
+    params.cleanup = vi.fn(async () => {});
+    for (let index = 0; index < 3; index++) {
+      const outcome = await runFleetDelegation(params);
+      if (!outcome.backgrounded) throw new Error('Expected background task');
+      await params.manager.getTask(outcome.taskId)!.promise;
+      params.manager.acknowledgeCompletedResults([outcome.taskId]);
+    }
+    expect(params.manager.getTask(failed.id)).toBe(failed);
+    await expect(params.manager.shutdown()).rejects.toThrow('Background agent shutdown failed');
+  });
+
+  it('allows removal of ordinary model errors after successful finalization', async () => {
+    const params = fixture();
+    params.runInBackground = true;
+    params.run = vi.fn(async () => { throw new Error('model failed'); });
+    await runFleetDelegation(params);
+    const task = params.manager.listTasks()[0];
+    await task.promise;
+    expect(task.status).toBe('error');
+    expect(task.finalizationError).toBeNull();
+    params.manager.acknowledgeCompletedResults([task.id]);
+    params.manager.removeTask(task.id);
+    await params.manager.shutdown();
+  });
 });

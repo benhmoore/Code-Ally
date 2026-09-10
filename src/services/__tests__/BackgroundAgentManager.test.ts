@@ -26,6 +26,7 @@ function makeTask(id: string, overrides: Partial<BackgroundAgentTask> = {}): Bac
     status: 'running',
     result: null,
     error: null,
+    finalizationError: null,
     startTime: 1_000,
     endTime: null,
     consumed: false,
