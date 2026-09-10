@@ -133,12 +133,14 @@ describe('SessionManager', () => {
       expect(session).toBeNull();
     });
 
-    it('should handle corrupted JSON gracefully', async () => {
+    it.each(['invalid json{', ''])('refuses invalid manifest %j without moving or deleting the source', async content => {
       const sessionPath = join(tempDir, 'corrupted.json');
-      await fs.writeFile(sessionPath, 'invalid json{', 'utf-8');
+      await fs.writeFile(sessionPath, content, 'utf-8');
 
-      const session = await sessionManager.loadSession('corrupted');
-      expect(session).toBeNull();
+      await expect(sessionManager.loadSession('corrupted')).rejects.toThrow();
+      expect(await fs.readFile(sessionPath, 'utf8')).toBe(content);
+      expect(await sessionManager.saveSession('corrupted', [{ role: 'user', content: 'replacement' }])).toBe(false);
+      expect(await fs.readFile(sessionPath, 'utf8')).toBe(content);
     });
   });
 

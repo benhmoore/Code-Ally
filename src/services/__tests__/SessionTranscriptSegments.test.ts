@@ -48,7 +48,7 @@ describe('SessionManager transcript segments', () => {
     expect(session?.messages).toEqual(transcript.slice(-10));
   });
 
-  it('refuses a transcript segment whose content no longer matches its hash', async () => {
+  it.each(['changed', 'missing', 'invalid JSON'])('refuses a %s transcript segment without rewriting its manifest', async damage => {
     const manager = new SessionManager({ sessionsDir: dir });
     await manager.initialize();
     await manager.createSession('corrupt');
@@ -58,13 +58,21 @@ describe('SessionManager transcript segments', () => {
     await manager.saveSession('corrupt', transcript.slice(-1), transcript);
     const manifest = JSON.parse(await fs.readFile(join(dir, 'corrupt.json'), 'utf-8'));
     const ref = manifest.transcript_segments[0];
-    await fs.writeFile(
-      join(dir, 'corrupt', 'transcript-segments', `${ref.hash}.json`),
-      JSON.stringify({ hash: ref.hash, messages: [] }),
-    );
+    const segmentPath = join(dir, 'corrupt', 'transcript-segments', `${ref.hash}.json`);
+    if (damage === 'missing') await fs.unlink(segmentPath);
+    else await fs.writeFile(segmentPath, damage === 'invalid JSON' ? '{' : JSON.stringify({ hash: ref.hash, messages: [] }));
 
     const reloaded = new SessionManager({ sessionsDir: dir });
-    expect(await reloaded.loadSession('corrupt')).toBeNull();
+    await expect(reloaded.loadSession('corrupt')).rejects.toThrow();
+    await expect(reloaded.getTranscriptPage('corrupt')).rejects.toThrow();
+    const before = await fs.readFile(join(dir, 'corrupt.json'), 'utf8');
+    reloaded.setCurrentSession('corrupt');
+    await reloaded.autoSave([{ role: 'user', content: 'new message' }]);
+    await expect(reloaded.forceSave()).rejects.toThrow('Session autosave persistence failed');
+    expect(await fs.readFile(join(dir, 'corrupt.json'), 'utf8')).toBe(before);
+    // A warm read cache must not authorize replacing damaged on-disk history.
+    expect(await manager.saveSession('corrupt', transcript.slice(-1), transcript)).toBe(false);
+    expect(await fs.readFile(join(dir, 'corrupt.json'), 'utf8')).toBe(before);
   });
 
   it('restores canonical originals for active messages older than the visible tail', async () => {

@@ -253,6 +253,22 @@ export class SessionManager implements IService {
     return createHash('sha256').update(JSON.stringify(messages)).digest('hex');
   }
 
+  private async readTranscriptSegment(
+    sessionName: string,
+    ref: { hash: string; message_count: number },
+  ): Promise<Message[]> {
+    if (!/^[a-f0-9]{64}$/.test(ref.hash) || !Number.isSafeInteger(ref.message_count) || ref.message_count < 1) {
+      throw new Error('Invalid transcript segment reference');
+    }
+    const raw = await fs.readFile(join(this.sessionsDir, sessionName, 'transcript-segments', `${ref.hash}.json`), 'utf8');
+    const parsed = JSON.parse(raw) as { hash?: string; messages?: Message[] };
+    if (parsed.hash !== ref.hash || !Array.isArray(parsed.messages)
+      || parsed.messages.length !== ref.message_count || this.transcriptHash(parsed.messages) !== ref.hash) {
+      throw new Error(`Transcript segment failed integrity validation: ${ref.hash}`);
+    }
+    return parsed.messages;
+  }
+
   private async hydrateTranscript(sessionName: string, session: Session): Promise<Session> {
     const refs = session.transcript_segments ?? [];
     if (refs.length === 0) {
@@ -262,17 +278,7 @@ export class SessionManager implements IService {
       return session;
     }
 
-    const segmentDir = join(this.sessionsDir, sessionName, 'transcript-segments');
-    const chunks = await Promise.all(refs.map(async (ref) => {
-      const raw = await fs.readFile(join(segmentDir, `${ref.hash}.json`), 'utf-8');
-      const parsed = JSON.parse(raw) as { hash?: string; messages?: Message[] };
-      if (parsed.hash !== ref.hash || !Array.isArray(parsed.messages)
-        || parsed.messages.length !== ref.message_count
-        || this.transcriptHash(parsed.messages) !== ref.hash) {
-        throw new Error(`Transcript segment failed integrity validation: ${ref.hash}`);
-      }
-      return parsed.messages;
-    }));
+    const chunks = await Promise.all(refs.map(ref => this.readTranscriptSegment(sessionName, ref)));
     session.transcript = [
       ...chunks.flat(),
       ...structuredClone(session.transcript_tail ?? []),
@@ -334,32 +340,6 @@ export class SessionManager implements IService {
    */
   private filterMessagesForPersistence(messages: readonly Message[]): Message[] {
     return messages.filter(isPersistentMessage);
-  }
-
-  /**
-   * Quarantine a corrupted session file instead of deleting it
-   */
-  private async quarantineSession(sessionName: string, reason: string): Promise<void> {
-    const sessionPath = this.getSessionPath(sessionName);
-    const quarantinePath = join(this.sessionsDir, '.quarantine', `${sessionName}_${Date.now()}.json`);
-
-    try {
-      await fs.rename(sessionPath, quarantinePath);
-      // Invalidate cache since session is no longer valid
-      this.sessionCache.delete(sessionName);
-      logger.warn(`Session ${sessionName} quarantined (${reason}): ${quarantinePath}`);
-    } catch (error) {
-      logger.error(`Failed to quarantine session ${sessionName}:`, error);
-      // Only delete if quarantine fails
-      try {
-        await fs.unlink(sessionPath);
-        // Invalidate cache
-        this.sessionCache.delete(sessionName);
-        logger.warn(`Deleted corrupted session file after quarantine failure: ${sessionName}`);
-      } catch (deleteError) {
-        logger.error(`Failed to delete session ${sessionName} after quarantine failure:`, deleteError);
-      }
-    }
   }
 
   /**
@@ -451,67 +431,27 @@ export class SessionManager implements IService {
       }
     }
 
-    // Cache miss or expired - load from disk
-    const sessionPath = this.getSessionPath(sessionName);
-
-    try {
-      const content = await fs.readFile(sessionPath, 'utf-8');
-
-      // Handle empty or corrupted files
-      if (!content || content.trim().length === 0) {
-        await this.quarantineSession(sessionName, 'empty file');
-        return null;
-      }
-
-      // Pre-versioning session files carry no schema_version and read as v0.
-      // A file from a NEWER build throws SchemaTooNewError below and is left
-      // exactly where it is - never quarantined, never rewritten.
-      const migrated = migrateRecord<Session>(JSON.parse(content), SESSION_SCHEMA);
-      const session = await this.hydrateTranscript(sessionName, migrated);
-
-      // Update cache with loaded session
-      this.sessionCache.set(sessionName, {
-        session: structuredClone(session), // Store a copy in cache
-        loadedAt: Date.now(),
-      });
-      this.evictOldestCacheEntryIfNeeded();
-      logger.debug(`[SESSION] Loaded from disk and cached: ${sessionName}`);
-
-      return session;
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
-        return null;
-      }
-
-      // A session written by a newer build is refused, not quarantined and not
-      // overwritten: the file stays byte-for-byte as it is on disk.
-      if (error instanceof SchemaTooNewError) {
-        logger.error(`Refusing to read session ${sessionName}: ${error.message}`);
-        throw error;
-      }
-
-      // If JSON parse fails, the file is corrupted - quarantine it
-      if (error instanceof SyntaxError) {
-        await this.quarantineSession(sessionName, 'invalid JSON');
-        return null;
-      }
-
-      logger.error(`Failed to load session ${sessionName}:`, error);
-      return null;
-    }
+    // Only a missing manifest means absence. Preserve corrupt/unreadable files
+    // and propagate failure so callers cannot mistake them for a new session.
+    const manifest = await this.loadSessionManifest(sessionName);
+    if (!manifest) return null;
+    const session = await this.hydrateTranscript(sessionName, manifest);
+    this.sessionCache.set(sessionName, {
+      session: structuredClone(session),
+      loadedAt: Date.now(),
+    });
+    this.evictOldestCacheEntryIfNeeded();
+    return session;
   }
 
   /** Read a manifest without hydrating immutable transcript segments. */
   private async loadSessionManifest(sessionName: string): Promise<Session | null> {
     try {
       const raw = await fs.readFile(this.getSessionPath(sessionName), 'utf8');
-      if (!raw.trim()) return null;
       return migrateRecord<Session>(JSON.parse(raw), SESSION_SCHEMA);
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
-      if (error instanceof SchemaTooNewError) throw error;
-      logger.warn(`[SESSION] Could not read manifest for ${sessionName}:`, error);
-      return null;
+      throw error;
     }
   }
 
@@ -565,16 +505,11 @@ export class SessionManager implements IService {
       const segmentStart = offsets[refIndex]!;
       const segmentEnd = segmentStart + ref.message_count;
       if (segmentEnd <= start || segmentStart >= end) continue;
-      const raw = await fs.readFile(join(this.sessionsDir, sessionName, 'transcript-segments', `${ref.hash}.json`), 'utf8');
-      const parsed = JSON.parse(raw) as { hash?: string; messages?: Message[] };
-      if (parsed.hash !== ref.hash || !Array.isArray(parsed.messages)
-        || this.transcriptHash(parsed.messages) !== ref.hash) {
-        throw new Error(`Transcript segment failed integrity validation: ${ref.hash}`);
-      }
+      const messages = await this.readTranscriptSegment(sessionName, ref);
       const from = Math.max(0, start - segmentStart);
       const to = Math.min(ref.message_count, end - segmentStart);
       for (let i = to - 1; i >= from; i -= 1) {
-        const message = parsed.messages[i]!;
+        const message = messages[i]!;
         const bytes = Buffer.byteLength(JSON.stringify(message));
         if (selected.length > 0 && usedBytes + bytes > byteBudget) {
           limitReached = true;
@@ -658,8 +593,9 @@ export class SessionManager implements IService {
     update: (session: Session) => void
   ): Promise<boolean> {
     return this.enqueueSessionOperation(sessionName, async () => {
-      const session = await this.loadSession(sessionName) ??
-        (createIfMissing ? this.createEmptySession(sessionName) : null);
+      const manifest = await this.loadSessionManifest(sessionName);
+      const session = manifest ? await this.hydrateTranscript(sessionName, manifest)
+        : (createIfMissing ? this.createEmptySession(sessionName) : null);
       if (!session) return false;
 
       update(session);
@@ -693,17 +629,7 @@ export class SessionManager implements IService {
       const refs = [...(manifest.transcript_segments ?? [])];
       if (refs.length > 0) {
         const last = refs[refs.length - 1]!;
-        try {
-          const raw = await fs.readFile(join(this.sessionsDir, sessionName, 'transcript-segments', `${last.hash}.json`), 'utf8');
-          const parsed = JSON.parse(raw) as { hash?: string; messages?: Message[] };
-          if (parsed.hash === last.hash && Array.isArray(parsed.messages)
-            && this.transcriptHash(parsed.messages) === last.hash) {
-            recent = [...parsed.messages, ...existingTail];
-          }
-        } catch {
-          // Page reads perform strict integrity validation. If overlap cannot be
-          // inspected here, append conservatively rather than hydrating history.
-        }
+        recent = [...await this.readTranscriptSegment(sessionName, last), ...existingTail];
       }
       const recentIds = new Set(recent.map((message) => message.id).filter(Boolean));
       let overlap = -1;
