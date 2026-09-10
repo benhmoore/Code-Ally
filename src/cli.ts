@@ -40,8 +40,8 @@ import { getAgentDisplayName } from './utils/agentTypeUtils.js';
 import { ScheduledTaskManager, ScheduledTask, presetPolicy } from './services/ScheduledTaskManager.js';
 import { SchedulerInstaller } from './services/SchedulerInstaller.js';
 import { generateShortId } from './utils/id.js';
-import { formatError } from './utils/errorUtils.js';
 import { atomicWriteFile } from './utils/atomicFile.js';
+import { HeadlessSession, isHeadlessRun } from './headless/index.js';
 
 let terminalOutputAvailable = true;
 
@@ -416,7 +416,7 @@ async function handleResumeCommand(
     } else {
       console.log(`\n✗ Session "${sessionId}" not found.\n`);
 
-      if (options.once) {
+      if (isHeadlessRun(options)) {
         throw new Error(`Cannot resume missing session '${sessionId}' in noninteractive mode; pass --session to create one explicitly`);
       }
 
@@ -449,7 +449,7 @@ async function handleResumeCommand(
     }
   }
 
-  if (options.once) {
+  if (isHeadlessRun(options)) {
     throw new Error('--resume requires an explicit session ID in noninteractive mode');
   }
 
@@ -478,59 +478,6 @@ function getCliConfigOverrides(options: CLIOptions): Record<string, any> {
   }
 
   return overrides;
-}
-
-/**
- * Handle --once mode (single message, non-interactive)
- */
-async function handleOnceMode(
-  message: string,
-  options: CLIOptions,
-  agent: Agent,
-  sessionManager: SessionManager
-): Promise<import('./services/RunSupervisor.js').RunOutcome> {
-  // Once mode never creates sessions (single message, non-interactive)
-  // If user explicitly wants a session with --once, they can use --session
-  let sessionName: string | null = null;
-
-  // Only use sessions if explicitly requested via --session
-  if (options.session && !options.noSession) {
-    sessionName = options.session;
-    if (!await sessionManager.sessionExists(sessionName)) {
-      await sessionManager.createSession(sessionName);
-    }
-    sessionManager.setCurrentSession(sessionName);
-
-    // Notify PatchManager about the session change
-    const registry = ServiceRegistry.getInstance();
-    const patchManager = registry.get('patch_manager');
-    if (patchManager && typeof (patchManager as any).onSessionChange === 'function') {
-      await (patchManager as any).onSessionChange();
-    }
-
-    // Load existing session if it exists
-    if (await sessionManager.sessionExists(sessionName)) {
-      const messages = await sessionManager.getSessionMessages(sessionName);
-      agent.setMessages(messages);
-    }
-  }
-
-  // Send the message (don't echo it - user already typed it)
-  try {
-    const response = await agent.sendMessage(message);
-    console.log(response);
-
-    // Save session only if explicitly requested
-    if (sessionName) {
-      await sessionManager.saveSession(sessionName, agent.getContextMessages(), agent.getMessages());
-      console.log(`\n[Session: ${sessionName}]`);
-    }
-    const outcome = ServiceRegistry.getInstance().get('run_supervisor')?.getOutcome();
-    return outcome ?? { kind: 'failed', error: 'Automatic run ended without a typed outcome' };
-  } catch (error) {
-    console.error('Error:', error);
-    return { kind: 'failed', error: formatError(error) };
-  }
 }
 
 function exitCodeForRunOutcome(outcome: import('./services/RunSupervisor.js').RunOutcome): number {
@@ -1061,14 +1008,14 @@ async function main() {
 
     // Check if critical config is missing - force setup wizard if so
     const forceSetup = needsSetup(config);
-    if (options.once && forceSetup) {
+    if (isHeadlessRun(options) && forceSetup) {
       throw new Error('Noninteractive mode requires a configured provider and model; run `ally --init` first');
     }
 
     // Validate the configured provider and model (skip in setup/non-interactive paths).
     let forceModelSelector = false;
     let availableModels: any[] | undefined;
-    if (!options.once && !forceSetup && !options.init) {
+    if (!isHeadlessRun(options) && !forceSetup && !options.init) {
       const validationResult = await runStartupValidation(config);
 
       if (!validationResult.providerConnected) {
@@ -1098,17 +1045,17 @@ async function main() {
     // One process-local policy authority for every interaction surface. Once
     // and scheduled modes are headless by construction and can never prompt.
     const { RunPolicyManager } = await import('./services/RunPolicyManager.js');
-    const isHeadlessRun = Boolean(options.once || options.scheduledTask);
-    const usesDurableCompletion = isHeadlessRun || options.durableObjective === true;
+    const headlessRun = isHeadlessRun(options) || Boolean(options.scheduledTask);
+    const usesDurableCompletion = headlessRun || options.durableObjective === true;
     const runPolicyManager = new RunPolicyManager({
-      interaction: isHeadlessRun ? 'none' : 'human',
-      execution: isHeadlessRun ? 'headless' : 'terminal',
+      interaction: headlessRun ? 'none' : 'human',
+      execution: headlessRun ? 'headless' : 'terminal',
       completion: usesDurableCompletion ? 'durable_objective' : 'chat',
       authorizationPresetId: options.scheduledTask
         ? 'scheduled'
         : config.auto_confirm
           ? 'auto-confirm'
-          : isHeadlessRun
+          : headlessRun
             ? 'deny-by-default'
             : 'interactive',
     });
@@ -1498,7 +1445,7 @@ async function main() {
         agentDepth: 0,
         agentCallStack: [],
         isScheduledRun: Boolean(options.scheduledTask),
-        isOnceMode: Boolean(options.once),
+        isOnceMode: isHeadlessRun(options),
         scheduledTaskId: options.scheduledTask,
       };
 
@@ -1521,7 +1468,7 @@ async function main() {
         config,
         agentType,
         isScheduledRun: Boolean(options.scheduledTask),
-        isOnceMode: Boolean(options.once),
+        isOnceMode: isHeadlessRun(options),
         scheduledTaskId: options.scheduledTask,
       };
     }
@@ -1603,9 +1550,16 @@ async function main() {
       });
     }
 
-    // Handle --once mode (single message, non-interactive)
-    if (options.once) {
-      const outcome = await handleOnceMode(options.once, options, agent, sessionManager);
+    // Handle headless mode (--once and/or stream-json input, non-interactive)
+    if (isHeadlessRun(options)) {
+      const headless = new HeadlessSession({
+        agent,
+        sessionManager,
+        options,
+        model: agentModelClient.modelName,
+        toolNames: toolManager.getAllTools().map(tool => tool.name),
+      });
+      const outcome = await headless.run();
       await cleanExit(exitCodeForRunOutcome(outcome));
       return;
     }
