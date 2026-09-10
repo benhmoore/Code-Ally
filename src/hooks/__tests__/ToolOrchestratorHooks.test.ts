@@ -9,6 +9,7 @@ import { ToolOrchestrator } from '../../agent/ToolOrchestrator.js';
 import { ActivityStream } from '../../services/ActivityStream.js';
 import { ServiceRegistry } from '../../services/ServiceRegistry.js';
 import { ActivityEventType } from '../../types/index.js';
+import { STRUCTURED_OUTPUT_TOOL } from '../../tools/StructuredOutputTool.js';
 import type { HookEvent, HookVerdict } from '../types.js';
 
 function stubRunner(verdicts: Partial<Record<HookEvent, HookVerdict>>) {
@@ -103,6 +104,24 @@ describe('PreToolUse verdicts in ToolOrchestrator', () => {
 
     expect(executeTool).toHaveBeenCalledTimes(1);
     expect(executeTool.mock.calls[0][1]).toEqual({ command: 'git status' });
+  });
+
+  it('exempts the structured-output tool from a blanket block hook', async () => {
+    const runner = stubRunner({
+      PreToolUse: { kind: 'block', reason: 'everything is blocked', source: 'settings' },
+    });
+    ServiceRegistry.getInstance().registerInstance('hook_runner', runner as any);
+    const executeTool = vi.fn().mockResolvedValue({ success: true, error: '', content: 'recorded' });
+    const { orchestrator } = buildOrchestrator(executeTool);
+
+    const result = await (orchestrator as any).executeSingleTool({
+      id: 'call-1',
+      function: { name: STRUCTURED_OUTPUT_TOOL, arguments: { answer: 'done' } },
+    });
+
+    expect(result.success).toBe(true);
+    expect(executeTool).toHaveBeenCalledTimes(1);
+    expect(runner.run).not.toHaveBeenCalledWith('PreToolUse', expect.anything(), expect.anything());
   });
 
   it('appends PostToolUse context to the tool result', async () => {

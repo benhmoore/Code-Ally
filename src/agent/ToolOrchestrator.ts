@@ -22,6 +22,7 @@ import { ToolResultManager } from '../services/ToolResultManager.js';
 import { PermissionManager } from '../security/PermissionManager.js';
 import { DirectoryTraversalError, PolicyDeniedError, isPermissionDeniedError, isPolicyDeniedError } from '../security/PathSecurity.js';
 import { evaluateRunAuthorization } from '../security/RunAuthorizationPolicy.js';
+import { STRUCTURED_OUTPUT_TOOL } from '../tools/StructuredOutputTool.js';
 import { logger } from '../services/Logger.js';
 import { ServiceRegistry } from '../services/ServiceRegistry.js';
 import { formatError, createStructuredError, classifyToolError } from '../utils/errorUtils.js';
@@ -980,8 +981,12 @@ export class ToolOrchestrator {
       // the permission machinery and for every tool, not only the ones that
       // require confirmation: a policy hook on `read` is legitimate. A block is
       // an ordinary model-visible result, so the turn continues.
+      //
+      // The structured-output tool is exempt: it is the run's answer channel,
+      // demanded by the requirement loop, so a blanket block hook would leave
+      // the turn retrying a call it can never complete.
       const hookRunner = ServiceRegistry.getInstance().get('hook_runner');
-      if (hookRunner?.hasHooks('PreToolUse')) {
+      if (hookRunner?.hasHooks('PreToolUse') && toolName !== STRUCTURED_OUTPUT_TOOL) {
         const verdict = await hookRunner.run(
           'PreToolUse',
           { tool_name: toolName, tool_input: args },

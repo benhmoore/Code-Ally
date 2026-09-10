@@ -416,13 +416,17 @@ for either host runs unmodified under the other.
 |---|---|---|---|
 | `SessionStart` | after plugins, skills and MCP servers load, before the first turn | `source` | logged only |
 | `UserPromptSubmit` | root agent, before the model sees the message | `prompt` | the reason is the answer, no model call |
-| `PreToolUse` | every tool call, before the form and permission steps | `tool_name`, `tool_input` | tool never runs, reason returned to the model |
+| `PreToolUse` | every tool call except `structured-output`, before the form and permission steps | `tool_name`, `tool_input` | tool never runs, reason returned to the model |
 | `PostToolUse` | after the tool returns | `tool_name`, `tool_input`, `tool_response` | cannot undo the call; the reason is appended to the result |
 | `Stop` | root agent, at the end of a turn | `stop_hook_active` | logged only |
 | `SessionEnd` | at exit, with a two second budget | `reason` | ignored |
 
 Sub-agents fire no session-level events. Their tool calls go through the same
 orchestrator, so `PreToolUse` and `PostToolUse` cover them.
+
+`structured-output` is exempt from `PreToolUse` because it is the answer
+channel a `--json-schema` run is required to call: a blanket block hook would
+leave the turn retrying a call it can never complete.
 
 ### Config sources
 
