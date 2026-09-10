@@ -20,8 +20,12 @@ import { ActivityEventType, ActivityEvent } from '../types/index.js';
 import { API_TIMEOUTS, TEXT_LIMITS, PERMISSION_MESSAGES } from '../config/constants.js';
 import { PermissionDeniedError, PolicyDeniedError } from '../security/PathSecurity.js';
 import { logger } from '../services/Logger.js';
-import type { ScheduledTaskPermissionPolicy, ScheduledCommandRule } from '../services/ScheduledTaskManager.js';
+import type { ScheduledTaskPermissionPolicy } from '../services/ScheduledTaskManager.js';
 import type { RunPolicyManager } from '../services/RunPolicyManager.js';
+import {
+  evaluateRunAuthorization,
+  type RunAuthorizationPolicy,
+} from '../security/RunAuthorizationPolicy.js';
 
 /**
  * Trust scope levels for permission management
@@ -107,11 +111,17 @@ export class TrustManager {
   private runPolicyManager?: RunPolicyManager;
 
   /**
-   * Optional deny-by-default policy used for unattended scheduled task runs.
-   * When present, interactive prompts are disabled; matching operations are
-   * allowed and every other sensitive operation is denied immediately.
+   * Optional authorization policy for this run, consulted before trust and
+   * prompting. A denied match always throws; an allowed match always passes.
    */
-  private scheduledPermissionPolicy?: ScheduledTaskPermissionPolicy;
+  private authorizationPolicy?: RunAuthorizationPolicy;
+
+  /**
+   * Strict policies deny anything they do not name, which is what an
+   * unattended scheduled run needs. Non-strict policies let an unnamed tool
+   * fall through to the ordinary trust and interaction checks.
+   */
+  private authorizationStrict = false;
 
   /**
    * Delegation info getter function
@@ -164,8 +174,10 @@ export class TrustManager {
    * @returns True if permission granted, throws PermissionDeniedError if denied
    */
   async checkPermission(toolName: string, args: any, path?: CommandPath): Promise<boolean> {
-    if (this.scheduledPermissionPolicy) {
-      return this.checkScheduledPermission(toolName, args, path);
+    // Policy runs first: it is the only tier that can deny outright, and a
+    // strict policy never falls through to the tiers below.
+    if (this.authorizationPolicy && this.checkPolicy(toolName, args, path)) {
+      return true;
     }
 
     // Auto-confirm mode bypasses all permission checks
@@ -182,16 +194,40 @@ export class TrustManager {
     return this.promptForPermission(toolName, args, path);
   }
 
+  /**
+   * Install the authorization policy for this run.
+   *
+   * @param policy - Policy to install, or undefined to clear.
+   * @param options.strict - Deny anything the policy does not name.
+   */
+  setRunAuthorizationPolicy(
+    policy?: RunAuthorizationPolicy,
+    options?: { strict?: boolean }
+  ): void {
+    this.authorizationPolicy = policy;
+    this.authorizationStrict = options?.strict ?? false;
+  }
+
+  /** Install a scheduled task preset, which is always deny-by-default. */
   setScheduledPermissionPolicy(policy?: ScheduledTaskPermissionPolicy): void {
-    this.scheduledPermissionPolicy = policy;
+    this.setRunAuthorizationPolicy(policy, { strict: true });
+  }
+
+  /** Tool name globs this run can never call, for schema-level exclusion. */
+  getDisallowedToolPatterns(): readonly string[] {
+    return this.authorizationPolicy?.disallowed_tools ?? [];
   }
 
   setRunPolicyManager(manager: RunPolicyManager): void {
     this.runPolicyManager = manager;
   }
 
-  private checkScheduledPermission(toolName: string, args: any, path?: CommandPath): boolean {
-    const policy = this.scheduledPermissionPolicy;
+  /**
+   * Apply the installed policy. Returns true when the policy grants the call,
+   * false when it defers to the tiers below, and throws when it denies.
+   */
+  private checkPolicy(toolName: string, args: any, path?: CommandPath): boolean {
+    const policy = this.authorizationPolicy;
     if (!policy) return false;
 
     const command = typeof path === 'object' && path?.command
@@ -199,66 +235,41 @@ export class TrustManager {
         : typeof args?.command === 'string'
           ? args.command
           : '';
-    if (command) {
-      if (this.matchesAnyPattern(command, policy.denied_bash_patterns ?? [])) {
-        throw new PolicyDeniedError(
-          `Scheduled task denied shell command: ${command}`,
-          'scheduled.denied_bash_patterns',
-          ['Use a non-shell tool', 'Choose a command allowed by the scheduled-task preset']
-        );
-      }
-      if (this.matchesCommandRules(command, policy.allowed_bash_commands ?? [])) {
-        return true;
-      }
-      throw new PolicyDeniedError(
-        `Scheduled task is not allowed to run shell command: ${command}`,
-        'scheduled.allowed_bash_commands',
-        ['Use a non-shell tool', 'Choose a command allowed by the scheduled-task preset']
-      );
-    }
-
-    if ((policy.allowed_tools ?? []).includes(toolName)) {
+    const decision = evaluateRunAuthorization(policy, toolName, command);
+    if (decision.verdict === 'allow') {
       return true;
     }
+    if (decision.verdict === 'defer' && !this.authorizationStrict) {
+      return false;
+    }
 
-    throw new PolicyDeniedError(
-      `Scheduled task is not allowed to use ${toolName}`,
-      'scheduled.allowed_tools',
-      ['Use an allowed read-only tool', 'Choose a policy-compliant alternative']
-    );
-  }
-
-  /**
-   * Allow-list matcher for scheduled bash commands. Exhaustive by design: only
-   * the two literal match kinds grant anything, and every other value — an
-   * unknown kind, a typo, a rule smuggled into a hand-edited store — returns
-   * false. There is no regex branch, because a regex allow-rule fails open.
-   */
-  private matchesCommandRules(command: string, rules: ScheduledCommandRule[]): boolean {
-    return rules.some((rule) => {
-      switch (rule?.match) {
-        case 'exact':
-          return command === rule.value;
-        case 'prefix':
-          return command.startsWith(rule.value);
-        default:
-          return false;
-      }
-    });
-  }
-
-  /**
-   * Deny-list matcher. Regex is safe in this direction: a broad or malformed
-   * pattern can only deny more, never grant.
-   */
-  private matchesAnyPattern(command: string, patterns: string[]): boolean {
-    return patterns.some((pattern) => {
-      try {
-        return new RegExp(pattern).test(command);
-      } catch {
-        return false;
-      }
-    });
+    const subject = this.authorizationStrict ? 'Scheduled task' : 'Run policy';
+    switch (decision.reason) {
+      case 'policy.disallowed_tools':
+        throw new PolicyDeniedError(
+          `${subject} denied tool: ${toolName}`,
+          decision.reason,
+          ['Use a tool that the run policy does not deny']
+        );
+      case 'policy.denied_bash_patterns':
+        throw new PolicyDeniedError(
+          `${subject} denied shell command: ${command}`,
+          decision.reason,
+          ['Use a non-shell tool', 'Choose a command the run policy allows']
+        );
+      case 'policy.allowed_bash_commands':
+        throw new PolicyDeniedError(
+          `${subject} is not allowed to run shell command: ${command}`,
+          decision.reason,
+          ['Use a non-shell tool', 'Choose a command allowed by the scheduled-task preset']
+        );
+      case 'policy.allowed_tools':
+        throw new PolicyDeniedError(
+          `${subject} is not allowed to use ${toolName}`,
+          decision.reason,
+          ['Use an allowed read-only tool', 'Choose a policy-compliant alternative']
+        );
+    }
   }
 
   /**
