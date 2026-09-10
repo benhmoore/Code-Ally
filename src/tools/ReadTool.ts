@@ -304,12 +304,9 @@ For multi-file exploration, prefer explore() to preserve context. Parallelize on
       );
     }
 
-    let content: string;
-    let totalLines: number;
+    let read: Awaited<ReturnType<ReadTool['readFile']>>;
     try {
-      const read = await this.readFile(filePath, selection, executionContext);
-      content = read.content;
-      totalLines = read.lineCount;
+      read = await this.readFile(filePath, selection, executionContext);
     } catch (error) {
       return this.formatErrorResponse(
         `Failed to read ${filePath}: ${formatError(error)}`,
@@ -318,12 +315,24 @@ For multi-file exploration, prefer explore() to preserve context. Parallelize on
     }
 
     const result = this.formatSuccessResponse({
-      content,
+      content: read.content,
       files_read: 1,
       files_failed: 0,
       partial_failure: false,
-      total_lines: totalLines,
+      total_lines: read.lineCount,
     });
+
+    const batchLimit = this.currentCallId
+      ? executionContext?.outputBudget?.maxResultTokensByCallId.get(this.currentCallId)
+      : undefined;
+    if (batchLimit !== undefined && tokenCounter.count(JSON.stringify(result)) > batchLimit) {
+      return this.formatErrorResponse(
+        `Formatted read output exceeds this call's ${batchLimit}-token batch allowance.`,
+        'validation_error',
+        'Read a smaller range or issue fewer reads in this tool batch.'
+      );
+    }
+    read.accept?.();
 
     // Mark result as non-truncatable - read results must never be truncated
     (result as any)._non_truncatable = true;
@@ -564,7 +573,7 @@ For multi-file exploration, prefer explore() to preserve context. Parallelize on
     filePath: string,
     selection: ReadSelection,
     executionContext?: ToolExecutionContext
-  ): Promise<{ content: string; lineCount: number }> {
+  ): Promise<{ content: string; lineCount: number; accept?: () => void }> {
     const { lineLimit: limit, lineOffset: offset, columnOffset, columnLimit } = selection;
     // Resolve absolute path
     const absolutePath = resolvePath(filePath);
@@ -613,25 +622,37 @@ For multi-file exploration, prefer explore() to preserve context. Parallelize on
     // no way to recover the file. Correctness beats token savings: fall through
     // to a fresh read whenever visibility cannot be confirmed.
     const readCache = registry.get('read_cache');
+    const acceptRead = (startLine: number, lineCount: number, totalLines: number, cache: boolean) => {
+      const readStateManager = registry.get('read_state_manager');
+      if (readStateManager && columnOffset === 0 && columnLimit === 0) {
+        readStateManager.trackRead(absolutePath, startLine + 1, startLine + lineCount, readScopeId);
+      }
+      if (cache && readCache) {
+        readCache.record({
+          scopeId: readScopeId, filePath: absolutePath, mtimeMs: stat.mtimeMs,
+          selection, lineCount, totalLines, lastAccessTime: Date.now(),
+          toolCallId: this.currentCallId,
+        });
+      }
+    };
     if (readCache) {
       const cached = readCache.check(absolutePath, stat.mtimeMs, selection, readScopeId);
       if (cached && !this.isCachedReadStillVisible(cached, registry)) {
         readCache.invalidate(absolutePath, readScopeId);
       } else if (cached) {
-        // Still track read state so patch validation works
-        const readStateManager = registry.get('read_state_manager');
-        if (readStateManager && columnOffset === 0 && columnLimit === 0) {
+        const accept = () => {
           const cachedStartLine = offset < 0
             ? Math.max(1, cached.totalLines + offset + 1)
             : offset > 0 ? offset : 1;
           const cachedEndLine = limit > 0
             ? Math.min(cachedStartLine + limit - 1, cached.totalLines)
             : cached.totalLines;
-          readStateManager.trackRead(absolutePath, cachedStartLine, cachedEndLine, readScopeId);
-        }
+          acceptRead(cachedStartLine - 1, cachedEndLine - cachedStartLine + 1, cached.totalLines, false);
+        };
         return {
           content: `=== ${absolutePath} ===\n[File unchanged since last read (${cached.lineCount} lines). Content already in conversation context.]`,
           lineCount: 0, // Signal to UI that this is a cache hit
+          accept,
         };
       }
     }
@@ -654,27 +675,9 @@ For multi-file exploration, prefer explore() to preserve context. Parallelize on
         selectedLines, streamedStart, streamedTotal, absolutePath, offset, limit, columnOffset, columnLimit
       );
 
-      // Track read state
-      const readStateManager = registry.get('read_state_manager');
-      if (readStateManager && columnOffset === 0 && columnLimit === 0) {
-        readStateManager.trackRead(absolutePath, streamedStart + 1, streamedStart + streamedLines.length, readScopeId);
-      }
+      const accept = () => acceptRead(streamedStart, selectedLines.length, streamedTotal, true);
 
-      // Record in read cache
-      if (readCache) {
-        readCache.record({
-          scopeId: readScopeId,
-          filePath: absolutePath,
-          mtimeMs: stat.mtimeMs,
-          selection,
-          lineCount: selectedLines.length,
-          totalLines: streamedTotal,
-          lastAccessTime: Date.now(),
-          toolCallId: this.currentCallId,
-        });
-      }
-
-      return { content: formattedContent, lineCount: selectedLines.length };
+      return { content: formattedContent, lineCount: selectedLines.length, accept };
     }
 
     // Read file content (standard path for files < 10MB)
@@ -731,32 +734,12 @@ For multi-file exploration, prefer explore() to preserve context. Parallelize on
       selectedLines, startLine, totalLines, absolutePath, offset, limit, columnOffset, columnLimit
     );
 
-    // Track read state for apply-patch validation
-    const readStateManager = registry.get('read_state_manager');
-    if (readStateManager && columnOffset === 0 && columnLimit === 0) {
-      // Track the lines that were read (1-indexed)
-      const startLineNumber = startLine + 1;
-      const endLineNumber = Math.min(endLine, totalLines);
-      readStateManager.trackRead(absolutePath, startLineNumber, endLineNumber, readScopeId);
-    }
-
-    // Record in read cache for future deduplication
-    if (readCache) {
-      readCache.record({
-        scopeId: readScopeId,
-        filePath: absolutePath,
-        mtimeMs: stat.mtimeMs,
-        selection,
-        lineCount: selectedLines.length,
-        totalLines,
-        lastAccessTime: Date.now(),
-        toolCallId: this.currentCallId,
-      });
-    }
+    const accept = () => acceptRead(startLine, selectedLines.length, totalLines, true);
 
     return {
       content: formattedContent,
       lineCount: selectedLines.length,
+      accept,
     };
   }
 

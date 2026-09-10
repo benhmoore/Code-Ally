@@ -2,7 +2,7 @@
  * Tests for ReadTool
  */
 
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { ReadTool } from '@tools/ReadTool.js';
 import { ActivityStream } from '@services/ActivityStream.js';
 import { ServiceRegistry } from '@services/ServiceRegistry.js';
@@ -58,6 +58,23 @@ describe('ReadTool', () => {
   });
 
   describe('execute', () => {
+    it('does not record reads rejected by the formatted-output allowance', async () => {
+      const cache = vi.spyOn(registry.get('read_cache')!, 'record');
+      const result = await readTool.execute(
+        { file_path: testFile, offset: 1, limit: 1 }, 'bounded-read', undefined, false, false,
+        { outputBudget: {
+          limitTokens: 1, estimatedTokens: 1, rejectedCallIds: new Set(),
+          maxResultTokensByCallId: new Map([['bounded-read', 1]]),
+        } },
+      );
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('batch allowance');
+      expect(cache).not.toHaveBeenCalled();
+      expect(registry.get('read_state_manager')!.validateLinesRead(testFile, 1, 1).success).toBe(false);
+      expect((await readTool.execute({ file_path: testFile, offset: 1, limit: 1 })).success).toBe(true);
+      expect(registry.get('read_state_manager')!.validateLinesRead(testFile, 1, 1).success).toBe(true);
+    });
+
     it('should read single file', async () => {
       const result = await readTool.execute({
         file_path: testFile,
