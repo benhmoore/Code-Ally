@@ -216,6 +216,33 @@ describe('ConversationCompactor', () => {
     expect(manager.getMessages()).toEqual(replacement);
   });
 
+  it('restores input admitted during commit from the final durable checkpoint', async () => {
+    const directory = await fs.mkdtemp(join(tmpdir(), 'ally-checkpoint-continuation-'));
+    const sessions = new SessionManager({ sessionsDir: directory });
+    try {
+      await sessions.initialize();
+      await sessions.createSession('continuation');
+      const manager = new ConversationManager({ initialMessages: history() });
+      const incoming: Message = { id: 'concurrent-input', role: 'user', content: 'Verify cancellation and restart.', timestamp: 100 };
+      let commits = 0;
+      const compactor = new ConversationCompactor(chatClient(), manager, new TokenManager(8192), new ActivityStream(), async (messages, checkpoint) => {
+        const committed = await sessions.commitConversationCheckpoint(messages, manager.getTranscript(), checkpoint);
+        if (committed && ++commits === 1) manager.addMessage(incoming);
+        return committed;
+      });
+      const result = await compactor.compactAndApply(context());
+      expect(commits).toBe(2);
+      const reloaded = new SessionManager({ sessionsDir: directory });
+      const restored = await reloaded.getSessionData('continuation');
+      expect(restored.messages).toEqual(result.compactedMessages);
+      expect(restored.checkpoint?.retainedMessageIds).toContain(incoming.id);
+      expect(restored.transcript).toContainEqual(expect.objectContaining({ id: incoming.id, content: incoming.content }));
+    } finally {
+      await sessions.cleanup();
+      await fs.rm(directory, { recursive: true, force: true });
+    }
+  });
+
   it('does not replace a leading durable system event when refreshing the system prompt', () => {
     const event = { ...createSystemReminder('Keep this durable fact', true), id: 'event' };
     const manager = new ConversationManager({ initialMessages: [event] });
