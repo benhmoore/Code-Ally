@@ -24,7 +24,8 @@ everything else in a pattern is literal.
 For each tool call, in order:
 
 1. `--disallowed-tools` match: denied. This always wins, including over an
-   allow entry for the same tool.
+   allow entry for the same tool, and it is checked for every call, including
+   tools that never ask for confirmation.
 2. A denied shell pattern: denied.
 3. An allowed shell command rule: allowed.
 4. `--allowed-tools` match: allowed.

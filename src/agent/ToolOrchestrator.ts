@@ -20,7 +20,8 @@ import { AgentConfig } from './Agent.js';
 import type { ToolCall } from '../types/index.js';
 import { ToolResultManager } from '../services/ToolResultManager.js';
 import { PermissionManager } from '../security/PermissionManager.js';
-import { DirectoryTraversalError, isPermissionDeniedError, isPolicyDeniedError } from '../security/PathSecurity.js';
+import { DirectoryTraversalError, PolicyDeniedError, isPermissionDeniedError, isPolicyDeniedError } from '../security/PathSecurity.js';
+import { evaluateRunAuthorization } from '../security/RunAuthorizationPolicy.js';
 import { logger } from '../services/Logger.js';
 import { ServiceRegistry } from '../services/ServiceRegistry.js';
 import { formatError, createStructuredError, classifyToolError } from '../utils/errorUtils.js';
@@ -954,6 +955,27 @@ export class ToolOrchestrator {
         }
       }
 
+      // The run's disallow list is a refusal, not a confirmation gate, so it is
+      // evaluated for every call. Tools that never require confirmation never
+      // reach the permission manager, and withholding a schema does not stop a
+      // call the model emits anyway from resumed history or a skill.
+      const disallowedTools =
+        ServiceRegistry.getInstance().get('trust_manager')?.getDisallowedToolPatterns() ?? [];
+      if (disallowedTools.length > 0) {
+        const decision = evaluateRunAuthorization(
+          { disallowed_tools: [...disallowedTools] },
+          toolName,
+          ''
+        );
+        if (decision.verdict === 'deny') {
+          throw new PolicyDeniedError(
+            `Run policy denied tool: ${toolName}`,
+            decision.reason,
+            ['Use a tool that the run policy does not deny']
+          );
+        }
+      }
+
       // PreToolUse hooks are deterministic policy, decided before the form and
       // the permission machinery and for every tool, not only the ones that
       // require confirmation: a policy hook on `read` is legitimate. A block is
@@ -1211,8 +1233,10 @@ export class ToolOrchestrator {
         throw error;
       }
 
-      // Handle abort/interrupt errors specially
-      if (error instanceof Error && (error.name === 'AbortError' || error.message.includes('interrupted'))) {
+      // Handle abort/interrupt errors specially. Chained onto the branches
+      // above: a policy denial is already a finished result and must not be
+      // reclassified as a system error by the fallback below.
+      else if (error instanceof Error && (error.name === 'AbortError' || error.message.includes('interrupted'))) {
         result = createStructuredError(
           'Tool execution interrupted by user',
           'interrupted',
