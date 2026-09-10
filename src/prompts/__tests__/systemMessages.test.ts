@@ -1,18 +1,36 @@
 import { describe, expect, it, vi } from 'vitest';
-import { getDynamicContextBlock, getMainSystemPrompt } from '../systemMessages.js';
+import { getAgentSystemPrompt, getDynamicContextBlock, getMainSystemPrompt } from '../systemMessages.js';
 import { ServiceRegistry } from '../../services/ServiceRegistry.js';
 
 describe('systemMessages', () => {
+  it('keeps interactive and unattended guidance distinct through named options', async () => {
+    const interactive = await getMainSystemPrompt();
+    const unattended = await getMainSystemPrompt({ isOnceMode: true, reasoningEffort: 'high' });
+    expect(interactive).not.toContain('Single Response Run');
+    expect(unattended).toContain('Single Response Run');
+    expect(unattended).not.toContain('Scheduled Task Run');
+    expect(unattended).toContain('- Reasoning: high');
+  });
+
+  it('keeps specialized identity, task, and reasoning in their own fields', async () => {
+    const prompt = await getAgentSystemPrompt({
+      agentSystemPrompt: 'Review correctness without editing.',
+      taskPrompt: 'Inspect transaction isolation.',
+      reasoningEffort: 'medium',
+      agentDepth: 1,
+    });
+    expect(prompt).toContain('**Primary Identity:**\nReview correctness without editing.');
+    expect(prompt).toContain('**Current Task:**\nInspect transaction isolation.');
+    expect(prompt).toContain('- Reasoning: medium');
+    expect(prompt).toContain('**Return to parent**');
+  });
+
   it('adds unattended scheduled run guidance without task-specific behavior', async () => {
-    const prompt = await getMainSystemPrompt(
-      undefined,
-      undefined,
-      true,
-      undefined,
-      [],
-      true,
-      'sched-123',
-    );
+    const prompt = await getMainSystemPrompt({
+      isOnceMode: true,
+      isScheduledRun: true,
+      scheduledTaskId: 'sched-123',
+    });
 
     expect(prompt).toContain('Scheduled Task Run');
     expect(prompt).toContain('sched-123');
@@ -24,7 +42,7 @@ describe('systemMessages', () => {
   });
 
   it('uses the ablation-selected stable prompt prefix', async () => {
-    const prompt = await getMainSystemPrompt(undefined, undefined, false, 'low');
+    const prompt = await getMainSystemPrompt({ reasoningEffort: 'low' });
 
     expect(prompt.startsWith(`You are Ally, a coding assistant. Complete the request with the fewest correct operations.
 

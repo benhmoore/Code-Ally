@@ -1094,7 +1094,7 @@ async function main(): Promise<void> {
     'runtime_core',
     ...(capturedRuntimeTools ? ['captured_runtime'] : []),
   ] as Array<'lean' | 'synthetic' | 'runtime_core' | 'captured_runtime'>;
-  const currentPrompt = await getMainSystemPrompt(undefined, undefined, false, 'low');
+  const currentPrompt = await getMainSystemPrompt({ reasoningEffort: 'low' });
   const promptCatalog = {
     minimal: MINIMAL_PROMPT,
     current_core: currentPrompt,

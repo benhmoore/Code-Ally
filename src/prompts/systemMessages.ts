@@ -18,9 +18,7 @@ import { getGitBranch } from '../utils/gitUtils.js';
 import { TEXT_LIMITS } from '../config/constants.js';
 import { getProfileInstructionsFile, resolveProjectInstructionFiles } from '../config/paths.js';
 import type { TokenManager } from '../agent/TokenManager.js';
-import type { ToolResultManager } from '../services/ToolResultManager.js';
 import { getThoroughnessGuidelines } from './thoroughnessAdjustments.js';
-import type { Message } from '../types/index.js';
 import { getDefaultTimeZone } from '../services/ScheduledTaskManager.js';
 import { getEmptyTodoGuidance } from '../utils/messageUtils.js';
 
@@ -65,13 +63,9 @@ export async function getContextInfo(options: {
   includeAgents?: boolean;
   includeProjectInstructions?: boolean;
   tokenManager?: TokenManager;
-  toolResultManager?: ToolResultManager;
   reasoningEffort?: string;
   callingAgentName?: string;
-  conversationMessages?: readonly Message[];
 } = {}): Promise<string> {
-  // toolResultManager is accepted for caller compatibility but no longer read
-  // here — live tool-call estimates moved to getDynamicContextBlock.
   const { includeAgents = true, includeProjectInstructions = true, tokenManager, reasoningEffort, callingAgentName } = options;
 
   const workingDir = process.cwd();
@@ -261,8 +255,6 @@ ${skillsSection}`;
  * @returns the block string, or '' when there is nothing volatile to report
  */
 export async function getDynamicContextBlock(options: {
-  tokenManager?: TokenManager;
-  toolResultManager?: ToolResultManager;
   includeTodos?: boolean;
   includePlanMode?: boolean;
   /** Injectable clock for deterministic request snapshots and evaluations. */
@@ -351,17 +343,16 @@ ${body}`;
  * warnings — is produced separately by {@link getDynamicContextBlock} and
  * appended as a trailing ephemeral message, so this prefix can be KV-cached.
  */
-export async function getMainSystemPrompt(
-  tokenManager?: TokenManager,
-  toolResultManager?: ToolResultManager,
-  isOnceMode: boolean = false,
-  reasoningEffort?: string,
-  conversationMessages?: readonly Message[],
-  isScheduledRun: boolean = false,
-  scheduledTaskId?: string,
-): Promise<string> {
+export async function getMainSystemPrompt(options: {
+  tokenManager?: TokenManager;
+  isOnceMode?: boolean;
+  reasoningEffort?: string;
+  isScheduledRun?: boolean;
+  scheduledTaskId?: string;
+} = {}): Promise<string> {
+  const { tokenManager, isOnceMode = false, reasoningEffort, isScheduledRun = false, scheduledTaskId } = options;
   // Tool definitions are provided separately by the LLM client as function definitions
-  const context = await getContextInfo({ includeAgents: true, tokenManager, toolResultManager, reasoningEffort, conversationMessages });
+  const context = await getContextInfo({ includeAgents: true, tokenManager, reasoningEffort });
 
   // Scheduled runs are already single-response runs. Emit one unattended block
   // instead of two overlapping copies of the same completion protocol.
@@ -387,16 +378,18 @@ ${context}`;
 
 /**
  * Generate a system prompt for specialized agents
- * @param agentSystemPrompt - The base system prompt for the agent
- * @param taskPrompt - The task to execute
- * @param tokenManager - Token manager for context tracking
- * @param toolResultManager - Tool result manager for estimating remaining calls
- * @param reasoningEffort - Reasoning effort level
- * @param callingAgentName - Name of the agent calling this function (for filtering available agents)
- * @param thoroughness - Optional thoroughness level for dynamic regeneration: 'quick', 'medium', 'very thorough', 'uncapped'
- * @param agentType - Optional agent type identifier (e.g., 'explore', 'plan') for thoroughness adjustments
  */
-export async function getAgentSystemPrompt(agentSystemPrompt: string, taskPrompt: string, tokenManager?: TokenManager, toolResultManager?: ToolResultManager, reasoningEffort?: string, callingAgentName?: string, thoroughness?: string, agentType?: string, conversationMessages?: readonly Message[], agentDepth: number = 0): Promise<string> {
+export async function getAgentSystemPrompt(options: {
+  agentSystemPrompt: string;
+  taskPrompt: string;
+  tokenManager?: TokenManager;
+  reasoningEffort?: string;
+  callingAgentName?: string;
+  thoroughness?: string;
+  agentType?: string;
+  agentDepth?: number;
+}): Promise<string> {
+  const { agentSystemPrompt, taskPrompt, tokenManager, reasoningEffort, callingAgentName, thoroughness, agentType, agentDepth = 0 } = options;
   // Get context with agent information filtered by calling agent name.
   // Single-level delegation: only the root agent (depth 0 — the main agent or a
   // root-level custom persona) sees the agent roster. A sub-agent (depth >= 1) is a
@@ -405,10 +398,8 @@ export async function getAgentSystemPrompt(agentSystemPrompt: string, taskPrompt
     includeAgents: agentDepth < 1,
     includeProjectInstructions: false,
     tokenManager,
-    toolResultManager,
     reasoningEffort,
     callingAgentName,
-    conversationMessages,
   });
 
   // Build the base prompt with behavioral directives and general guidelines

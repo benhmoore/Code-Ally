@@ -1567,31 +1567,27 @@ export class Agent {
       // Generate/regenerate custom agent prompt with current context
       // This works for both specialized agents (sub-agents) and root-level custom agents
       const { getAgentSystemPrompt } = await import('../prompts/systemMessages.js');
-      updatedSystemPrompt = await getAgentSystemPrompt(
-        this.config.baseAgentPrompt,
-        this.config.taskPrompt || '', // Use empty string if no task prompt (for root-level custom agents)
-        this.tokenManager,
-        this.toolResultManager,
-        this.appConfig.reasoning_effort,
-        this.agentName,
-        executionContext.thoroughness,
-        this.config.agentType,
-        this.conversationManager.getMessages(),
-        this.agentDepth
-      );
+      updatedSystemPrompt = await getAgentSystemPrompt({
+        agentSystemPrompt: this.config.baseAgentPrompt,
+        taskPrompt: this.config.taskPrompt || '',
+        tokenManager: this.tokenManager,
+        reasoningEffort: this.appConfig.reasoning_effort,
+        callingAgentName: this.agentName,
+        thoroughness: executionContext.thoroughness,
+        agentType: this.config.agentType,
+        agentDepth: this.agentDepth,
+      });
       logger.debug('[AGENT_CONTEXT]', this.instanceId, 'Custom agent prompt regenerated with current context');
     } else {
       // Generate/regenerate main agent prompt with current context
       const { getMainSystemPrompt } = await import('../prompts/systemMessages.js');
-      updatedSystemPrompt = await getMainSystemPrompt(
-        this.tokenManager,
-        this.toolResultManager,
-        this.config.isOnceMode ?? this.config.isScheduledRun ?? false,
-        this.appConfig.reasoning_effort,
-        this.conversationManager.getMessages(),
-        this.config.isScheduledRun ?? false,
-        this.config.scheduledTaskId
-      );
+      updatedSystemPrompt = await getMainSystemPrompt({
+        tokenManager: this.tokenManager,
+        isOnceMode: this.config.isOnceMode ?? this.config.isScheduledRun ?? false,
+        reasoningEffort: this.appConfig.reasoning_effort,
+        isScheduledRun: this.config.isScheduledRun ?? false,
+        scheduledTaskId: this.config.scheduledTaskId,
+      });
       logger.debug('[AGENT_CONTEXT]', this.instanceId, 'Main agent prompt regenerated with current context');
     }
 
@@ -1620,8 +1616,6 @@ export class Agent {
     // model will actually receive, not a smaller approximation.
     const { getDynamicContextBlock } = await import('../prompts/systemMessages.js');
     const baseDynamicContext = await getDynamicContextBlock({
-      tokenManager: this.tokenManager,
-      toolResultManager: this.toolResultManager,
       includeTodos: !this.config.isSpecializedAgent,
       includePlanMode: !this.config.isSpecializedAgent,
       includeTime: Boolean(this.config.isScheduledRun) || needsTemporalContext(latestUserText),
