@@ -13,8 +13,14 @@ import { logger } from './Logger.js';
 export type { RunJournalEvent } from './RunJournal.js';
 
 export type RunStatus = 'running' | 'waiting_retry' | 'completed' | 'blocked' | 'cancelled' | 'failed' | 'interrupted';
+/** The agent's completion claim, retained without treating it as independent verification. */
+export interface CompletionClaim {
+  summary: string;
+  evidence?: string[];
+  remainingRisks?: string[];
+}
 export type RunOutcome =
-  | { kind: 'completed'; summary: string }
+  | ({ kind: 'completed' } & CompletionClaim)
   | { kind: 'retryable_failure'; error: string }
   | { kind: 'blocked'; reason: string }
   | { kind: 'cancelled'; reason: string }
@@ -202,7 +208,8 @@ export class RunSupervisor {
     });
   }
 
-  async claimComplete(summary: string, evidence: string[] = []): Promise<{ accepted: boolean; blockers: string[] }> {
+  async claimComplete(claim: CompletionClaim): Promise<{ accepted: boolean; blockers: string[] }> {
+    const submitted = structuredClone(claim);
     return this.serialize(async () => {
       this.assertHealthy();
       if (!this.isRunning()) return { accepted: false, blockers: ['No active durable objective'] };
@@ -221,7 +228,7 @@ export class RunSupervisor {
         await this.commit('completion_rejected', { blockers });
         return { accepted: false, blockers };
       }
-      await this.commit('run_completed', { summary, evidence });
+      await this.commit('run_completed', { ...submitted });
       return { accepted: true, blockers: [] };
     });
   }

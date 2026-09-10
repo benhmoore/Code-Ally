@@ -9,6 +9,8 @@ import { RunJournalStore } from '../RunJournalStore.js';
 import { ServiceRegistry } from '../ServiceRegistry.js';
 import * as atomicFile from '../../utils/atomicFile.js';
 import { FileOwnership } from '../../utils/FileOwnership.js';
+import { CompleteObjectiveTool } from '../../tools/CompleteObjectiveTool.js';
+import { ActivityStream } from '../ActivityStream.js';
 
 describe('RunSupervisor', () => {
   let dir: string;
@@ -39,6 +41,47 @@ describe('RunSupervisor', () => {
       catch (error) { if (!(error instanceof RunPersistenceError)) throw error; }
     }
     await fs.rm(dir, { recursive: true, force: true });
+  });
+
+  it('retains the complete tool claim in snapshots and journal replay', async () => {
+    const supervisor = createSupervisor();
+    const run = await supervisor.startRun('verify all required behavior', policy);
+    ServiceRegistry.getInstance().registerInstance('run_supervisor', supervisor);
+    const tool = new CompleteObjectiveTool(new ActivityStream());
+    const args = {
+      summary: 'Required behavior verified',
+      evidence: ['Integration suite passed', 'Restart recovery exercised'],
+      remaining_risks: ['Load beyond the tested concurrency is unmeasured'],
+    };
+    const result = await tool.execute(args);
+    expect(result.success).toBe(true);
+    const expected = {
+      kind: 'completed', summary: args.summary,
+      evidence: [...args.evidence], remainingRisks: [...args.remaining_risks],
+    };
+    args.evidence.push('Not part of the submitted claim');
+    expect(supervisor.getOutcome()).toEqual(expected);
+    const snapshot = JSON.parse(await fs.readFile(join(dir, run.runId, 'state.json'), 'utf8'));
+    expect(snapshot.outcome).toEqual(expected);
+    await supervisor.interruptForShutdown('close completed run');
+    const replayed = await new RunJournalStore(dir).replay(run.runId);
+    expect(replayed.snapshot.outcome).toEqual(expected);
+  });
+
+  it('captures claim inputs before queued transitions and rejects malformed evidence', async () => {
+    const supervisor = createSupervisor();
+    await supervisor.startRun('verify behavior', policy);
+    await expect(supervisor.claimComplete({ summary: 'done', evidence: [1] as unknown as string[] }))
+      .rejects.toThrow('Invalid run event evidence');
+    expect(supervisor.getActiveRun()?.status).toBe('running');
+    const claim = { summary: 'done', evidence: ['checked'], remainingRisks: ['disclosed'] };
+    const completion = supervisor.claimComplete(claim);
+    claim.evidence[0] = 'changed';
+    claim.remainingRisks.length = 0;
+    expect((await completion).accepted).toBe(true);
+    expect(supervisor.getOutcome()).toEqual({
+      kind: 'completed', summary: 'done', evidence: ['checked'], remainingRisks: ['disclosed'],
+    });
   });
 
   it('journals an interrupted run and resumes only through the explicit API', async () => {
@@ -85,11 +128,11 @@ describe('RunSupervisor', () => {
     await execution.toolStarted('call-1', 'bash', 'non_idempotent');
     await execution.toolFinished('call-1', 'bash', 'non_idempotent', 'unknown', 'connection dropped');
     await execution.release();
-    const result = await supervisor.claimComplete('done');
+    const result = await supervisor.claimComplete({ summary: 'done' });
     expect(result.accepted).toBe(false);
     expect(result.blockers.join(' ')).toContain('require reconciliation');
     expect(await supervisor.reconcileToolEffect('call-1', 'failed_not_applied', 'remote ref unchanged')).toBe(true);
-    expect((await supervisor.claimComplete('done')).accepted).toBe(true);
+    expect((await supervisor.claimComplete({ summary: 'done' })).accepted).toBe(true);
   });
 
   it('keeps late tool outcomes and ownership with the admitting run across replacement', async () => {
@@ -142,7 +185,7 @@ describe('RunSupervisor', () => {
     await execution.toolFinished('call-1', 'bash', 'non_idempotent', 'failed', 'tests failed');
     await execution.release();
 
-    expect((await supervisor.claimComplete('verified after repair')).accepted).toBe(true);
+    expect((await supervisor.claimComplete({ summary: 'verified after repair' })).accepted).toBe(true);
   });
 
   it('preserves reconciled effects and objective identity across repeated restarts', async () => {
@@ -162,7 +205,7 @@ describe('RunSupervisor', () => {
       const resumed = await supervisor.resumeRun(run.runId);
       expect(resumed.objective).toBe(run.objective);
       expect(resumed.epoch).toBe(restart + 1);
-      const result = await supervisor.claimComplete('not yet');
+      const result = await supervisor.claimComplete({ summary: 'not yet' });
       expect(result.accepted).toBe(false);
       expect(result.blockers.join(' ')).toContain('publish-ambiguous');
       expect(result.blockers.join(' ')).not.toContain('publish-verified');
@@ -173,7 +216,7 @@ describe('RunSupervisor', () => {
     supervisor = createSupervisor();
     await supervisor.initialize();
     await supervisor.resumeRun(run.runId);
-    expect((await supervisor.claimComplete('verified migration')).accepted).toBe(true);
+    expect((await supervisor.claimComplete({ summary: 'verified migration' })).accepted).toBe(true);
   });
 
   it.each(['missing', 'torn', 'foreign', 'sequence-gap'])('does not activate or append to a run with a %s journal', async (damage) => {
@@ -218,7 +261,7 @@ describe('RunSupervisor', () => {
     await supervisor.initialize();
     await supervisor.startRun('start the development server', policy);
 
-    expect((await supervisor.claimComplete('server is ready')).accepted).toBe(true);
+    expect((await supervisor.claimComplete({ summary: 'server is ready' })).accepted).toBe(true);
   });
 
   it('refuses completion for an explicitly blocking background dependency', async () => {
@@ -233,7 +276,7 @@ describe('RunSupervisor', () => {
     await supervisor.initialize();
     await supervisor.startRun('finish the build', policy);
 
-    const completion = await supervisor.claimComplete('done');
+    const completion = await supervisor.claimComplete({ summary: 'done' });
     expect(completion.accepted).toBe(false);
     expect(completion.blockers.join(' ')).toContain('background dependency');
   });
@@ -254,11 +297,11 @@ describe('RunSupervisor', () => {
     await supervisor.initialize();
     await supervisor.startRun('finish after review', policy);
 
-    const completion = await supervisor.claimComplete('done');
+    const completion = await supervisor.claimComplete({ summary: 'done' });
     expect(completion.accepted).toBe(false);
     expect(completion.blockers.join(' ')).toContain('await delivery');
     resultPending = false;
-    expect((await supervisor.claimComplete('review incorporated')).accepted).toBe(true);
+    expect((await supervisor.claimComplete({ summary: 'review incorporated' })).accepted).toBe(true);
   });
 
   it('reconciles a crash-left running state without auto-resuming it', async () => {
@@ -293,7 +336,7 @@ describe('RunSupervisor', () => {
     expect(reopened.getActiveRun()).toBeUndefined();
     expect((await reopened.listResumableRuns())[0]?.runId).toBe(run.runId);
     await reopened.resumeRun(run.runId);
-    const completion = await reopened.claimComplete('done');
+    const completion = await reopened.claimComplete({ summary: 'done' });
     expect(completion.accepted).toBe(false);
     expect(completion.blockers.join(' ')).toContain('call-crash');
   }, 15000);
@@ -319,7 +362,7 @@ describe('RunSupervisor', () => {
     const supervisor = createSupervisor();
     await supervisor.initialize();
     await supervisor.startRun('finish and shut down', policy);
-    expect((await supervisor.claimComplete('verified')).accepted).toBe(true);
+    expect((await supervisor.claimComplete({ summary: 'verified' })).accepted).toBe(true);
     expect(supervisor.getOutcome()).toEqual({ kind: 'completed', summary: 'verified' });
 
     await supervisor.interruptForShutdown('app closed');
@@ -379,7 +422,7 @@ describe('RunSupervisor', () => {
     const originalSync = handle.sync.bind(handle);
     const sync = vi.spyOn(handle, 'sync').mockImplementation(async () => { await gate; await originalSync(); });
     vi.spyOn(fs, 'open').mockResolvedValueOnce(handle);
-    const completion = supervisor.claimComplete('verified');
+    const completion = supervisor.claimComplete({ summary: 'verified' });
     await vi.waitFor(() => expect(sync).toHaveBeenCalled());
     expect(supervisor.getOutcome()).toBeUndefined();
     expect(supervisor.getActiveRun()?.status).toBe('running');
@@ -403,7 +446,7 @@ describe('RunSupervisor', () => {
     const run = await supervisor.startRun('commit once', policy);
     const statePath = join(dir, run.runId, 'state.json');
     vi.spyOn(atomicFile, 'atomicWriteFile').mockRejectedValueOnce(new Error('checkpoint unavailable'));
-    expect((await supervisor.claimComplete('verified')).accepted).toBe(true);
+    expect((await supervisor.claimComplete({ summary: 'verified' })).accepted).toBe(true);
     expect(supervisor.getOutcome()?.kind).toBe('completed');
     expect(JSON.parse(await fs.readFile(statePath, 'utf8')).status).toBe('running');
     await supervisor.interruptForShutdown('restart');
@@ -437,7 +480,7 @@ describe('RunSupervisor', () => {
       }
       vi.spyOn(fs, 'open').mockResolvedValueOnce(handle);
     }
-    await expect(supervisor.claimComplete('unpublished')).rejects.toBeInstanceOf(RunPersistenceError);
+    await expect(supervisor.claimComplete({ summary: 'unpublished' })).rejects.toBeInstanceOf(RunPersistenceError);
     expect(supervisor.getOutcome()).toBeUndefined();
     const journal = await fs.readFile(journalPath, 'utf8');
     await expect(supervisor.recordProgress('must not append')).rejects.toBeInstanceOf(RunPersistenceError);
@@ -447,7 +490,7 @@ describe('RunSupervisor', () => {
     await reopened.initialize();
     if (boundary === 'open') {
       await reopened.resumeRun(run.runId);
-      expect((await reopened.claimComplete('verified after recovery')).accepted).toBe(true);
+      expect((await reopened.claimComplete({ summary: 'verified after recovery' })).accepted).toBe(true);
     } else if (boundary === 'write') {
       await expect(reopened.resumeRun(run.runId)).rejects.toThrow(/journal/);
       expect(await fs.readFile(journalPath, 'utf8')).toBe(journal);
@@ -463,10 +506,10 @@ describe('RunSupervisor', () => {
     const run = await supervisor.startRun('finish exactly once', policy);
     const execution = supervisor.acquireExecution()!;
     await execution.toolStarted('publish', 'bash', 'non_idempotent');
-    expect((await supervisor.claimComplete('too early')).accepted).toBe(false);
+    expect((await supervisor.claimComplete({ summary: 'too early' })).accepted).toBe(false);
     await execution.toolFinished('publish', 'bash', 'non_idempotent', 'succeeded');
     await execution.release();
-    const [completion] = await Promise.all([supervisor.claimComplete('verified'), supervisor.cancel('late cancellation')]);
+    const [completion] = await Promise.all([supervisor.claimComplete({ summary: 'verified' }), supervisor.cancel('late cancellation')]);
     expect(completion.accepted).toBe(true);
     const records = (await fs.readFile(join(dir, run.runId, 'journal.jsonl'), 'utf8')).trimEnd().split('\n').map(line => JSON.parse(line));
     expect(records.filter(event => ['run_completed', 'run_cancelled'].includes(event.type))).toHaveLength(1);
@@ -505,7 +548,7 @@ describe('RunSupervisor', () => {
     const supervisor = createSupervisor();
     const run = await supervisor.startRun('first', policy);
     const execution = supervisor.acquireExecution()!;
-    expect((await supervisor.claimComplete('done')).accepted).toBe(true);
+    expect((await supervisor.claimComplete({ summary: 'done' })).accepted).toBe(true);
     await execution.toolFinished('completion', 'complete-objective', 'idempotent', 'succeeded');
     await execution.release();
     const journal = await fs.readFile(join(dir, run.runId, 'journal.jsonl'), 'utf8');

@@ -18,6 +18,15 @@ function text(data: Record<string, unknown>, key: string): string {
   return data[key];
 }
 
+function optionalTextList(data: Record<string, unknown>, key: string): string[] | undefined {
+  const value = data[key];
+  if (value === undefined) return undefined;
+  if (!Array.isArray(value) || value.some(entry => typeof entry !== 'string')) {
+    throw new Error(`Invalid run event ${key}`);
+  }
+  return [...value];
+}
+
 /** The single transition function used before commit and during recovery. */
 export function reduceRunEvent(previous: RunState | undefined, event: RunJournalEvent): RunState {
   validateRunJournalEvent(event, previous?.snapshot.runId ?? event.runId, (previous?.sequence ?? 0) + 1);
@@ -64,7 +73,12 @@ export function reduceRunEvent(previous: RunState | undefined, event: RunJournal
       requireRunning();
       if (state.unknownEffects.size || state.runningEffects.size) throw new Error('Unsettled effects prevent completion');
       snapshot.status = 'completed';
-      snapshot.outcome = { kind: 'completed', summary: text(data, 'summary') };
+      snapshot.outcome = {
+        kind: 'completed',
+        summary: text(data, 'summary'),
+        evidence: optionalTextList(data, 'evidence'),
+        remainingRisks: optionalTextList(data, 'remainingRisks'),
+      };
       snapshot.nextAction = undefined;
       break;
     case 'run_blocked':

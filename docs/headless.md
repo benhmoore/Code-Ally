@@ -41,6 +41,9 @@ Every turn ends with exactly one `result`.
 - `subtype` is `success` for a completed outcome, `error_during_execution` for
   a turn stopped by an interrupt, and `error` otherwise.
 - `outcome` is the run supervisor's typed outcome, untouched.
+- A completed `outcome` retains the submitted `summary`, optional `evidence`,
+  and optional `remainingRisks`. These describe the agent's claim, not an
+  independent certification that the work is correct.
 - `structured_output` carries the payload the turn that emitted this result
   recorded, and is absent from a turn that recorded none.
 - `is_error` is true whenever `subtype` is not `success`.

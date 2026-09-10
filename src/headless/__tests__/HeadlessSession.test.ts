@@ -182,6 +182,19 @@ describe('HeadlessSession', () => {
     })]);
   });
 
+  it('reports completion evidence and disclosed risks without dropping fields', async () => {
+    const out = collector();
+    const outcome: RunOutcome = {
+      kind: 'completed', summary: 'Required work done',
+      evidence: ['Behavioral checks passed'], remainingRisks: ['Scale not evaluated'],
+    };
+    replies = ['Done.'];
+    await (await session({ once: 'question', outputFormat: 'json' }, {
+      stdout: out.stream, getOutcome: () => outcome,
+    })).run();
+    expect(out.events()).toEqual([expect.objectContaining({ type: 'result', outcome })]);
+  });
+
   it('writes init, assistant and result events in stream-json mode', async () => {
     const out = collector();
     replies = ['The answer.'];

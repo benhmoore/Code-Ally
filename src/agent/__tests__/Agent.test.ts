@@ -202,10 +202,10 @@ describe('Agent - Interruption Handling', () => {
         isRunning: () => active?.status === 'running',
         startRun: async (objective: string) => (active = { runId: 'terminal-run', objective, status: 'running' }),
         getActiveRun: () => active,
-        claimComplete: async (summary: string) => {
+        claimComplete: async (claim: import('../../services/RunSupervisor.js').CompletionClaim) => {
           if (rejectFirst && claims++ === 0) return { accepted: false, blockers: ['Verification still required'] };
           active.status = 'completed';
-          active.outcome = { kind: 'completed', summary };
+          active.outcome = { kind: 'completed', ...claim };
           return { accepted: true, blockers: [] };
         },
         acquireExecution: () => ({ toolPrepared: vi.fn(), toolStarted: vi.fn(), toolFinished: vi.fn(), release: vi.fn() }),

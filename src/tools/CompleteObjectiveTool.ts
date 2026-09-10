@@ -53,7 +53,11 @@ export class CompleteObjectiveTool extends BaseTool {
   protected async executeImpl(args: CompleteObjectiveArgs): Promise<ToolResult> {
     const supervisor = ServiceRegistry.getInstance().get('run_supervisor');
     if (!supervisor) return this.formatErrorResponse('RunSupervisor is unavailable', 'system_error');
-    const result = await supervisor.claimComplete(args.summary, args.evidence ?? []);
+    const result = await supervisor.claimComplete({
+      summary: args.summary,
+      evidence: args.evidence ?? [],
+      remainingRisks: args.remaining_risks ?? [],
+    });
     if (!result.accepted) {
       return this.formatErrorResponse(
         `Completion rejected: ${result.blockers.join('; ')}`,
