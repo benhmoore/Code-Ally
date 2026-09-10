@@ -1,4 +1,4 @@
-import { promises as fs } from 'node:fs';
+import { constants, promises as fs } from 'node:fs';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { getProjectRunsDir } from '../config/paths.js';
@@ -6,6 +6,7 @@ import { atomicWriteFile } from '../utils/atomicFile.js';
 import type { RunPolicy } from './RunPolicyManager.js';
 import { ServiceRegistry } from './ServiceRegistry.js';
 import { FileOwnership } from '../utils/FileOwnership.js';
+import { createDurableDirectory, syncDirectory } from '../utils/durableDirectory.js';
 import { readRunJournal, InvalidRunJournalError, type RunJournalEvent } from './RunJournal.js';
 import { reduceRunEvent, type RunState } from './RunState.js';
 import { logger } from './Logger.js';
@@ -101,6 +102,7 @@ export class RunSupervisor {
         try { state = await this.replay(runId); }
         catch (cause) { throw new Error(`Cannot resume run ${runId}: journal recovery failed`, { cause }); }
         if (state.snapshot.status !== 'interrupted') throw new Error(`Run ${runId} is ${state.snapshot.status}, not interrupted`);
+        await this.ensureRunDirectory(runId);
         this.ownership = ownership;
         this.state = state;
         await this.commit('run_resumed', { previousStatus: state.snapshot.status });
@@ -124,7 +126,7 @@ export class RunSupervisor {
       if (this.isRunning()) return this.getActiveRun()!;
       await this.releaseOwnership();
       const runId = randomUUID();
-      await fs.mkdir(this.runDir(runId), { recursive: true });
+      await this.ensureRunDirectory(runId);
       const ownership = await FileOwnership.acquire(path.join(this.runDir(runId), 'owner.lock'));
       if (!ownership) throw new Error(`Run ${runId} is owned by another live supervisor`);
       this.ownership = ownership;
@@ -232,11 +234,15 @@ export class RunSupervisor {
     await this.checkpoint(next);
   }
   private async append(event: RunJournalEvent): Promise<void> {
-    const handle = await fs.open(path.join(this.runDir(event.runId), 'journal.jsonl'), 'a', 0o600);
+    // Create only the initial journal, exclusively. Later transitions must not
+    // silently replace lost history with a fresh file starting mid-sequence.
+    const flags = event.sequence === 1 ? 'ax' : constants.O_WRONLY | constants.O_APPEND;
+    const handle = await fs.open(path.join(this.runDir(event.runId), 'journal.jsonl'), flags, 0o600);
     try {
       await handle.writeFile(`${JSON.stringify(event)}\n`, 'utf8');
       await handle.sync();
     } finally { await handle.close(); }
+    if (event.sequence === 1) await syncDirectory(this.runDir(event.runId));
   }
   private async checkpoint(state: RunState): Promise<void> {
     try {
@@ -257,6 +263,10 @@ export class RunSupervisor {
     return { runId: state.snapshot.runId, sequence: state.sequence + 1, timestamp: Date.now(), type, ...(data ? { data } : {}) };
   }
   private isStateRunning(state: RunState): boolean { return state.snapshot.status === 'running' || state.snapshot.status === 'waiting_retry'; }
+  private async ensureRunDirectory(runId: string): Promise<void> {
+    await createDurableDirectory(this.runsDir);
+    await createDurableDirectory(this.runDir(runId));
+  }
   private assertHealthy(): void { if (this.persistenceFailure) throw this.persistenceFailure; }
   private runDir(runId: string): string {
     if (!runId || runId === '.' || runId === '..' || /[/\\]/.test(runId)) throw new Error('Invalid run identifier');

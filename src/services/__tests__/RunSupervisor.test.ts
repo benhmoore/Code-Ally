@@ -294,6 +294,16 @@ describe('RunSupervisor', () => {
     expect(supervisor.getOutcome()).toEqual({ kind: 'completed', summary: 'verified' });
   });
 
+  it('does not recreate a missing active journal and execute against lost history', async () => {
+    const supervisor = createSupervisor();
+    const run = await supervisor.startRun('preserve history', policy);
+    const journalPath = join(dir, run.runId, 'journal.jsonl');
+    await fs.rename(journalPath, `${journalPath}.saved`);
+    await expect(supervisor.toolStarted('publish', 'bash', 'non_idempotent')).rejects.toBeInstanceOf(RunPersistenceError);
+    await expect(fs.stat(journalPath)).rejects.toMatchObject({ code: 'ENOENT' });
+    expect(supervisor.getOutcome()).toBeUndefined();
+  });
+
   it('retains committed completion when checkpoint replacement fails and never resurrects it', async () => {
     const supervisor = createSupervisor();
     const run = await supervisor.startRun('commit once', policy);
