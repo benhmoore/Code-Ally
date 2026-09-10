@@ -95,6 +95,34 @@ describe('RunSupervisor', () => {
     expect((await supervisor.claimComplete('verified migration')).accepted).toBe(true);
   });
 
+  it.each(['missing', 'torn', 'foreign', 'sequence-gap'])('does not activate or append to a run with a %s journal', async (damage) => {
+    const first = new RunSupervisor(dir);
+    await first.initialize();
+    const run = await first.startRun('recover safely', policy);
+    await first.toolStarted('possibly-applied', 'bash', 'non_idempotent');
+    await first.interruptForShutdown('restart');
+    const journalPath = join(dir, run.runId, 'journal.jsonl');
+    const statePath = join(dir, run.runId, 'state.json');
+    const original = await fs.readFile(journalPath, 'utf8');
+    if (damage === 'missing') await fs.unlink(journalPath);
+    else if (damage === 'torn') await fs.appendFile(journalPath, '{"sequence":');
+    else {
+      const records = original.trimEnd().split('\n').map(line => JSON.parse(line));
+      if (damage === 'foreign') records[1].runId = 'another-run';
+      else records[1].sequence += 1;
+      await fs.writeFile(journalPath, records.map(record => JSON.stringify(record)).join('\n') + '\n');
+    }
+    const before = await fs.readFile(journalPath, 'utf8').catch(() => null);
+    const stateBefore = await fs.readFile(statePath, 'utf8');
+    const reopened = new RunSupervisor(dir);
+    await reopened.initialize();
+    await expect(reopened.resumeRun(run.runId)).rejects.toThrow(/journal/i);
+    expect(reopened.isRunning()).toBe(false);
+    expect(reopened.getActiveRun()).toBeUndefined();
+    expect(await fs.readFile(journalPath, 'utf8').catch(() => null)).toBe(before);
+    expect(await fs.readFile(statePath, 'utf8')).toBe(stateBefore);
+  });
+
   it('does not let an ordinary long-running background server hold completion open', async () => {
     ServiceRegistry.getInstance().registerInstance('background_task_registry', {
       list: () => [{

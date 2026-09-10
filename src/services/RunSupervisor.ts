@@ -94,31 +94,48 @@ export class RunSupervisor {
     const snapshot = JSON.parse(await fs.readFile(statePath, 'utf8')) as RunSnapshot;
     if (snapshot.version !== 1 || snapshot.runId !== runId) throw new Error('Invalid run state');
     if (snapshot.status !== 'interrupted') throw new Error(`Run ${runId} is ${snapshot.status}, not interrupted`);
-    this.active = { ...snapshot, status: 'running', outcome: undefined, updatedAt: Date.now() };
-    this.unknownEffects.clear();
-    this.sequence = 0;
+    // Stage recovery without changing live state. An unreadable journal is
+    // missing safety evidence, not an empty history that may be resumed.
+    let sequence = 0;
+    const unknownEffects = new Set<string>();
     const inFlightNonIdempotent = new Set<string>();
     try {
-      const lines = (await fs.readFile(path.join(this.runDir(runId), 'journal.jsonl'), 'utf8')).split('\n').filter(Boolean);
+      const bytes = await fs.readFile(path.join(this.runDir(runId), 'journal.jsonl'));
+      const journal = new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+      if (!journal.endsWith('\n')) throw new Error('Missing complete journal record boundary');
+      const lines = journal.slice(0, -1).split('\n');
       for (const line of lines) {
         const event = JSON.parse(line) as RunJournalEvent;
-        this.sequence = Math.max(this.sequence, event.sequence);
+        if (!event || event.runId !== runId || event.sequence !== sequence + 1
+          || !Number.isSafeInteger(event.sequence)
+          || !Number.isFinite(event.timestamp)
+          || typeof event.type !== 'string' || !event.type
+          || (event.data !== undefined && (!event.data || typeof event.data !== 'object' || Array.isArray(event.data)))) {
+          throw new Error(`Invalid journal event at sequence ${sequence + 1}`);
+        }
+        sequence = event.sequence;
         const callId = event.data?.callId;
         const effect = event.data?.effect;
         if (event.type === 'tool_running' && typeof callId === 'string' && effect === 'non_idempotent') {
           inFlightNonIdempotent.add(callId);
         }
-        if (event.type === 'tool_unknown' && typeof callId === 'string') this.unknownEffects.add(callId);
+        if (event.type === 'tool_unknown' && typeof callId === 'string') unknownEffects.add(callId);
         // A verified reconciliation settles ambiguity just as definitively as
         // an observed tool result. Replay must preserve that decision across
         // every later process replacement, including crash-left running calls.
         if (['tool_succeeded', 'tool_failed', 'tool_reconciled'].includes(event.type) && typeof callId === 'string') {
-          this.unknownEffects.delete(callId);
+          unknownEffects.delete(callId);
           inFlightNonIdempotent.delete(callId);
         }
       }
-    } catch { /* a missing journal is surfaced by the next durable state write */ }
-    for (const callId of inFlightNonIdempotent) this.unknownEffects.add(callId);
+    } catch (cause) {
+      throw new Error(`Cannot resume run ${runId}: journal recovery failed`, { cause });
+    }
+    for (const callId of inFlightNonIdempotent) unknownEffects.add(callId);
+    this.active = { ...snapshot, status: 'running', outcome: undefined, updatedAt: Date.now() };
+    this.sequence = sequence;
+    this.unknownEffects.clear();
+    for (const callId of unknownEffects) this.unknownEffects.add(callId);
     await this.record('run_resumed', { previousStatus: snapshot.status });
     return structuredClone(this.active);
   }
