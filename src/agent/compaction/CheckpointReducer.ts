@@ -183,23 +183,27 @@ function summarizeToolResult(
   return oneLine(body).slice(0, TOOL_SUMMARY_MAX_CHARS);
 }
 
-function artifactFromCall(call: ToolCall, sourceId: string): ArtifactReference[] {
+function artifactFromCall(call: ToolCall, sourceId: string, outcome?: Message): ArtifactReference[] {
   const args = parseToolCallArguments(call.function.arguments as any);
   const name = call.function.name;
+  const { payload, errorWrapped } = toolResultPayload(outcome?.content ?? '');
+  const envelope = parseToolEnvelope(payload);
+  const confirmed = outcome !== undefined && envelope?.success === true
+    && !toolResultFailed(outcome, envelope, errorWrapped);
   const operation: ArtifactReference['operation'] =
-    name === 'write' ? 'created' :
+    !confirmed ? 'referenced' : name === 'write' ? 'created' :
       ['apply-patch', 'apply_patch'].includes(name) ? 'modified' :
         name === 'read' ? 'read' : 'referenced';
   const rawPaths = [args.file_path, args.path, args.file, args.target]
     .flatMap(value => Array.isArray(value) ? value : [value])
     .filter((value): value is string => typeof value === 'string' && value.trim().length > 0);
 
-  const outline = extractSourceOutline(args);
+  const outline = confirmed ? extractSourceOutline(args) : '';
   return rawPaths.map(rawPath => ({
     path: path.normalize(path.isAbsolute(rawPath) ? rawPath : path.resolve(process.cwd(), rawPath)),
     operation,
-    reason: `${name} tool${outline ? `; outline: ${outline}` : ''}`.slice(0, 800),
-    sourceMessageIds: [sourceId],
+    reason: `${name} tool${confirmed ? '' : '; outcome not confirmed successful'}${outline ? `; outline: ${outline}` : ''}`.slice(0, 800),
+    sourceMessageIds: outcome?.id ? [sourceId, outcome.id] : [sourceId],
   }));
 }
 
@@ -209,6 +213,8 @@ export function extractSemanticCheckpoint(
   previous?: SemanticCheckpointStateV1 | null,
 ): SemanticCheckpointStateV1 {
   const state = previous ? structuredClone(previous) : emptySemanticCheckpoint();
+  const outcomes = new Map(messages.filter(message => message.role === 'tool' && message.tool_call_id)
+    .map(message => [message.tool_call_id!, message]));
   const users = messages.filter(message => message.role === 'user' && messageId(message));
   const firstUser = users[0];
   const lastUser = users.at(-1);
@@ -255,7 +261,7 @@ export function extractSemanticCheckpoint(
     }
     if (message.tool_calls) {
       for (const call of message.tool_calls) {
-        state.artifacts.push(...artifactFromCall(call, id));
+        state.artifacts.push(...artifactFromCall(call, id, outcomes.get(call.id)));
       }
     }
   }
@@ -491,8 +497,8 @@ export function renderCheckpointForModel(state: SemanticCheckpointStateV1): stri
     'A user message after this checkpoint is newer and authoritative, even when it changes, pauses, or cancels '
     + 'the recorded objective. Use activeWork/nextActions only when they remain consistent with the newest user '
     + 'request; if no newer user message is present, continue the recorded request.',
-    'The artifacts listed already exist on disk from work completed this session. Do not re-create them, '
-    + 'and do not re-read them wholesale to reorient. When you '
+    'Artifacts are historical references, not guarantees of current existence or content. Referenced paths may come from failed or unfinished calls. '
+    + 'Check current state before creating or modifying files; avoid re-reading them wholesale to reorient. When you '
     + 'need details from an existing file, first use any declarations/contracts preserved in its artifact reason; '
     + 'otherwise search for the exact symbol or read only its specific section (offset/limit).',
     JSON.stringify(rendered),

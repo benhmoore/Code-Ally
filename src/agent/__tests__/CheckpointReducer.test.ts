@@ -292,6 +292,24 @@ describe('extractSemanticCheckpoint', () => {
     expect(state.activeWork[0]!.text).not.toContain('Inspect all existing files');
   });
 
+  it.each([false, undefined, true])('grounds artifact operations in outcome success=%s', success => {
+    const call: Message = {
+      id: 'attempt', role: 'assistant', content: '', timestamp: 1,
+      tool_calls: [{ id: 'patch-call', type: 'function', function: {
+        name: 'apply-patch', arguments: { file_path: '/repo/file.ts', patch: 'proposed change' },
+      } }],
+    };
+    const messages = [call];
+    if (success !== undefined) messages.push(toolResult({
+      id: 'outcome', tool_call_id: 'patch-call', name: 'apply-patch',
+      content: envelopeContent('patch-call', { success, error: success ? '' : 'No hunks applied' }),
+    }));
+    const state = extractSemanticCheckpoint(messages);
+    expect(state.artifacts[0]!.operation).toBe(success ? 'modified' : 'referenced');
+    expect(state.artifacts[0]!.sourceMessageIds).toEqual(success === undefined ? ['attempt'] : ['attempt', 'outcome']);
+    expect(renderCheckpointForModel(state)).not.toContain('already exist on disk');
+  });
+
   it('records cross-language declaration outlines on written artifacts', () => {
     const messages: Message[] = [{
       id: 'a1',
@@ -311,6 +329,10 @@ describe('extractSemanticCheckpoint', () => {
       }],
     }];
 
+    for (const callId of ['call-js', 'call-py']) messages.push(toolResult({
+      id: `result-${callId}`, tool_call_id: callId, name: 'write',
+      content: envelopeContent(callId, { success: true }),
+    }));
     const state = extractSemanticCheckpoint(messages);
     const world = state.artifacts.find(artifact => artifact.path === '/repo/world.ts')!;
     const service = state.artifacts.find(artifact => artifact.path === '/repo/service.py')!;
