@@ -6,18 +6,12 @@ import { atomicWriteFile } from '../utils/atomicFile.js';
 import type { RunPolicy } from './RunPolicyManager.js';
 import { ServiceRegistry } from './ServiceRegistry.js';
 import { FileOwnership } from '../utils/FileOwnership.js';
-import { readRunJournal, type RunJournalEvent } from './RunJournal.js';
+import { readRunJournal, InvalidRunJournalError, type RunJournalEvent } from './RunJournal.js';
+import { reduceRunEvent, type RunState } from './RunState.js';
+import { logger } from './Logger.js';
 export type { RunJournalEvent } from './RunJournal.js';
 
-export type RunStatus =
-  | 'running'
-  | 'waiting_retry'
-  | 'completed'
-  | 'blocked'
-  | 'cancelled'
-  | 'failed'
-  | 'interrupted';
-
+export type RunStatus = 'running' | 'waiting_retry' | 'completed' | 'blocked' | 'cancelled' | 'failed' | 'interrupted';
 export type RunOutcome =
   | { kind: 'completed'; summary: string }
   | { kind: 'retryable_failure'; error: string }
@@ -38,349 +32,247 @@ export interface RunSnapshot {
   outcome?: RunOutcome;
 }
 
-/**
- * Exclusive process owner for durable objectives. The journal survives a crash, but
- * this service never restarts work after the owning process has closed.
- */
+export class RunPersistenceError extends Error {
+  constructor(cause: unknown) {
+    super('Run journal persistence failed; recovery is required before further execution', { cause });
+    this.name = 'RunPersistenceError';
+  }
+}
+
+/** Exclusive owner of a journal-authoritative objective. Startup never executes work. */
 export class RunSupervisor {
-  private active?: RunSnapshot;
-  private sequence = 0;
-  private writeQueue: Promise<void> = Promise.resolve();
-  private readonly unknownEffects = new Set<string>();
+  private state?: RunState;
   private ownership?: FileOwnership;
-  private activationQueue: Promise<unknown> = Promise.resolve();
+  private transitions: Promise<unknown> = Promise.resolve();
+  private persistenceFailure?: Error;
 
   constructor(private readonly runsDir = getProjectRunsDir()) {}
 
   async initialize(): Promise<void> {
     await fs.mkdir(this.runsDir, { recursive: true });
-    // Reconcile only while holding ownership. A different process may still be
-    // executing the objective, even if its last write was arbitrarily long ago.
-    const entries = await fs.readdir(this.runsDir, { withFileTypes: true });
-    // Keep ownership handles bounded independently of accumulated run history.
-    for (const entry of entries) {
+    for (const entry of await fs.readdir(this.runsDir, { withFileTypes: true })) {
       if (!entry.isDirectory()) continue;
-      const statePath = path.join(this.runsDir, entry.name, 'state.json');
-      const ownership = await FileOwnership.acquire(path.join(this.runsDir, entry.name, 'owner.lock'));
+      const ownership = await FileOwnership.acquire(path.join(this.runDir(entry.name), 'owner.lock'));
       if (!ownership) continue;
       try {
-        let snapshot: RunSnapshot;
-        try {
-          snapshot = JSON.parse(await fs.readFile(statePath, 'utf8')) as RunSnapshot;
-        } catch (error) {
-          // Missing/invalid snapshots remain inspectable. Operational failures
-          // must reach the caller: startup has not successfully reconciled them.
-          if (error instanceof SyntaxError || (error as NodeJS.ErrnoException).code === 'ENOENT') continue;
-          throw error;
+        let state: RunState;
+        try { state = await this.replay(entry.name); }
+        catch (error) {
+          if (!(error instanceof InvalidRunJournalError) && (error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+          logger.warn('Run journal could not be recovered:', entry.name, error);
+          continue;
         }
-        if (!snapshot || snapshot.version !== 1 || !['running', 'waiting_retry'].includes(snapshot.status)) continue;
-        snapshot.status = 'interrupted';
-        snapshot.updatedAt = Date.now();
-        snapshot.outcome = { kind: 'cancelled', reason: 'Previous Code-Ally process ended without a clean handoff' };
-        await atomicWriteFile(statePath, `${JSON.stringify(snapshot, null, 2)}\n`);
+        if (this.isStateRunning(state)) {
+          const event = this.event(state, 'run_interrupted', { reason: 'Previous Code-Ally process ended without a clean handoff' });
+          const next = reduceRunEvent(state, event);
+          await this.append(event);
+          state = next;
+        }
+        await this.checkpoint(state);
       } finally { await ownership.release(); }
     }
   }
 
-  async listInterruptedRuns(limit: number = 20): Promise<RunSnapshot[]> {
+  async listInterruptedRuns(limit = 20): Promise<RunSnapshot[]> {
     await fs.mkdir(this.runsDir, { recursive: true });
-    const entries = await fs.readdir(this.runsDir, { withFileTypes: true });
-    const snapshots = await Promise.all(entries.filter((entry) => entry.isDirectory()).map(async (entry) => {
+    const snapshots: RunSnapshot[] = [];
+    for (const entry of await fs.readdir(this.runsDir, { withFileTypes: true })) {
+      if (!entry.isDirectory()) continue;
       try {
-        return JSON.parse(await fs.readFile(path.join(this.runsDir, entry.name, 'state.json'), 'utf8')) as RunSnapshot;
-      } catch { return null; }
-    }));
-    return snapshots
-      .filter((snapshot): snapshot is RunSnapshot => snapshot?.version === 1 && snapshot.status === 'interrupted')
-      .sort((a, b) => b.updatedAt - a.updatedAt)
-      .slice(0, Math.max(1, limit));
-  }
-
-  /** Explicitly resume a journaled run. Startup never calls this automatically. */
-  async resumeRun(runId: string): Promise<RunSnapshot> {
-    return this.serializeActivation(() => this.resumeOwnedRun(runId));
-  }
-
-  private async resumeOwnedRun(runId: string): Promise<RunSnapshot> {
-    if (this.isRunning()) throw new Error('A durable objective is already running');
-    await this.releaseOwnership();
-    const ownership = await FileOwnership.acquire(path.join(this.runDir(runId), 'owner.lock'));
-    if (!ownership) throw new Error(`Run ${runId} is owned by another live supervisor`);
-    this.ownership = ownership;
-    try {
-      return await this.recoverRun(runId);
-    } catch (error) {
-      this.active = undefined;
-      await ownership.release();
-      this.ownership = undefined;
-      throw error;
-    }
-  }
-
-  private async recoverRun(runId: string): Promise<RunSnapshot> {
-    const statePath = path.join(this.runDir(runId), 'state.json');
-    const snapshot = JSON.parse(await fs.readFile(statePath, 'utf8')) as RunSnapshot;
-    if (snapshot.version !== 1 || snapshot.runId !== runId) throw new Error('Invalid run state');
-    if (snapshot.status !== 'interrupted') throw new Error(`Run ${runId} is ${snapshot.status}, not interrupted`);
-    // Stage recovery without changing live state. An unreadable journal is
-    // missing safety evidence, not an empty history that may be resumed.
-    let sequence = 0;
-    const unknownEffects = new Set<string>();
-    const inFlightNonIdempotent = new Set<string>();
-    try {
-      for await (const event of readRunJournal(path.join(this.runDir(runId), 'journal.jsonl'), runId)) {
-        sequence = event.sequence;
-        const callId = event.data?.callId;
-        const effect = event.data?.effect;
-        if (event.type === 'tool_running' && typeof callId === 'string' && effect === 'non_idempotent') {
-          inFlightNonIdempotent.add(callId);
-        }
-        if (event.type === 'tool_unknown' && typeof callId === 'string') unknownEffects.add(callId);
-        // A verified reconciliation settles ambiguity just as definitively as
-        // an observed tool result. Replay must preserve that decision across
-        // every later process replacement, including crash-left running calls.
-        if (['tool_succeeded', 'tool_failed', 'tool_reconciled'].includes(event.type) && typeof callId === 'string') {
-          unknownEffects.delete(callId);
-          inFlightNonIdempotent.delete(callId);
-        }
+        const state = await this.replay(entry.name);
+        if (state.snapshot.status === 'interrupted') snapshots.push(state.snapshot);
+      } catch (error) {
+        if (!(error instanceof InvalidRunJournalError) && (error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+        logger.warn('Run journal could not be listed:', entry.name, error);
       }
-    } catch (cause) {
-      throw new Error(`Cannot resume run ${runId}: journal recovery failed`, { cause });
     }
-    for (const callId of inFlightNonIdempotent) unknownEffects.add(callId);
-    this.active = { ...snapshot, status: 'running', outcome: undefined, updatedAt: Date.now() };
-    this.sequence = sequence;
-    this.unknownEffects.clear();
-    for (const callId of unknownEffects) this.unknownEffects.add(callId);
-    await this.record('run_resumed', { previousStatus: snapshot.status });
-    return structuredClone(this.active);
+    return snapshots.sort((a, b) => b.updatedAt - a.updatedAt).slice(0, Math.max(1, limit));
   }
 
-  getActiveRun(): Readonly<RunSnapshot> | undefined {
-    return this.active ? structuredClone(this.active) : undefined;
+  async resumeRun(runId: string): Promise<RunSnapshot> {
+    return this.serialize(async () => {
+      this.assertHealthy();
+      if (this.isRunning()) throw new Error('A durable objective is already running');
+      await this.releaseOwnership();
+      const ownership = await FileOwnership.acquire(path.join(this.runDir(runId), 'owner.lock'));
+      if (!ownership) throw new Error(`Run ${runId} is owned by another live supervisor`);
+      try {
+        let state: RunState;
+        try { state = await this.replay(runId); }
+        catch (cause) { throw new Error(`Cannot resume run ${runId}: journal recovery failed`, { cause }); }
+        if (state.snapshot.status !== 'interrupted') throw new Error(`Run ${runId} is ${state.snapshot.status}, not interrupted`);
+        this.ownership = ownership;
+        this.state = state;
+        await this.commit('run_resumed', { previousStatus: state.snapshot.status });
+        return this.getActiveRun()!;
+      } catch (error) {
+        this.state = undefined;
+        this.ownership = undefined;
+        await ownership.release();
+        throw error;
+      }
+    });
   }
 
-  isRunning(): boolean {
-    return this.active?.status === 'running' || this.active?.status === 'waiting_retry';
-  }
-
-  getOutcome(): RunOutcome | undefined {
-    return this.active?.outcome ? structuredClone(this.active.outcome) : undefined;
-  }
+  getActiveRun(): RunSnapshot | undefined { return this.state ? structuredClone(this.state.snapshot) : undefined; }
+  isRunning(): boolean { return !!this.state && this.isStateRunning(this.state); }
+  getOutcome(): RunOutcome | undefined { return this.state?.snapshot.outcome ? structuredClone(this.state.snapshot.outcome) : undefined; }
 
   async startRun(objective: string, policy: RunPolicy): Promise<RunSnapshot> {
-    return this.serializeActivation(() => this.startOwnedRun(objective, policy));
-  }
-
-  private async startOwnedRun(objective: string, policy: RunPolicy): Promise<RunSnapshot> {
-    if (this.isRunning()) return this.active!;
-    await this.releaseOwnership();
-    const runId = randomUUID();
-    await fs.mkdir(this.runDir(runId), { recursive: true });
-    const ownership = await FileOwnership.acquire(path.join(this.runDir(runId), 'owner.lock'));
-    if (!ownership) throw new Error(`Run ${runId} is owned by another live supervisor`);
-    this.ownership = ownership;
-    const now = Date.now();
-    this.sequence = 0;
-    this.unknownEffects.clear();
-    this.active = {
-      version: 1,
-      runId,
-      objective,
-      policy: { ...policy },
-      status: 'running',
-      epoch: 0,
-      startedAt: now,
-      updatedAt: now,
-    };
-    try {
-      await this.record('run_started', { objective });
-    } catch (error) {
-      this.active = undefined;
-      await ownership.release();
-      this.ownership = undefined;
-      throw error;
-    }
-    return this.active;
+    return this.serialize(async () => {
+      this.assertHealthy();
+      if (this.isRunning()) return this.getActiveRun()!;
+      await this.releaseOwnership();
+      const runId = randomUUID();
+      await fs.mkdir(this.runDir(runId), { recursive: true });
+      const ownership = await FileOwnership.acquire(path.join(this.runDir(runId), 'owner.lock'));
+      if (!ownership) throw new Error(`Run ${runId} is owned by another live supervisor`);
+      this.ownership = ownership;
+      this.state = undefined;
+      try {
+        await this.persistTransition({ runId, sequence: 1, timestamp: Date.now(), type: 'run_started', data: { objective, policy: { ...policy } } });
+        return this.getActiveRun()!;
+      } catch (error) {
+        await this.releaseOwnership();
+        throw error;
+      }
+    });
   }
 
   async record(type: string, data?: Record<string, unknown>): Promise<void> {
-    if (!this.active) return;
-    if (!this.ownership) throw new Error('Cannot journal a run without exclusive ownership');
-    this.active.updatedAt = Date.now();
-    const event: RunJournalEvent = {
-      sequence: ++this.sequence,
-      timestamp: this.active.updatedAt,
-      runId: this.active.runId,
-      type,
-      ...(data ? { data } : {}),
-    };
-    const snapshot = structuredClone(this.active);
-    this.writeQueue = this.writeQueue.then(async () => {
-      await fs.mkdir(this.runDir(snapshot.runId), { recursive: true });
-      const journalPath = path.join(this.runDir(snapshot.runId), 'journal.jsonl');
-      const handle = await fs.open(journalPath, 'a', 0o600);
-      try {
-        await handle.writeFile(`${JSON.stringify(event)}\n`, 'utf8');
-        await handle.sync();
-      } finally {
-        await handle.close();
-      }
-      await atomicWriteFile(
-        path.join(this.runDir(snapshot.runId), 'state.json'),
-        `${JSON.stringify(snapshot, null, 2)}\n`
-      );
-    });
-    await this.writeQueue;
+    return this.serialize(() => this.commit(type, data));
   }
-
   async rolloverEpoch(reason: string): Promise<void> {
-    if (!this.active || !this.isRunning()) return;
-    this.active.epoch += 1;
-    await this.record('epoch_rolled_over', { reason, epoch: this.active.epoch });
+    return this.serialize(async () => {
+      if (this.isRunning()) await this.commit('epoch_rolled_over', { reason, epoch: this.state!.snapshot.epoch + 1 });
+    });
   }
-
   async recordProgress(summary: string): Promise<void> {
-    if (!this.active || !this.isRunning()) return;
-    this.active.nextAction = 'Continue the objective or submit complete-objective when all work is verified.';
-    await this.record('assistant_progress', { summary: summary.slice(0, 4000) });
+    return this.serialize(async () => {
+      if (this.isRunning()) await this.commit('assistant_progress', { summary: summary.slice(0, 4000) });
+    });
   }
-
   async toolPrepared(callId: string, tool: string, effect: string, args: Record<string, unknown>): Promise<void> {
     let serializedArgs = '[unserializable arguments]';
-    try { serializedArgs = JSON.stringify(args).slice(0, 8000); } catch { /* keep fallback */ }
+    try { serializedArgs = JSON.stringify(args).slice(0, 8000); } catch { /* retain diagnostic */ }
     await this.record('tool_prepared', { callId, tool, effect, serializedArgs });
   }
-
   async toolStarted(callId: string, tool: string, effect: string): Promise<void> {
     await this.record('tool_running', { callId, tool, effect });
   }
-
-  async toolFinished(
-    callId: string,
-    tool: string,
-    effect: string,
-    outcome: 'succeeded' | 'failed' | 'unknown',
-    error?: string
-  ): Promise<void> {
+  async toolFinished(callId: string, tool: string, effect: string, outcome: 'succeeded' | 'failed' | 'unknown', error?: string): Promise<void> {
     const ambiguous = outcome === 'unknown' && effect === 'non_idempotent';
-    if (ambiguous) this.unknownEffects.add(callId);
-    else this.unknownEffects.delete(callId);
     await this.record(ambiguous ? 'tool_unknown' : outcome === 'succeeded' ? 'tool_succeeded' : 'tool_failed', {
-      callId,
-      tool,
-      effect,
-      ...(error ? { error: error.slice(0, 2000) } : {}),
+      callId, tool, effect, ...(error ? { error: error.slice(0, 2000) } : {}),
     });
   }
-
   async reconcileToolEffect(callId: string, resolution: string, evidence: string): Promise<boolean> {
-    if (!this.unknownEffects.has(callId)) return false;
-    this.unknownEffects.delete(callId);
-    await this.record('tool_reconciled', {
-      callId,
-      resolution: resolution.slice(0, 200),
-      evidence: evidence.slice(0, 4000),
+    return this.serialize(async () => {
+      this.assertHealthy();
+      if (!this.state?.unknownEffects.has(callId)) return false;
+      await this.commit('tool_reconciled', { callId, resolution: resolution.slice(0, 200), evidence: evidence.slice(0, 4000) });
+      return true;
     });
-    return true;
   }
 
   async claimComplete(summary: string, evidence: string[] = []): Promise<{ accepted: boolean; blockers: string[] }> {
-    if (!this.active || !this.isRunning()) return { accepted: false, blockers: ['No active durable objective'] };
-    const registry = ServiceRegistry.getInstance();
-    const blockers: string[] = [];
-    const incompleteTodos = registry.get('todo_manager')?.getTodos().filter(todo => todo.status !== 'completed') ?? [];
-    if (incompleteTodos.length) blockers.push(`${incompleteTodos.length} todo item(s) remain incomplete`);
-    const backgroundTasks = registry.get('background_task_registry')?.list() ?? [];
-    const runningTasks = backgroundTasks
-      .filter(task => task.status === 'running' && task.blocksCompletion);
-    if (runningTasks.length) blockers.push(`${runningTasks.length} background dependency/dependencies are still running`);
-    const pendingWatchedResults = backgroundTasks
-      .filter(task => task.status !== 'running' && task.blocksCompletion && task.watched);
-    if (pendingWatchedResults.length) {
-      blockers.push(`${pendingWatchedResults.length} watched background result(s) await delivery`);
-    }
-    const undeliveredAgents = registry.get('background_agent_manager')?.listTasks()
-      .filter((task) => task.mode === 'background' && task.status !== 'running' && !task.consumed) ?? [];
-    if (undeliveredAgents.length) {
-      blockers.push(`${undeliveredAgents.length} completed background result(s) have not yet been incorporated`);
-    }
-    if (this.unknownEffects.size) {
-      blockers.push(`${this.unknownEffects.size} non-idempotent tool outcome(s) require reconciliation: ${Array.from(this.unknownEffects).join(', ')}`);
-    }
-    if (blockers.length) {
-      await this.record('completion_rejected', { blockers });
-      return { accepted: false, blockers };
-    }
-    this.active.status = 'completed';
-    this.active.outcome = { kind: 'completed', summary };
-    this.active.nextAction = undefined;
-    await this.record('run_completed', { summary, evidence });
-    return { accepted: true, blockers: [] };
-  }
-
-  async block(reason: string): Promise<void> {
-    if (!this.active || !this.isRunning()) return;
-    this.active.status = 'blocked';
-    this.active.outcome = { kind: 'blocked', reason };
-    await this.record('run_blocked', { reason });
-  }
-
-  async fail(error: string): Promise<void> {
-    if (!this.active || !this.isRunning()) return;
-    this.active.status = 'failed';
-    this.active.outcome = { kind: 'failed', error };
-    await this.record('run_failed', { error });
-  }
-
-  async cancel(reason: string): Promise<void> {
-    if (!this.active || !this.isRunning()) return;
-    this.active.status = 'cancelled';
-    this.active.outcome = { kind: 'cancelled', reason };
-    await this.record('run_cancelled', { reason });
-  }
-
-  async interruptForShutdown(reason: string): Promise<void> {
-    await this.serializeActivation(async () => {
-      try {
-        if (this.active && this.isRunning()) {
-          this.active.status = 'interrupted';
-          this.active.outcome = { kind: 'cancelled', reason };
-          await this.record('run_interrupted', { reason });
-        }
-      } finally {
-        await this.releaseOwnership();
+    return this.serialize(async () => {
+      this.assertHealthy();
+      if (!this.isRunning()) return { accepted: false, blockers: ['No active durable objective'] };
+      const registry = ServiceRegistry.getInstance();
+      const blockers: string[] = [];
+      const incompleteTodos = registry.get('todo_manager')?.getTodos().filter(todo => todo.status !== 'completed') ?? [];
+      if (incompleteTodos.length) blockers.push(`${incompleteTodos.length} todo item(s) remain incomplete`);
+      const backgroundTasks = registry.get('background_task_registry')?.list() ?? [];
+      const runningTasks = backgroundTasks.filter(task => task.status === 'running' && task.blocksCompletion);
+      if (runningTasks.length) blockers.push(`${runningTasks.length} background dependency/dependencies are still running`);
+      const pendingWatchedResults = backgroundTasks.filter(task => task.status !== 'running' && task.blocksCompletion && task.watched);
+      if (pendingWatchedResults.length) blockers.push(`${pendingWatchedResults.length} watched background result(s) await delivery`);
+      const undeliveredAgents = registry.get('background_agent_manager')?.listTasks()
+        .filter(task => task.mode === 'background' && task.status !== 'running' && !task.consumed) ?? [];
+      if (undeliveredAgents.length) blockers.push(`${undeliveredAgents.length} completed background result(s) have not yet been incorporated`);
+      const unsettled = new Set([...this.state!.unknownEffects, ...this.state!.runningEffects]);
+      if (unsettled.size) blockers.push(`${unsettled.size} non-idempotent tool outcome(s) require reconciliation: ${[...unsettled].join(', ')}`);
+      if (blockers.length) {
+        await this.commit('completion_rejected', { blockers });
+        return { accepted: false, blockers };
       }
+      await this.commit('run_completed', { summary, evidence });
+      return { accepted: true, blockers: [] };
     });
   }
 
-  async flush(): Promise<void> {
-    await this.writeQueue;
+  async block(reason: string): Promise<void> { await this.finish('run_blocked', { reason }); }
+  async fail(error: string): Promise<void> { await this.finish('run_failed', { error }); }
+  async cancel(reason: string): Promise<void> { await this.finish('run_cancelled', { reason }); }
+  private async finish(type: string, data: Record<string, unknown>): Promise<void> {
+    return this.serialize(async () => { if (this.isRunning()) await this.commit(type, data); });
   }
+  async interruptForShutdown(reason: string): Promise<void> {
+    return this.serialize(async () => {
+      try { if (this.isRunning()) await this.commit('run_interrupted', { reason }); }
+      finally { await this.releaseOwnership(); }
+    });
+  }
+  async flush(): Promise<void> { await this.transitions; this.assertHealthy(); }
 
-  private runDir(runId: string): string {
-    if (!runId || runId === '.' || runId === '..' || /[/\\]/.test(runId)) {
-      throw new Error('Invalid run identifier');
+  private async commit(type: string, data?: Record<string, unknown>): Promise<void> {
+    this.assertHealthy();
+    if (!this.state) return;
+    if (!this.ownership) throw new Error('Cannot journal a run without exclusive ownership');
+    await this.persistTransition(this.event(this.state, type, data));
+  }
+  private async persistTransition(event: RunJournalEvent): Promise<void> {
+    const next = reduceRunEvent(this.state, event);
+    try { await this.append(event); }
+    catch (cause) {
+      this.persistenceFailure = new RunPersistenceError(cause);
+      throw this.persistenceFailure;
     }
+    // Journal sync is the commit point. Checkpoint failure cannot undo a
+    // committed event, and recovery never interprets the cache as authority.
+    this.state = next;
+    await this.checkpoint(next);
+  }
+  private async append(event: RunJournalEvent): Promise<void> {
+    const handle = await fs.open(path.join(this.runDir(event.runId), 'journal.jsonl'), 'a', 0o600);
+    try {
+      await handle.writeFile(`${JSON.stringify(event)}\n`, 'utf8');
+      await handle.sync();
+    } finally { await handle.close(); }
+  }
+  private async checkpoint(state: RunState): Promise<void> {
+    try {
+      await atomicWriteFile(path.join(this.runDir(state.snapshot.runId), 'state.json'),
+        `${JSON.stringify({ ...state.snapshot, journalSequence: state.sequence }, null, 2)}\n`);
+    } catch (error) { logger.warn('Run journal committed, but checkpoint refresh failed:', state.snapshot.runId, error); }
+  }
+  private async replay(runId: string): Promise<RunState> {
+    let state: RunState | undefined;
+    for await (const event of readRunJournal(path.join(this.runDir(runId), 'journal.jsonl'), runId)) {
+      try { state = reduceRunEvent(state, event); }
+      catch (cause) { throw new InvalidRunJournalError(`Invalid run transition at sequence ${event.sequence}`, cause); }
+    }
+    if (!state) throw new InvalidRunJournalError('Empty run journal');
+    return state;
+  }
+  private event(state: RunState, type: string, data?: Record<string, unknown>): RunJournalEvent {
+    return { runId: state.snapshot.runId, sequence: state.sequence + 1, timestamp: Date.now(), type, ...(data ? { data } : {}) };
+  }
+  private isStateRunning(state: RunState): boolean { return state.snapshot.status === 'running' || state.snapshot.status === 'waiting_retry'; }
+  private assertHealthy(): void { if (this.persistenceFailure) throw this.persistenceFailure; }
+  private runDir(runId: string): string {
+    if (!runId || runId === '.' || runId === '..' || /[/\\]/.test(runId)) throw new Error('Invalid run identifier');
     return path.join(this.runsDir, runId);
   }
-
-  private serializeActivation<T>(operation: () => Promise<T>): Promise<T> {
-    const result = this.activationQueue.then(operation);
-    this.activationQueue = result.catch(() => undefined);
+  private serialize<T>(operation: () => Promise<T>): Promise<T> {
+    const result = this.transitions.then(operation);
+    this.transitions = result.catch(() => undefined);
     return result;
   }
-
   private async releaseOwnership(): Promise<void> {
-    // Stop admitting journal writes before draining those already accepted.
-    // Ownership is retained through terminal tool-result bookkeeping, until
-    // shutdown or the next objective explicitly retires this run.
     const ownership = this.ownership;
     this.ownership = undefined;
-    try {
-      await this.flush();
-    } finally {
-      await ownership?.release();
-    }
+    await ownership?.release();
   }
 }

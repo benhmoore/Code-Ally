@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
-import { RunSupervisor } from '../RunSupervisor.js';
+import { RunSupervisor, RunPersistenceError } from '../RunSupervisor.js';
 import { ServiceRegistry } from '../ServiceRegistry.js';
 import * as atomicFile from '../../utils/atomicFile.js';
 import { FileOwnership } from '../../utils/FileOwnership.js';
@@ -21,6 +21,7 @@ describe('RunSupervisor', () => {
     interaction: 'none' as const,
     execution: 'headless' as const,
     completion: 'durable_objective' as const,
+    authorizationPresetId: 'auto-confirm',
   };
 
   beforeEach(async () => {
@@ -32,7 +33,10 @@ describe('RunSupervisor', () => {
   });
   afterEach(async () => {
     vi.restoreAllMocks();
-    for (const supervisor of supervisors.splice(0)) await supervisor.interruptForShutdown('test cleanup');
+    for (const supervisor of supervisors.splice(0)) {
+      try { await supervisor.interruptForShutdown('test cleanup'); }
+      catch (error) { if (!(error instanceof RunPersistenceError)) throw error; }
+    }
     await fs.rm(dir, { recursive: true, force: true });
   });
 
@@ -209,9 +213,11 @@ describe('RunSupervisor', () => {
       expect(await observer.listInterruptedRuns()).toEqual([]);
       await expect(observer.resumeRun(run.runId)).rejects.toThrow(/owned/);
     } finally {
-      const exited = once(child, 'exit');
-      child.kill('SIGKILL');
-      await exited;
+      if (child.exitCode === null && child.signalCode === null) {
+        const exited = once(child, 'exit');
+        child.kill('SIGKILL');
+        await exited;
+      }
     }
     const reopened = createSupervisor();
     await reopened.initialize();
@@ -248,7 +254,7 @@ describe('RunSupervisor', () => {
     expect(await fs.readdir(dir)).toHaveLength(1);
   });
 
-  it('surfaces reconciliation write failures and releases ownership for a retry', async () => {
+  it('rebuilds a failed checkpoint from the authoritative journal', async () => {
     const supervisor = createSupervisor();
     const run = await supervisor.startRun('recover after disk pressure', policy);
     await supervisor.interruptForShutdown('stop');
@@ -259,11 +265,87 @@ describe('RunSupervisor', () => {
     const failure = Object.assign(new Error('No space left on device'), { code: 'ENOSPC' });
     const write = vi.spyOn(atomicFile, 'atomicWriteFile').mockRejectedValueOnce(failure);
     const reopened = createSupervisor();
-    await expect(reopened.initialize()).rejects.toBe(failure);
+    await reopened.initialize();
     expect(JSON.parse(await fs.readFile(statePath, 'utf8')).status).toBe('running');
+    expect((await reopened.listInterruptedRuns())[0]?.runId).toBe(run.runId);
     write.mockRestore();
     await reopened.initialize();
     expect((await reopened.listInterruptedRuns())[0]?.runId).toBe(run.runId);
+  });
+
+  it('does not publish completion before journal sync finishes', async () => {
+    const supervisor = createSupervisor();
+    const run = await supervisor.startRun('durable commit', policy);
+    const handle = await fs.open(join(dir, run.runId, 'journal.jsonl'), 'a');
+    let release!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    const originalSync = handle.sync.bind(handle);
+    const sync = vi.spyOn(handle, 'sync').mockImplementation(async () => { await gate; await originalSync(); });
+    vi.spyOn(fs, 'open').mockResolvedValueOnce(handle);
+    const completion = supervisor.claimComplete('verified');
+    await vi.waitFor(() => expect(sync).toHaveBeenCalled());
+    expect(supervisor.getOutcome()).toBeUndefined();
+    expect(supervisor.getActiveRun()?.status).toBe('running');
+    release();
+    expect((await completion).accepted).toBe(true);
+    expect(supervisor.getOutcome()).toEqual({ kind: 'completed', summary: 'verified' });
+  });
+
+  it('retains committed completion when checkpoint replacement fails and never resurrects it', async () => {
+    const supervisor = createSupervisor();
+    const run = await supervisor.startRun('commit once', policy);
+    const statePath = join(dir, run.runId, 'state.json');
+    vi.spyOn(atomicFile, 'atomicWriteFile').mockRejectedValueOnce(new Error('checkpoint unavailable'));
+    expect((await supervisor.claimComplete('verified')).accepted).toBe(true);
+    expect(supervisor.getOutcome()?.kind).toBe('completed');
+    expect(JSON.parse(await fs.readFile(statePath, 'utf8')).status).toBe('running');
+    await supervisor.interruptForShutdown('restart');
+    const reopened = createSupervisor();
+    await reopened.initialize();
+    expect(JSON.parse(await fs.readFile(statePath, 'utf8')).status).toBe('completed');
+    expect(await reopened.listInterruptedRuns()).toEqual([]);
+    await expect(reopened.resumeRun(run.runId)).rejects.toThrow(/completed/);
+  });
+
+  it.each(['open', 'sync'])('fails closed after journal %s failure without publishing completion', async boundary => {
+    const supervisor = createSupervisor();
+    const run = await supervisor.startRun('recover commit failure', policy);
+    const journalPath = join(dir, run.runId, 'journal.jsonl');
+    if (boundary === 'open') vi.spyOn(fs, 'open').mockRejectedValueOnce(new Error('disk unavailable'));
+    else {
+      const handle = await fs.open(journalPath, 'a');
+      vi.spyOn(handle, 'sync').mockRejectedValueOnce(new Error('sync failed'));
+      vi.spyOn(fs, 'open').mockResolvedValueOnce(handle);
+    }
+    await expect(supervisor.claimComplete('unpublished')).rejects.toBeInstanceOf(RunPersistenceError);
+    expect(supervisor.getOutcome()).toBeUndefined();
+    const journal = await fs.readFile(journalPath, 'utf8');
+    await expect(supervisor.recordProgress('must not append')).rejects.toBeInstanceOf(RunPersistenceError);
+    expect(await fs.readFile(journalPath, 'utf8')).toBe(journal);
+    await expect(supervisor.interruptForShutdown('restart')).rejects.toBeInstanceOf(RunPersistenceError);
+    const reopened = createSupervisor();
+    await reopened.initialize();
+    if (boundary === 'open') {
+      await reopened.resumeRun(run.runId);
+      expect((await reopened.claimComplete('verified after recovery')).accepted).toBe(true);
+    } else {
+      // The complete append survived this injected sync failure. Recovery must
+      // honor that evidence rather than blindly attempting completion again.
+      await expect(reopened.resumeRun(run.runId)).rejects.toThrow(/completed/);
+    }
+  });
+
+  it('serializes conflicting terminal transitions and blocks running external effects', async () => {
+    const supervisor = createSupervisor();
+    const run = await supervisor.startRun('finish exactly once', policy);
+    await supervisor.toolStarted('publish', 'bash', 'non_idempotent');
+    expect((await supervisor.claimComplete('too early')).accepted).toBe(false);
+    await supervisor.toolFinished('publish', 'bash', 'non_idempotent', 'succeeded');
+    const [completion] = await Promise.all([supervisor.claimComplete('verified'), supervisor.cancel('late cancellation')]);
+    expect(completion.accepted).toBe(true);
+    const records = (await fs.readFile(join(dir, run.runId, 'journal.jsonl'), 'utf8')).trimEnd().split('\n').map(line => JSON.parse(line));
+    expect(records.filter(event => ['run_completed', 'run_cancelled'].includes(event.type))).toHaveLength(1);
+    expect(supervisor.getOutcome()).toEqual({ kind: 'completed', summary: 'verified' });
   });
 
   it('bounds ownership handles while scanning accumulated history', async () => {

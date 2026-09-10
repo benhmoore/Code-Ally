@@ -17,29 +17,44 @@ export interface RunJournalEvent {
   data?: Record<string, unknown>;
 }
 
+export class InvalidRunJournalError extends Error {
+  constructor(message: string, cause?: unknown) {
+    super(message, { cause });
+    this.name = 'InvalidRunJournalError';
+  }
+}
+
 /** Decode incrementally: recovery memory is bounded by a record, not run age. */
 export async function* decodeRunJournal(
   chunks: AsyncIterable<Uint8Array>,
   runId: string
 ): AsyncGenerator<RunJournalEvent> {
   const decoder = new TextDecoder('utf-8', { fatal: true });
+  const decode = (chunk?: Uint8Array, stream = false): string => {
+    try { return decoder.decode(chunk, { stream }); }
+    catch (cause) { throw new InvalidRunJournalError('Invalid journal UTF-8', cause); }
+  };
   let pending = '';
   let sequence = 0;
   for await (const chunk of chunks) {
-    pending += decoder.decode(chunk, { stream: true });
+    pending += decode(chunk, true);
     let start = 0;
     let end: number;
     while ((end = pending.indexOf('\n', start)) !== -1) {
-      const event: unknown = JSON.parse(pending.slice(start, end));
-      validateRunJournalEvent(event, runId, sequence + 1);
+      let event: RunJournalEvent;
+      try {
+        const value: unknown = JSON.parse(pending.slice(start, end));
+        validateRunJournalEvent(value, runId, sequence + 1);
+        event = value;
+      } catch (cause) { throw new InvalidRunJournalError(`Invalid journal record at sequence ${sequence + 1}`, cause); }
       sequence = event.sequence;
       yield event;
       start = end + 1;
     }
     pending = pending.slice(start);
   }
-  pending += decoder.decode();
-  if (pending || sequence === 0) throw new Error('Missing complete journal record boundary');
+  pending += decode();
+  if (pending || sequence === 0) throw new InvalidRunJournalError('Missing complete journal record boundary');
 }
 
 export function readRunJournal(filePath: string, runId: string): AsyncGenerator<RunJournalEvent> {
