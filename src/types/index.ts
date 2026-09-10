@@ -142,17 +142,25 @@ export interface FunctionDefinition {
       type: 'object';
       properties: Record<string, ParameterSchema>;
       required?: string[];
+      additionalProperties?: boolean;
     };
   };
 }
 
 export interface ParameterSchema {
-  type: 'string' | 'number' | 'integer' | 'boolean' | 'array' | 'object';
+  /**
+   * Optional so a node may constrain a value by `enum` alone, the way
+   * caller-supplied JSON Schemas commonly do. A node with no type is not
+   * type-checked; its other constraints still apply.
+   */
+  type?: 'string' | 'number' | 'integer' | 'boolean' | 'array' | 'object';
   description?: string;
   enum?: string[] | number[];
   items?: ParameterSchema;
   properties?: Record<string, ParameterSchema>;
   required?: string[];
+  /** When false, a property absent from `properties` makes the object invalid. */
+  additionalProperties?: boolean;
   /**
    * Marks a string value as a path on the local filesystem. `BaseTool.execute`
    * walks the schema and authorizes every value marked this way against the

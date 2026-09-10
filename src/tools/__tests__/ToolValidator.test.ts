@@ -9,7 +9,7 @@ import { ReadTool } from '../ReadTool.js';
 import { BashTool } from '../BashTool.js';
 import { GrepTool } from '../GrepTool.js';
 import { AgentTool } from '../AgentTool.js';
-import { ToolResult, FunctionDefinition } from '@shared/index.js';
+import { ToolResult, FunctionDefinition, ParameterSchema } from '@shared/index.js';
 import { ActivityStream } from '@services/ActivityStream.js';
 
 // Mock tool for testing basic functionality
@@ -332,6 +332,79 @@ describe('ToolValidator', () => {
       });
 
       expect(result.valid).toBe(true);
+    });
+  });
+
+  describe('Schema validation', () => {
+    const schema: ParameterSchema = {
+      type: 'object',
+      required: ['results'],
+      additionalProperties: false,
+      properties: {
+        results: {
+          type: 'array',
+          items: {
+            type: 'object',
+            required: ['fingerprint', 'outcome'],
+            properties: {
+              fingerprint: { type: 'string' },
+              outcome: { enum: ['fixed', 'dismissed'] },
+              attempts: { type: 'integer' },
+              score: { type: 'number' },
+            },
+          },
+        },
+      },
+    };
+
+    function check(value: unknown) {
+      return validator.validateValue(value, schema);
+    }
+
+    it('accepts a value that satisfies the whole schema', () => {
+      expect(check({
+        results: [{ fingerprint: 'a1', outcome: 'fixed', attempts: 2, score: 0.5 }],
+      })).toEqual({ valid: true });
+    });
+
+    it('names the path of a missing required property', () => {
+      const result = check({ results: [{ outcome: 'fixed' }] });
+
+      expect(result.valid).toBe(false);
+      expect(result.error).toBe('$.results[0].fingerprint: required property is missing');
+    });
+
+    it('names the path of a value outside an enum', () => {
+      const result = check({ results: [{ fingerprint: 'a1', outcome: 'pending' }] });
+
+      expect(result.error).toBe('$.results[0].outcome: expected one of fixed, dismissed, got "pending"');
+    });
+
+    it('separates integer from number', () => {
+      const base = { fingerprint: 'a1', outcome: 'fixed' };
+
+      expect(check({ results: [{ ...base, score: 1.5 }] }).valid).toBe(true);
+      expect(check({ results: [{ ...base, attempts: 1.5 }] }).error)
+        .toBe('$.results[0].attempts: expected integer, got 1.5');
+    });
+
+    it('rejects an item whose type is wrong', () => {
+      expect(check({ results: [{ fingerprint: 7, outcome: 'fixed' }] }).error)
+        .toBe('$.results[0].fingerprint: expected string, got number');
+      expect(check({ results: 'none' }).error).toBe('$.results: expected array, got string');
+      expect(check({ results: [[]] }).error).toBe('$.results[0]: expected object, got array');
+    });
+
+    it('rejects an undeclared property when additionalProperties is false', () => {
+      const result = check({ results: [], notes: 'extra' });
+
+      expect(result.error).toBe('$.notes: property is not allowed by the schema');
+    });
+
+    it('allows an undeclared property by default', () => {
+      const open: ParameterSchema = { type: 'object', properties: { a: { type: 'string' } } };
+
+      expect(validator.validateValue({ a: 'x', b: 1 }, open)).toEqual({ valid: true });
     });
   });
 });

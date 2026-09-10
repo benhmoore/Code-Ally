@@ -15,6 +15,18 @@ export interface ValidationResult {
   suggestion?: string;
 }
 
+/** A validation failure that names the JSON path of the offending value. */
+function fail(path: string, detail: string): { valid: false; error: string } {
+  return { valid: false, error: `${path}: ${detail}` };
+}
+
+/** The observed type, distinguishing an array from a plain object. */
+function describe(value: unknown): string {
+  if (Array.isArray(value)) return 'array';
+  if (value === null) return 'null';
+  return typeof value;
+}
+
 export class ToolValidator {
 
   /**
@@ -65,11 +77,11 @@ export class ToolValidator {
         continue;
       }
 
-      const typeValid = this.validateType(paramValue, paramSchema);
+      const typeValid = this.validateValue(paramValue, paramSchema, paramName);
       if (!typeValid.valid) {
         return {
           valid: false,
-          error: `Invalid type for parameter '${paramName}' in ${tool.name}: ${typeValid.error}`,
+          error: `Invalid type in ${tool.name}: ${typeValid.error}`,
           error_type: 'validation_error',
           suggestion: `Expected ${paramSchema.type}, got ${typeof paramValue}`,
         };
@@ -80,79 +92,111 @@ export class ToolValidator {
   }
 
   /**
-   * Validate a value against a parameter schema
+   * Validate a value against a schema node, recursing through objects and
+   * arrays. Every failure names the JSON path of the offending value so a
+   * model can correct exactly that field and retry.
+   *
+   * @param value - The value to check
+   * @param schema - The schema node the value must satisfy
+   * @param path - JSON path of `value`, used as the prefix for nested paths
    */
-  private validateType(
-    value: any,
-    schema: ParameterSchema
+  validateValue(
+    value: unknown,
+    schema: ParameterSchema,
+    path: string = '$'
   ): { valid: boolean; error?: string } {
-    // Handle null/undefined
     if (value === null || value === undefined) {
-      return { valid: false, error: 'Value is null or undefined' };
+      return fail(path, 'value is null or undefined');
+    }
+
+    if (schema.enum) {
+      const allowed = schema.enum as readonly unknown[];
+      if (!allowed.includes(value)) {
+        return fail(path, `expected one of ${allowed.join(', ')}, got ${JSON.stringify(value)}`);
+      }
     }
 
     switch (schema.type) {
       case 'string':
-        if (typeof value !== 'string') {
-          return { valid: false, error: `Expected string, got ${typeof value}` };
-        }
-        return { valid: true };
+        return typeof value === 'string'
+          ? { valid: true }
+          : fail(path, `expected string, got ${describe(value)}`);
 
       case 'number':
       case 'integer':
-        if (typeof value !== 'number') {
-          return { valid: false, error: `Expected number, got ${typeof value}` };
+        if (typeof value !== 'number' || Number.isNaN(value)) {
+          return fail(path, `expected ${schema.type}, got ${describe(value)}`);
         }
         if (schema.type === 'integer' && !Number.isInteger(value)) {
-          return { valid: false, error: 'Expected integer, got float' };
+          return fail(path, `expected integer, got ${value}`);
         }
         return { valid: true };
 
       case 'boolean':
-        if (typeof value !== 'boolean') {
-          return { valid: false, error: `Expected boolean, got ${typeof value}` };
-        }
-        return { valid: true };
+        return typeof value === 'boolean'
+          ? { valid: true }
+          : fail(path, `expected boolean, got ${describe(value)}`);
 
       case 'array':
-        if (!Array.isArray(value)) {
-          return { valid: false, error: `Expected array, got ${typeof value}` };
-        }
-        // Optionally validate array items if schema.items is defined
-        if (schema.items) {
-          for (let i = 0; i < value.length; i++) {
-            const itemValid = this.validateType(value[i], schema.items);
-            if (!itemValid.valid) {
-              return {
-                valid: false,
-                error: `Array item ${i}: ${itemValid.error}`,
-              };
-            }
-          }
-        }
-        return { valid: true };
+        return this.validateArray(value, schema, path);
 
       case 'object':
-        if (typeof value !== 'object' || Array.isArray(value)) {
-          return { valid: false, error: `Expected object, got ${typeof value}` };
-        }
-        // Optionally validate object properties if schema.properties is defined
-        if (schema.properties && schema.required) {
-          for (const requiredProp of schema.required) {
-            if (!(requiredProp in value)) {
-              return {
-                valid: false,
-                error: `Missing required property '${requiredProp}'`,
-              };
-            }
-          }
-        }
-        return { valid: true };
+        return this.validateObject(value, schema, path);
 
       default:
-        // Unknown type - allow
+        // A node with no declared type constrains nothing further.
         return { valid: true };
     }
+  }
+
+  private validateArray(
+    value: unknown,
+    schema: ParameterSchema,
+    path: string
+  ): { valid: boolean; error?: string } {
+    if (!Array.isArray(value)) {
+      return fail(path, `expected array, got ${describe(value)}`);
+    }
+    if (!schema.items) return { valid: true };
+
+    for (let i = 0; i < value.length; i++) {
+      const item = this.validateValue(value[i], schema.items, `${path}[${i}]`);
+      if (!item.valid) return item;
+    }
+    return { valid: true };
+  }
+
+  private validateObject(
+    value: unknown,
+    schema: ParameterSchema,
+    path: string
+  ): { valid: boolean; error?: string } {
+    if (typeof value !== 'object' || Array.isArray(value)) {
+      return fail(path, `expected object, got ${describe(value)}`);
+    }
+    const record = value as Record<string, unknown>;
+
+    for (const name of schema.required ?? []) {
+      if (!(name in record)) {
+        return fail(`${path}.${name}`, 'required property is missing');
+      }
+    }
+
+    if (schema.additionalProperties === false) {
+      const declared = schema.properties ?? {};
+      for (const name of Object.keys(record)) {
+        if (!(name in declared)) {
+          return fail(`${path}.${name}`, 'property is not allowed by the schema');
+        }
+      }
+    }
+
+    for (const [name, propertySchema] of Object.entries(schema.properties ?? {})) {
+      if (!(name in record)) continue;
+      const property = this.validateValue(record[name], propertySchema, `${path}.${name}`);
+      if (!property.valid) return property;
+    }
+    return { valid: true };
   }
 
   /**
