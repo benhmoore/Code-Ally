@@ -21,6 +21,65 @@ describe('Agent - Interruption Handling', () => {
   let activityStream: ActivityStream;
   let mockConfig: Config;
 
+  it('waits for idle compaction before starting a new model turn', async () => {
+    let finish!: () => void;
+    const compact = vi.spyOn(agent, 'compactCurrentConversation').mockImplementation(() =>
+      new Promise(resolve => { finish = () => resolve({} as never); }));
+    const compaction = agent.requestCompaction();
+    await vi.waitFor(() => expect(compact).toHaveBeenCalledOnce());
+    const turn = agent.sendMessage('Continue the objective.');
+    try {
+      await new Promise<void>(resolve => setImmediate(resolve));
+      expect(mockModelClient.send).not.toHaveBeenCalled();
+      finish();
+      await compaction;
+      await turn;
+      expect(mockModelClient.send).toHaveBeenCalled();
+    } finally { finish(); }
+  });
+
+  it('queues external compaction until the admitted turn reaches a safe boundary', async () => {
+    let finish!: () => void;
+    vi.spyOn(agent as any, 'executeMessageTurn').mockImplementation(() =>
+      new Promise<string>(resolve => { finish = () => resolve('done'); }));
+    const compact = vi.spyOn(agent, 'compactCurrentConversation').mockResolvedValue({} as never);
+    const turn = agent.sendMessage('Work');
+    const compaction = agent.requestCompaction();
+    expect(compact).not.toHaveBeenCalled();
+    finish();
+    await Promise.all([turn, compaction]);
+    expect(compact).toHaveBeenCalledOnce();
+    expect(agent.isProcessing()).toBe(false);
+  });
+
+  it('does not start a waiting turn after the user cancels it', async () => {
+    let finish!: () => void;
+    const compact = vi.spyOn(agent, 'compactCurrentConversation').mockImplementation(() =>
+      new Promise(resolve => { finish = () => resolve({} as never); }));
+    const compaction = agent.requestCompaction();
+    await vi.waitFor(() => expect(compact).toHaveBeenCalledOnce());
+    const turn = agent.sendMessage('Continue');
+    agent.interrupt({ kind: 'user_cancel' });
+    finish();
+    await Promise.all([compaction, turn]);
+    expect(mockModelClient.send).not.toHaveBeenCalled();
+    expect(agent.isProcessing()).toBe(false);
+  });
+
+  it('drains standalone compaction before releasing runtime resources', async () => {
+    let finish!: () => void;
+    const compact = vi.spyOn(agent, 'compactCurrentConversation').mockImplementation(() =>
+      new Promise(resolve => { finish = () => resolve({} as never); }));
+    const compaction = agent.requestCompaction();
+    await vi.waitFor(() => expect(compact).toHaveBeenCalledOnce());
+    const cleanup = agent.cleanup();
+    expect(mockModelClient.close).not.toHaveBeenCalled();
+    await expect(agent.requestCompaction()).rejects.toThrow('closing');
+    finish();
+    await Promise.all([compaction, cleanup]);
+    expect(mockModelClient.close).toHaveBeenCalledOnce();
+  });
+
   it.each([false, true])('drains the admitted turn before cleanup (turn failure: %s)', async fails => {
     let finish!: () => void;
     vi.spyOn(agent as any, 'executeMessageTurn').mockImplementation(() => new Promise<string>((resolve, reject) => {

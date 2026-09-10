@@ -19,6 +19,7 @@ import {
   type SendOptions,
 } from '../llm/ModelClient.js';
 import { ToolManager } from '../tools/ToolManager.js';
+import { ConversationOperationQueue } from './ConversationOperationQueue.js';
 import { getRuntimeToolExclusions, needsTemporalContext } from '../tools/runtimeToolSelection.js';
 import { ActivityStream } from '../services/ActivityStream.js';
 import { ServiceRegistry } from '../services/ServiceRegistry.js';
@@ -256,6 +257,7 @@ export class Agent {
   /** Synchronous, whole-turn admission guard; broader than an in-flight model request. */
   private turnAdmissionActive = false;
   private turnCompletion: Promise<void> = Promise.resolve();
+  private readonly conversationOperations = new ConversationOperationQueue();
   private closing = false;
   private cleanupPromise?: Promise<void>;
   private nativeCompactionPending = false;
@@ -832,7 +834,7 @@ export class Agent {
    * System prompts and execution contexts are regenerated fresh on each invocation.
    */
   resetForReuse(): void {
-    if (this.turnAdmissionActive || this.closing) throw new Error('Cannot reuse an active or closing agent');
+    if (this.turnAdmissionActive || this.conversationOperations.hasWork || this.closing) throw new Error('Cannot reuse an active or closing agent');
     // Clear conversation history (includes checkpoint tracking and token count)
     this.clearConversationHistory();
 
@@ -979,6 +981,13 @@ export class Agent {
     let finishTurn!: () => void;
     this.turnCompletion = new Promise<void>(resolve => { finishTurn = resolve; });
     try {
+      const waitedForOperation = this.conversationOperations.hasWork;
+      if (waitedForOperation) await this.conversationOperations.drain();
+      if (this.closing) throw new Error('Agent is closing and cannot begin the admitted turn');
+      if (waitedForOperation && this.interruptionManager.getCause()?.kind === 'user_cancel') {
+        this.invocationState.agentEndEmitted = false;
+        return await this.handleInterruption();
+      }
       this.interruptionManager.reset();
       this.invocationState.requestInProgress = true;
       this.invocationState.agentEndEmitted = false;
@@ -987,6 +996,7 @@ export class Agent {
       // executeMessageTurn owns normal cleanup. This covers failures during its
       // preparation phase, before the existing lifecycle try/finally begins.
       try {
+        if (this.conversationOperations.hasWork) await this.conversationOperations.drain();
         if (this.invocationState.requestInProgress) this.cleanupRequestState();
       } finally {
         this.turnAdmissionActive = false;
@@ -1173,6 +1183,7 @@ export class Agent {
       };
 
       while (true) {
+        if (this.conversationOperations.hasWork) await this.conversationOperations.drain();
         await this.adoptPendingNativeCompaction();
         if (await continuePendingInterruption()) continue;
         if (this.interruptionManager.isInterrupted()) {
@@ -1310,7 +1321,7 @@ export class Agent {
    * @param cause - User action that stopped generation
    */
   interrupt(cause: UserInterruptionCause = { kind: 'user_cancel' }): void {
-    if (this.turnAdmissionActive) {
+    if (this.turnAdmissionActive || this.conversationOperations.active) {
       // Set interruption state and abort this agent's request signal. Because the
       // signal handed to ModelClient.send() is owned by this agent's
       // InterruptionManager, this cancels the in-flight LLM request immediately
@@ -1416,6 +1427,7 @@ export class Agent {
    * @returns LLM response with potential tool calls
    */
   private async getLLMResponse(executionContext: AgentExecutionContext): Promise<LLMResponse> {
+    if (this.conversationOperations.hasWork) await this.conversationOperations.drain();
     // Per-turn round-trip backstop: stop a runaway loop (e.g. a model that keeps
     // emitting empty/malformed output or never satisfies a requirement) before it
     // fills the context window. Returns a plain text response with no tool calls,
@@ -2501,6 +2513,15 @@ export class Agent {
     return result;
   }
 
+  /** External requests wait for the turn owner; internal compaction is already owned. */
+  requestCompaction(options: CompactionOptions = {}): Promise<AppliedCompactionResult> {
+    if (this.closing) return Promise.reject(new Error('Agent is closing and cannot admit compaction'));
+    const snapshot = structuredClone(options);
+    const operation = this.conversationOperations.enqueue(() => this.compactCurrentConversation(snapshot));
+    if (!this.turnAdmissionActive) void this.conversationOperations.drain();
+    return operation;
+  }
+
   /** Mirror provider-triggered same-response compaction into the durable local window. */
   private async adoptPendingNativeCompaction(): Promise<void> {
     if (!this.nativeCompactionPending) return;
@@ -2922,6 +2943,7 @@ export class Agent {
   async stopAndDrain(): Promise<void> {
     this.closing = true;
     this.interrupt({ kind: 'user_cancel' });
+    await this.conversationOperations.close();
     await this.turnCompletion;
   }
 }

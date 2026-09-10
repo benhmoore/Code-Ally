@@ -39,11 +39,7 @@ export class CompactCommand extends Command {
     const customInstructions = args.join(' ').trim() || undefined;
 
     try {
-      if (typeof (agent as any).compactCurrentConversation !== 'function') {
-        throw new Error('Active agent does not support compaction');
-      }
-
-      await (agent as any).compactCurrentConversation({
+      await agent.requestCompaction({
         customInstructions,
       });
 
