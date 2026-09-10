@@ -206,14 +206,9 @@ export class EditAgentTool extends BaseTool {
         readCache.invalidate(absolutePath);
       }
 
-      const readStateManager = registry.get('read_state_manager');
-      if (readStateManager) {
-        readStateManager.clearFile(absolutePath);
-        if (updatedContent.length > 0) {
-          const lines = updatedContent.split('\n');
-          readStateManager.trackRead(absolutePath, 1, lines.length, this.getReadScopeId(executionContext));
-        }
-      }
+      // Field-level inputs are not an observation of the serialized file.
+      // Invalidate old evidence; a source edit requires an explicit read.
+      registry.get('read_state_manager')?.clearFile(absolutePath);
 
       // Capture operation patch
       const patchNumber = await this.captureOperationPatch(
