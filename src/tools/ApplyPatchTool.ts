@@ -10,6 +10,10 @@ import { validateIsFile } from '../utils/pathValidator.js';
 import { applyModelPatch, type AppliedModelPatch } from '../utils/patchApplier.js';
 import { checkFileAfterModification } from '../utils/fileCheckUtils.js';
 import { formatError } from '../utils/errorUtils.js';
+import { CONTEXT_SIZES, TOKEN_MANAGEMENT } from '../config/constants.js';
+import { tokenCounter } from '../services/TokenCounter.js';
+import { toModelToolResult } from '../utils/toolResultContent.js';
+import { fileMutationCoordinator } from '../services/FileMutationCoordinator.js';
 
 const MAX_PATCH_CHARS = 1_000_000;
 
@@ -64,7 +68,7 @@ export class ApplyPatchTool extends BaseTool {
             },
             show_updated_context: {
               type: 'boolean',
-              description: 'Return and track the complete updated file as read (default false).',
+              description: 'Return full updated source if it fits the output budget (default false).',
             },
           },
           required: ['file_path', 'patch'],
@@ -123,7 +127,6 @@ export class ApplyPatchTool extends BaseTool {
         originalContent: prepared.originalContent,
         modifiedContent: prepared.modifiedContent,
         operationType: 'apply-patch',
-        showUpdatedContext,
         editRanges: prepared.editRanges,
         readStateManager,
         executionContext,
@@ -135,14 +138,38 @@ export class ApplyPatchTool extends BaseTool {
         hunks_applied: prepared.hunkCount,
         diff,
       });
-      response.system_reminder = showUpdatedContext
-        ? 'The returned updated content is tracked as read for the next patch.'
-        : 'Your read evidence was updated through this patch; other agents must re-read the changed file.';
+      response.system_reminder = 'Your read evidence was updated through this patch; other agents must re-read the changed file.';
       if (patchNumber !== null) response.patch_number = patchNumber;
-      if (showUpdatedContext) response.updated_content = prepared.modifiedContent;
 
       const checkResult = await checkFileAfterModification(prepared.absolutePath);
       if (checkResult) response.file_check = checkResult;
+      if (showUpdatedContext) {
+        const candidate = {
+          ...response,
+          updated_content: prepared.modifiedContent,
+          system_reminder: 'Returned source is a snapshot; re-read if the file changed.',
+          _non_truncatable: true,
+        };
+        const contextSize = registry.get('token_manager')?.getContextSize() ?? CONTEXT_SIZES.SMALL;
+        const allowance = this.getOutputTokenAllowance(
+          Math.floor(contextSize * TOKEN_MANAGEMENT.READ_CONTEXT_MAX_PERCENT), executionContext
+        );
+        if (tokenCounter.count(JSON.stringify(toModelToolResult(candidate))) <= allowance) {
+          // Admit the complete response before granting observation credit. A
+          // concurrent mutation during file checking must not authorize stale bytes.
+          await fileMutationCoordinator.run(prepared.absolutePath, async () => {
+            const current = await fs.readFile(prepared.absolutePath, 'utf8').catch(() => null);
+            if (current === prepared.modifiedContent) {
+              readStateManager?.trackRead(
+                prepared.absolutePath, 1, current.split('\n').length,
+                this.getReadScopeId(executionContext)
+              );
+            }
+          });
+          return candidate;
+        }
+        response.system_reminder += ' Full updated content was omitted because it exceeds the output allowance; read the required region.';
+      }
       return response;
     } catch (error) {
       if (error instanceof PatchInputError) return this.inputError(error);

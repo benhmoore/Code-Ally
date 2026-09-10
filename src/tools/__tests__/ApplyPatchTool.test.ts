@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as fs from 'fs/promises';
 import * as os from 'os';
 import * as path from 'path';
@@ -6,6 +6,9 @@ import { ApplyPatchTool } from '../ApplyPatchTool.js';
 import { ActivityStream } from '../../services/ActivityStream.js';
 import { ReadStateManager } from '../../services/ReadStateManager.js';
 import { ServiceRegistry } from '../../services/ServiceRegistry.js';
+import * as fileChecks from '../../utils/fileCheckUtils.js';
+import { fileMutationCoordinator } from '../../services/FileMutationCoordinator.js';
+import { toModelToolResult } from '../../utils/toolResultContent.js';
 
 describe('ApplyPatchTool', () => {
   let directory: string;
@@ -24,6 +27,7 @@ describe('ApplyPatchTool', () => {
   });
 
   afterEach(async () => {
+    vi.restoreAllMocks();
     registry['_services'].clear();
     registry['_descriptors'].clear();
     await fs.rm(directory, { recursive: true, force: true });
@@ -140,8 +144,48 @@ describe('ApplyPatchTool', () => {
 
     expect(first.success).toBe(true);
     expect(first.updated_content).toBe('alpha\nBETA\ngamma\n');
+    expect(first._non_truncatable).toBe(true);
+    expect(toModelToolResult(first).updated_content).toBe(first.updated_content);
     expect(reads.getReadState(file, 'agent-a')).toEqual([{ start: 1, end: 4 }]);
     expect(reads.getReadState(file, 'agent-b')).toBeNull();
+  });
+
+  it('does not grant read credit for updated content outside the output allowance', async () => {
+    const original = 'alpha\n' + 'unobserved source text\n'.repeat(2000);
+    const file = await fixture(original);
+    reads.trackRead(file, 1, 1);
+    const result = await tool.execute({
+      file_path: file, patch: '@@ -1,1 +1,1 @@\n-alpha\n+ALPHA', show_updated_context: true,
+    }, 'bounded-patch', undefined, false, false, {
+      outputBudget: { limitTokens: 500, maxResultTokensByCallId: new Map([['bounded-patch', 500]]) },
+    });
+    expect(result.success).toBe(true);
+    expect(result.updated_content).toBeUndefined();
+    expect(result.system_reminder).toContain('omitted');
+    expect(reads.getReadState(file)).toEqual([{ start: 1, end: 1 }]);
+    expect(await fs.readFile(file, 'utf8')).toBe(original.replace('alpha', 'ALPHA'));
+  });
+
+  it('does not authorize a snapshot superseded during post-write checking', async () => {
+    const file = await fixture();
+    reads.trackRead(file, 1, 1);
+    vi.spyOn(fileChecks, 'checkFileAfterModification').mockImplementationOnce(async () => {
+      await fileMutationCoordinator.run(file, async () => {
+        await fs.writeFile(file, 'another writer\n');
+        reads.clearFile(file);
+      });
+      return null;
+    });
+    const result = await tool.execute({
+      file_path: file,
+      patch: '@@ -1,1 +1,1 @@\n-alpha\n+ALPHA',
+      show_updated_context: true,
+    });
+    expect(result.success).toBe(true);
+    expect(result.updated_content).toBe('ALPHA\nbeta\ngamma\n');
+    expect(result._non_truncatable).toBe(true);
+    expect(reads.getReadState(file)).toBeNull();
+    expect(await fs.readFile(file, 'utf8')).toBe('another writer\n');
   });
 
   it('transforms the editing agent read evidence and invalidates every other scope', async () => {

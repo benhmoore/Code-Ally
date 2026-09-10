@@ -962,26 +962,23 @@ export abstract class BaseTool {
   /**
    * Finalize an existing-file mutation.
    *
-   * Handles: write file, clear read state, capture patch, generate diff, track updated content
+   * Writes the file, transforms existing read evidence, captures the patch, and generates a diff.
    */
   protected async finalizeEdit(options: {
     absolutePath: string;
     originalContent: string;
     modifiedContent: string;
     operationType: string;
-    showUpdatedContext: boolean;
     editRanges?: Array<{ oldStart: number; oldEnd: number; newStart: number; newEnd: number }>;
     readStateManager: ReadStateManager | null;
     executionContext?: ToolExecutionContext;
   }): Promise<{
     patchNumber: number | null;
     diff: string;
-    updatedContentTracked: boolean;
   }> {
-    const { absolutePath, originalContent, modifiedContent, operationType, showUpdatedContext, editRanges, readStateManager, executionContext } = options;
+    const { absolutePath, originalContent, modifiedContent, operationType, editRanges, readStateManager, executionContext } = options;
     const readScopeId = this.getReadScopeId(executionContext);
     const cacheRegistry = this.getExecutionRegistry(executionContext);
-    let updatedContentTracked = false;
 
     const patchNumber = await fileMutationCoordinator.run(absolutePath, async () => {
       const currentContent = await readFile(absolutePath, 'utf-8');
@@ -1000,18 +997,8 @@ export abstract class BaseTool {
       // transition. A second writer must never observe the new bytes while the
       // first writer's stale read state is still installed.
       if (readStateManager) {
-        if (showUpdatedContext) {
-          readStateManager.clearFile(absolutePath);
-          readStateManager.trackRead(
-            absolutePath,
-            1,
-            modifiedContent.split('\n').length,
-            readScopeId
-          );
-          updatedContentTracked = true;
-        } else if (editRanges) {
+        if (editRanges) {
           readStateManager.applyEdit(absolutePath, editRanges, readScopeId);
-          updatedContentTracked = editRanges.length > 0;
         } else {
           readStateManager.clearFile(absolutePath);
         }
@@ -1022,7 +1009,7 @@ export abstract class BaseTool {
 
     const diff = createUnifiedDiff(originalContent, modifiedContent, absolutePath);
 
-    return { patchNumber, diff, updatedContentTracked };
+    return { patchNumber, diff };
   }
 }
 
