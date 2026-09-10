@@ -39,6 +39,7 @@ import { FormCancelledError } from '../services/FormManager.js';
 import { FileInteractionTracker } from '../services/FileInteractionTracker.js';
 import type { BaseTool } from '../tools/BaseTool.js';
 import { RunPersistenceError } from '../services/RunSupervisor.js';
+import type { RunExecution } from '../services/RunExecution.js';
 
 /**
  * Safe tools that can run concurrently
@@ -921,6 +922,8 @@ export class ToolOrchestrator {
     let executionStartTime: number | undefined; // Track execution start time for session persistence
     let journaledEffect: ReturnType<BaseTool['effectFor']> | undefined;
     let toolResultObserved = false;
+    let toolExecutionAdmitted = false;
+    let runExecution: RunExecution | undefined;
     const scopedRegistry = this.agent.getScopedRegistry?.();
     const executionContext: ToolExecutionContext = {
       ...(scopedRegistry ? { registryScope: scopedRegistry } : {}),
@@ -934,6 +937,7 @@ export class ToolOrchestrator {
     };
 
     try {
+      runExecution = ServiceRegistry.getInstance().get('run_supervisor')?.acquireExecution();
       // Preview changes (e.g., diffs) BEFORE permission check
       // Tool call now exists in state, so diff can attach to it
       if (tool) {
@@ -1028,7 +1032,7 @@ export class ToolOrchestrator {
 
       if (tool) {
         journaledEffect = tool.effectFor(args);
-        await ServiceRegistry.getInstance().get('run_supervisor')?.toolPrepared(
+        await runExecution?.toolPrepared(
           id,
           toolName,
           journaledEffect,
@@ -1039,8 +1043,9 @@ export class ToolOrchestrator {
       // Emit execution start event (timer starts NOW, after permission granted or if no permission needed)
       executionStartTime = Date.now();
       if (journaledEffect) {
-        await ServiceRegistry.getInstance().get('run_supervisor')?.toolStarted(id, toolName, journaledEffect);
+        await runExecution?.toolStarted(id, toolName, journaledEffect);
       }
+      toolExecutionAdmitted = true;
       this.emitEvent({
         id,
         type: ActivityEventType.TOOL_EXECUTION_START,
@@ -1066,10 +1071,10 @@ export class ToolOrchestrator {
       );
       toolResultObserved = true;
 
-      if (journaledEffect) {
+      if (journaledEffect && toolExecutionAdmitted) {
         const outcome = tool?.effectOutcomeFor(args, result)
           ?? (result.success ? 'succeeded' : 'unknown');
-        await ServiceRegistry.getInstance().get('run_supervisor')?.toolFinished(
+        await runExecution?.toolFinished(
           id,
           toolName,
           journaledEffect,
@@ -1203,10 +1208,10 @@ export class ToolOrchestrator {
       }
 
 
-      if (journaledEffect) {
+      if (journaledEffect && toolExecutionAdmitted) {
         const outcome = tool?.effectOutcomeFor(args, result)
           ?? (result.success ? 'succeeded' : 'unknown');
-        await ServiceRegistry.getInstance().get('run_supervisor')?.toolFinished(
+        await runExecution?.toolFinished(
           id,
           toolName,
           journaledEffect,
@@ -1227,34 +1232,31 @@ export class ToolOrchestrator {
         (result as any).total_turn_duration = elapsedMinutes;
       }
     } finally {
-      // Skip TOOL_CALL_END when permission is denied since agent is being fully interrupted
-      // Skip TOOL_CALL_END when validation failed since we already emitted it
-      // Don't return here - let the exception propagate!
-      if (!permissionDenied && !validationFailed) {
-        // GUARANTEE: Always emit TOOL_CALL_END after TOOL_CALL_START (except permission denial or validation failure)
-        // Show silent tools in chat if they error (for debugging)
-        const shouldShowInChat = !result.success || (tool?.visibleInChat ?? true);
-
-        this.emitEvent({
-          id,
-          type: ActivityEventType.TOOL_CALL_END,
-          timestamp: Date.now(),
-          parentId: effectiveParentId,
-          data: {
-            toolName,
-            result,
-            success: result.success,
-            executionStartTime,
-            error: result.success ? undefined : result.error,
-            visibleInChat: shouldShowInChat,
-            isTransparent: tool?.isTransparentWrapper || false,
-            collapsed: false, // Never collapse on start - let shouldCollapse handle post-completion
-            shouldCollapse, // Pass through for completion-triggered collapse
-            hideOutput, // Pass through for output visibility control
-            alwaysShowFullOutput, // Pass through for full output control
-          },
-        });
-      }
+      try {
+        // Permission denial and validation failure already have terminal UI handling.
+        if (!permissionDenied && !validationFailed) {
+          const shouldShowInChat = !result.success || (tool?.visibleInChat ?? true);
+          this.emitEvent({
+            id,
+            type: ActivityEventType.TOOL_CALL_END,
+            timestamp: Date.now(),
+            parentId: effectiveParentId,
+            data: {
+              toolName,
+              result,
+              success: result.success,
+              executionStartTime,
+              error: result.success ? undefined : result.error,
+              visibleInChat: shouldShowInChat,
+              isTransparent: tool?.isTransparentWrapper || false,
+              collapsed: false,
+              shouldCollapse,
+              hideOutput,
+              alwaysShowFullOutput,
+            },
+          });
+        }
+      } finally { await runExecution?.release(); }
     }
 
     return result;

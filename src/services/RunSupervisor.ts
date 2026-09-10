@@ -7,6 +7,7 @@ import { ServiceRegistry } from './ServiceRegistry.js';
 import { FileOwnership } from '../utils/FileOwnership.js';
 import { InvalidRunJournalError, type RunJournalEvent } from './RunJournal.js';
 import { RunJournalStore } from './RunJournalStore.js';
+import { RunExecution } from './RunExecution.js';
 import { reduceRunEvent, type RunState } from './RunState.js';
 import { logger } from './Logger.js';
 export type { RunJournalEvent } from './RunJournal.js';
@@ -44,6 +45,8 @@ interface OwnedRun {
   readonly runId: string;
   state?: RunState;
   ownership?: FileOwnership;
+  executions: number;
+  retired: boolean;
 }
 
 /** Exclusive owner of a journal-authoritative objective. Startup never executes work. */
@@ -112,7 +115,7 @@ export class RunSupervisor {
         catch (cause) { throw new Error(`Cannot resume run ${runId}: journal recovery failed`, { cause }); }
         if (state.snapshot.status !== 'interrupted') throw new Error(`Run ${runId} is ${state.snapshot.status}, not interrupted`);
         await this.journals.ensureDirectory(runId);
-        this.active = { runId, ownership, state };
+        this.active = { runId, ownership, state, executions: 0, retired: false };
         await this.commit('run_resumed', { previousStatus: state.snapshot.status });
         return this.getActiveRun()!;
       } catch (error) {
@@ -136,7 +139,7 @@ export class RunSupervisor {
       await this.journals.ensureDirectory(runId);
       const ownership = await FileOwnership.acquire(path.join(this.journals.directory(runId), 'owner.lock'));
       if (!ownership) throw new Error(`Run ${runId} is owned by another live supervisor`);
-      this.active = { runId, ownership };
+      this.active = { runId, ownership, executions: 0, retired: false };
       try {
         await this.persistTransition(this.active, { runId, sequence: 1, timestamp: Date.now(), type: 'run_started', data: { objective, policy: { ...policy } } });
         return this.getActiveRun()!;
@@ -150,6 +153,26 @@ export class RunSupervisor {
   async record(type: string, data?: Record<string, unknown>): Promise<void> {
     return this.serialize(() => this.commit(type, data));
   }
+
+  acquireExecution(): RunExecution | undefined {
+    this.assertHealthy();
+    const run = this.active;
+    if (!run) return undefined;
+    if (run.retired || !run.ownership || !run.state || !this.isStateRunning(run.state)) {
+      throw new Error('The admitting durable objective no longer permits new execution');
+    }
+    run.executions += 1;
+    return new RunExecution(run.runId,
+      (type, data) => this.serialize(async () => {
+        this.assertHealthy();
+        await this.persistTransition(run, this.event(run.state!, type, data));
+      }),
+      () => this.serialize(async () => {
+        run.executions -= 1;
+        if (run.retired && run.executions === 0) await this.closeOwnedRun(run);
+      }),
+    );
+  }
   async rolloverEpoch(reason: string): Promise<void> {
     return this.serialize(async () => {
       if (this.isRunning()) await this.commit('epoch_rolled_over', { reason, epoch: this.active!.state!.snapshot.epoch + 1 });
@@ -158,20 +181,6 @@ export class RunSupervisor {
   async recordProgress(summary: string): Promise<void> {
     return this.serialize(async () => {
       if (this.isRunning()) await this.commit('assistant_progress', { summary: summary.slice(0, 4000) });
-    });
-  }
-  async toolPrepared(callId: string, tool: string, effect: string, args: Record<string, unknown>): Promise<void> {
-    let serializedArgs = '[unserializable arguments]';
-    try { serializedArgs = JSON.stringify(args).slice(0, 8000); } catch { /* retain diagnostic */ }
-    await this.record('tool_prepared', { callId, tool, effect, serializedArgs });
-  }
-  async toolStarted(callId: string, tool: string, effect: string): Promise<void> {
-    await this.record('tool_running', { callId, tool, effect });
-  }
-  async toolFinished(callId: string, tool: string, effect: string, outcome: 'succeeded' | 'failed' | 'unknown', error?: string): Promise<void> {
-    const ambiguous = outcome === 'unknown' && effect === 'non_idempotent';
-    await this.record(ambiguous ? 'tool_unknown' : outcome === 'succeeded' ? 'tool_succeeded' : 'tool_failed', {
-      callId, tool, effect, ...(error ? { error: error.slice(0, 2000) } : {}),
     });
   }
   async reconcileToolEffect(callId: string, resolution: string, evidence: string): Promise<boolean> {
@@ -251,8 +260,17 @@ export class RunSupervisor {
     return result;
   }
   private async releaseOwnership(): Promise<void> {
-    const ownership = this.active?.ownership;
-    if (this.active) this.active.ownership = undefined;
+    const run = this.active;
+    if (!run) return;
+    run.retired = true;
+    // Execution capabilities retain this object and its lock until their last
+    // release, even after another object becomes the active run.
+    if (run.executions === 0) await this.closeOwnedRun(run);
+  }
+
+  private async closeOwnedRun(run: OwnedRun): Promise<void> {
+    const ownership = run.ownership;
+    run.ownership = undefined;
     await ownership?.release();
   }
 }

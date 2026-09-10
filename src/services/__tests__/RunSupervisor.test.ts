@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
 import { RunSupervisor, RunPersistenceError } from '../RunSupervisor.js';
+import { RunJournalStore } from '../RunJournalStore.js';
 import { ServiceRegistry } from '../ServiceRegistry.js';
 import * as atomicFile from '../../utils/atomicFile.js';
 import { FileOwnership } from '../../utils/FileOwnership.js';
@@ -61,9 +62,11 @@ describe('RunSupervisor', () => {
     const supervisor = createSupervisor();
     await supervisor.initialize();
     await supervisor.startRun('publish safely', policy);
-    await supervisor.toolPrepared('call-1', 'bash', 'non_idempotent', { command: 'git push' });
-    await supervisor.toolStarted('call-1', 'bash', 'non_idempotent');
-    await supervisor.toolFinished('call-1', 'bash', 'non_idempotent', 'unknown', 'connection dropped');
+    const execution = supervisor.acquireExecution()!;
+    await execution.toolPrepared('call-1', 'bash', 'non_idempotent', { command: 'git push' });
+    await execution.toolStarted('call-1', 'bash', 'non_idempotent');
+    await execution.toolFinished('call-1', 'bash', 'non_idempotent', 'unknown', 'connection dropped');
+    await execution.release();
     const result = await supervisor.claimComplete('done');
     expect(result.accepted).toBe(false);
     expect(result.blockers.join(' ')).toContain('require reconciliation');
@@ -71,13 +74,55 @@ describe('RunSupervisor', () => {
     expect((await supervisor.claimComplete('done')).accepted).toBe(true);
   });
 
+  it('keeps late tool outcomes and ownership with the admitting run across replacement', async () => {
+    const supervisor = createSupervisor();
+    const first = await supervisor.startRun('first objective', policy);
+    const execution = supervisor.acquireExecution()!;
+    try {
+      await execution.toolPrepared('old-call', 'bash', 'non_idempotent', {});
+      await execution.toolStarted('old-call', 'bash', 'non_idempotent');
+      await supervisor.cancel('replace objective');
+      const second = await supervisor.startRun('second objective', policy);
+      const before = await fs.readFile(join(dir, second.runId, 'journal.jsonl'), 'utf8');
+      expect(await FileOwnership.acquire(join(dir, first.runId, 'owner.lock'))).toBeUndefined();
+      await execution.toolFinished('old-call', 'bash', 'non_idempotent', 'succeeded');
+      expect(await fs.readFile(join(dir, second.runId, 'journal.jsonl'), 'utf8')).toBe(before);
+      const journal = await fs.readFile(join(dir, first.runId, 'journal.jsonl'), 'utf8');
+      expect(JSON.parse(journal.trimEnd().split('\n').at(-1)!).type).toBe('tool_succeeded');
+      const recovered = await new RunJournalStore(dir).replay(first.runId);
+      expect(recovered.snapshot.status).toBe('cancelled');
+      expect(recovered.unknownEffects.size).toBe(0);
+      expect(recovered.runningEffects.size).toBe(0);
+      await execution.release();
+      const ownership = await FileOwnership.acquire(join(dir, first.runId, 'owner.lock'));
+      expect(ownership).toBeDefined();
+      await ownership!.release();
+      await expect(execution.toolStarted('late', 'bash', 'read_only')).rejects.toThrow('released');
+    } finally { await execution.release(); }
+  });
+
+  it('rejects old execution admission after cancellation without touching its successor', async () => {
+    const supervisor = createSupervisor();
+    await supervisor.startRun('first objective', policy);
+    const execution = supervisor.acquireExecution()!;
+    try {
+      await supervisor.cancel('cancel during permission');
+      const second = await supervisor.startRun('successor', policy);
+      const before = await fs.readFile(join(dir, second.runId, 'journal.jsonl'), 'utf8');
+      await expect(execution.toolPrepared('late', 'bash', 'non_idempotent', {})).rejects.toThrow();
+      expect(await fs.readFile(join(dir, second.runId, 'journal.jsonl'), 'utf8')).toBe(before);
+    } finally { await execution.release(); }
+  });
+
   it('settles a definitively failed non-idempotent tool without reconciliation', async () => {
     const supervisor = createSupervisor();
     await supervisor.initialize();
     await supervisor.startRun('repair the build', policy);
-    await supervisor.toolPrepared('call-1', 'bash', 'non_idempotent', { command: 'npm test' });
-    await supervisor.toolStarted('call-1', 'bash', 'non_idempotent');
-    await supervisor.toolFinished('call-1', 'bash', 'non_idempotent', 'failed', 'tests failed');
+    const execution = supervisor.acquireExecution()!;
+    await execution.toolPrepared('call-1', 'bash', 'non_idempotent', { command: 'npm test' });
+    await execution.toolStarted('call-1', 'bash', 'non_idempotent');
+    await execution.toolFinished('call-1', 'bash', 'non_idempotent', 'failed', 'tests failed');
+    await execution.release();
 
     expect((await supervisor.claimComplete('verified after repair')).accepted).toBe(true);
   });
@@ -86,10 +131,10 @@ describe('RunSupervisor', () => {
     let supervisor = createSupervisor();
     await supervisor.initialize();
     const run = await supervisor.startRun('finish the multi-day migration', policy);
-    await supervisor.toolStarted('publish-verified', 'bash', 'non_idempotent');
-    await supervisor.toolFinished('publish-verified', 'bash', 'non_idempotent', 'unknown');
+    await supervisor.record('tool_running', { callId: 'publish-verified', tool: 'bash', effect: 'non_idempotent' });
+    await supervisor.record('tool_unknown', { callId: 'publish-verified', tool: 'bash', effect: 'non_idempotent' });
     expect(await supervisor.reconcileToolEffect('publish-verified', 'applied', 'Verified durable destination state')).toBe(true);
-    await supervisor.toolStarted('publish-ambiguous', 'bash', 'non_idempotent');
+    await supervisor.record('tool_running', { callId: 'publish-ambiguous', tool: 'bash', effect: 'non_idempotent' });
 
     for (let restart = 0; restart < 12; restart++) {
       await supervisor.rolloverEpoch('execution budget renewal');
@@ -117,7 +162,7 @@ describe('RunSupervisor', () => {
     const first = createSupervisor();
     await first.initialize();
     const run = await first.startRun('recover safely', policy);
-    await first.toolStarted('possibly-applied', 'bash', 'non_idempotent');
+    await first.record('tool_running', { callId: 'possibly-applied', tool: 'bash', effect: 'non_idempotent' });
     await first.interruptForShutdown('restart');
     const journalPath = join(dir, run.runId, 'journal.jsonl');
     const statePath = join(dir, run.runId, 'state.json');
@@ -204,7 +249,7 @@ describe('RunSupervisor', () => {
       const supervisor = new RunSupervisor(${JSON.stringify(dir)});
       await supervisor.initialize();
       const run = await supervisor.startRun('safe publish', ${JSON.stringify(policy)});
-      await supervisor.toolStarted('call-crash', 'bash', 'non_idempotent');
+      await supervisor.record('tool_running', { callId: 'call-crash', tool: 'bash', effect: 'non_idempotent' });
       process.send(run);
       setInterval(() => {}, 1000);
     `], { stdio: ['ignore', 'ignore', 'inherit', 'ipc'] });
@@ -299,7 +344,7 @@ describe('RunSupervisor', () => {
     const run = await supervisor.startRun('preserve history', policy);
     const journalPath = join(dir, run.runId, 'journal.jsonl');
     await fs.rename(journalPath, `${journalPath}.saved`);
-    await expect(supervisor.toolStarted('publish', 'bash', 'non_idempotent')).rejects.toBeInstanceOf(RunPersistenceError);
+    await expect(supervisor.record('tool_running', { callId: 'publish', tool: 'bash', effect: 'non_idempotent' })).rejects.toBeInstanceOf(RunPersistenceError);
     await expect(fs.stat(journalPath)).rejects.toMatchObject({ code: 'ENOENT' });
     expect(supervisor.getOutcome()).toBeUndefined();
   });
@@ -367,9 +412,11 @@ describe('RunSupervisor', () => {
   it('serializes conflicting terminal transitions and blocks running external effects', async () => {
     const supervisor = createSupervisor();
     const run = await supervisor.startRun('finish exactly once', policy);
-    await supervisor.toolStarted('publish', 'bash', 'non_idempotent');
+    const execution = supervisor.acquireExecution()!;
+    await execution.toolStarted('publish', 'bash', 'non_idempotent');
     expect((await supervisor.claimComplete('too early')).accepted).toBe(false);
-    await supervisor.toolFinished('publish', 'bash', 'non_idempotent', 'succeeded');
+    await execution.toolFinished('publish', 'bash', 'non_idempotent', 'succeeded');
+    await execution.release();
     const [completion] = await Promise.all([supervisor.claimComplete('verified'), supervisor.cancel('late cancellation')]);
     expect(completion.accepted).toBe(true);
     const records = (await fs.readFile(join(dir, run.runId, 'journal.jsonl'), 'utf8')).trimEnd().split('\n').map(line => JSON.parse(line));
@@ -408,8 +455,10 @@ describe('RunSupervisor', () => {
   it('retains ownership through terminal bookkeeping and retires it on replacement', async () => {
     const supervisor = createSupervisor();
     const run = await supervisor.startRun('first', policy);
+    const execution = supervisor.acquireExecution()!;
     expect((await supervisor.claimComplete('done')).accepted).toBe(true);
-    await supervisor.toolFinished('completion', 'complete-objective', 'idempotent', 'succeeded');
+    await execution.toolFinished('completion', 'complete-objective', 'idempotent', 'succeeded');
+    await execution.release();
     const journal = await fs.readFile(join(dir, run.runId, 'journal.jsonl'), 'utf8');
     expect(JSON.parse(journal.trimEnd().split('\n').at(-1)!).type).toBe('tool_succeeded');
     const next = await supervisor.startRun('second', policy);

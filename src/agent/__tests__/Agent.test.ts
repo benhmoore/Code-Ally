@@ -131,7 +131,7 @@ describe('Agent - Interruption Handling', () => {
           active.outcome = { kind: 'completed', summary };
           return { accepted: true, blockers: [] };
         },
-        toolPrepared: vi.fn(), toolStarted: vi.fn(), toolFinished: vi.fn(),
+        acquireExecution: () => ({ toolPrepared: vi.fn(), toolStarted: vi.fn(), toolFinished: vi.fn(), release: vi.fn() }),
       } as any);
       const completionAgent = new Agent(mockModelClient,
         new ToolManager([new CompleteObjectiveTool(activityStream)]), activityStream,
