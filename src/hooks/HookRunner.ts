@@ -33,6 +33,12 @@ import {
 /** Hook timeout when the hook does not declare one, in milliseconds. */
 export const DEFAULT_HOOK_TIMEOUT_MS = 60_000;
 
+/**
+ * How long after a hook exits its buffered output is still collected. Only
+ * bytes already written are in flight, so this is a flush window, not a wait.
+ */
+const EXIT_FLUSH_GRACE_MS = 50;
+
 export interface HookRunnerEnv {
   /** Read at call time: the session id changes during a run. */
   sessionId: () => string | null;
@@ -174,12 +180,25 @@ export class HookRunner {
         detached: true,
       });
 
+      let settled = false;
+      let flushTimer: NodeJS.Timeout | undefined;
+      const settle = (code: number | null): void => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        if (flushTimer) clearTimeout(flushTimer);
+        // Drop our ends of the pipes: a backgrounded descendant still holds
+        // its own copies, and nothing here reads them after the verdict.
+        child.stdin.destroy();
+        child.stdout.destroy();
+        child.stderr.destroy();
+        resolve(code);
+      };
+
       const timer = setTimeout(() => {
         timedOut = true;
         killGroup(child.pid);
-        // A descendant can outlive the group signal and hold the pipes open,
-        // so the outcome is settled here rather than on 'close'.
-        resolve(null);
+        settle(null);
       }, timeoutMs);
 
       child.stdout.on('data', (chunk: Buffer) => {
@@ -189,14 +208,17 @@ export class HookRunner {
         stderr += chunk.toString();
       });
       child.on('error', (error) => {
-        clearTimeout(timer);
         stderr += formatError(error);
-        resolve(null);
+        settle(null);
       });
-      child.on('close', (code) => {
-        clearTimeout(timer);
-        resolve(code);
+      // The hook's own exit is the verdict. 'close' waits for every inherited
+      // pipe, which a hook that backgrounds a child never closes, so it would
+      // charge that hook its whole timeout. Wait only long enough for output
+      // already in flight, and settle on 'close' when it comes first.
+      child.on('exit', (code) => {
+        flushTimer = setTimeout(() => settle(code), EXIT_FLUSH_GRACE_MS);
       });
+      child.on('close', (code) => settle(code));
 
       child.stdin.on('error', () => {
         // A hook that exits without reading stdin closes the pipe first. That

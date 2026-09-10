@@ -464,7 +464,8 @@ name.
 first, so `Bash` and `bash` both match `bash` and `Edit` matches `apply-patch`.
 A missing matcher, or `*`, matches every call. `timeout` is in seconds and
 defaults to 60; an overrunning hook is killed with its process group and
-treated as a non-blocking failure. `${CLAUDE_PLUGIN_ROOT}` and `${ENV_VAR}` are
+treated as a non-blocking failure. The verdict is the hook's own exit, so a
+hook that leaves a child running is not charged its timeout. `${CLAUDE_PLUGIN_ROOT}` and `${ENV_VAR}` are
 substituted in every command.
 
 ### Payload and exit codes

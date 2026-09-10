@@ -6,7 +6,8 @@
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { promises as fs } from 'node:fs';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { tmpdir } from 'node:os';
 import { HookRunner } from '../HookRunner.js';
 import type { ResolvedHookGroup, ResolvedHooksConfig } from '../types.js';
@@ -88,6 +89,17 @@ describe('HookRunner exit codes', () => {
     });
     expect(verdict.kind).toBe('proceed');
     expect(Date.now() - started).toBeLessThan(5000);
+  });
+
+  it('settles when a hook exits, even though a backgrounded child holds the pipes', async () => {
+    const path = join(dirname(fileURLToPath(import.meta.url)), 'fixtures', 'notify-in-background.sh');
+    const started = Date.now();
+    const verdict = await runner([group(path, {}, 10)]).run('PreToolUse', {
+      tool_name: 'bash',
+      tool_input: {},
+    });
+    expect(verdict).toMatchObject({ kind: 'proceed', systemMessages: ['notified'] });
+    expect(Date.now() - started).toBeLessThan(1000);
   });
 
   it('blocks on a deny permissionDecision in stdout', async () => {
