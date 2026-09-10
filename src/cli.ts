@@ -1102,6 +1102,11 @@ async function main() {
     await runSupervisor.initialize();
     registry.registerInstance('run_supervisor', runSupervisor);
 
+    // Flag conflicts are startup errors, so they are reported before anything
+    // is looked up: a mistyped task name must not hide the rejected combination.
+    const { policyFromFlags } = await import('./security/RunAuthorizationPolicy.js');
+    const runAuthorizationPolicy = policyFromFlags(options);
+
     // Create scheduled task manager (durable, project-scoped scheduler state)
     const scheduledTaskManager = new ScheduledTaskManager(activityStream);
     await scheduledTaskManager.initialize();
@@ -1112,8 +1117,6 @@ async function main() {
     if (options.scheduledTask && !scheduledTaskForRun) {
       throw new Error(`Scheduled task not found in this project: ${options.scheduledTask}`);
     }
-    const { policyFromFlags } = await import('./security/RunAuthorizationPolicy.js');
-    const runAuthorizationPolicy = policyFromFlags(options);
 
     // Create todo manager
     const todoManager = new TodoManager(activityStream);
