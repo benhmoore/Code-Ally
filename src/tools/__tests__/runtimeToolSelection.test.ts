@@ -2,6 +2,11 @@ import { describe, expect, it } from 'vitest';
 import { getRuntimeToolExclusions, needsTemporalContext } from '../runtimeToolSelection.js';
 
 describe('runtime tool selection', () => {
+  it('exposes checkpoint retrieval only when there is a checkpoint to read', () => {
+    expect(getRuntimeToolExclusions({ planModeActive: false })).toContain('read-checkpoint');
+    expect(getRuntimeToolExclusions({ planModeActive: false, hasCheckpoint: true })).not.toContain('read-checkpoint');
+  });
+
   it('hides stateful and intent-specific tools on an ordinary first turn', () => {
     expect(getRuntimeToolExclusions({
       planModeActive: false,
@@ -11,6 +16,7 @@ describe('runtime tool selection', () => {
       'exit-plan-mode',
       'agent-ask',
       'cleanup-call',
+      'read-checkpoint',
       'bash-output',
       'kill-shell',
       'cancel-agent',

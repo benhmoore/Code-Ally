@@ -28,6 +28,7 @@ import { ManageAgentsTool } from './ManageAgentsTool.js';
 import { MemoryTool } from './MemoryTool.js';
 import { PlanTool } from './PlanTool.js';
 import { ReadTool } from './ReadTool.js';
+import { ReadCheckpointTool } from './ReadCheckpointTool.js';
 import { ReconcileEffectTool } from './ReconcileEffectTool.js';
 import { ResearchTool } from './ResearchTool.js';
 import { ScheduledTasksTool } from './ScheduledTasksTool.js';
@@ -66,6 +67,7 @@ export function createBuiltInTools(
     new BlockObjectiveTool(activityStream),
     new ReconcileEffectTool(activityStream),
     new ReadTool(activityStream),
+    new ReadCheckpointTool(activityStream),
     new WriteTool(activityStream),
     new WriteAgentTool(activityStream),
     new EditAgentTool(activityStream),

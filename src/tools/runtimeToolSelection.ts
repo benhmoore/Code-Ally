@@ -18,6 +18,7 @@ export interface RuntimeToolSelectionContext {
   backgroundTasks?: readonly Pick<BackgroundTask, 'kind' | 'status'>[];
   hasPersistentAgent?: boolean;
   hasToolResults?: boolean;
+  hasCheckpoint?: boolean;
 }
 
 /**
@@ -33,6 +34,7 @@ export function getRuntimeToolExclusions(context: RuntimeToolSelectionContext): 
   if (!context.planModeActive) exclusions.push('write-plan', 'exit-plan-mode');
   if (!context.hasPersistentAgent) exclusions.push('agent-ask');
   if (!context.hasToolResults) exclusions.push('cleanup-call');
+  if (!context.hasCheckpoint) exclusions.push('read-checkpoint');
 
   const hasKnownShell = tasks.some(task => task.kind === 'shell');
   if (!hasKnownShell) exclusions.push('bash-output');

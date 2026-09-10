@@ -1532,6 +1532,7 @@ export class Agent {
       backgroundTasks: runtimeRegistry.get('background_task_registry')?.list() ?? [],
       hasPersistentAgent: (runtimeRegistry.get('agent_pool')?.getAgentIds().length ?? 0) > 0,
       hasToolResults: conversationMessages.some(message => message.role === 'tool'),
+      hasCheckpoint: this.conversationManager.hasCheckpoint(),
     }));
 
     const availableFunctions = this.toolManager.getFunctionDefinitions(

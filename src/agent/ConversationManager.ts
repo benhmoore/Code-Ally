@@ -242,6 +242,10 @@ export class ConversationManager {
     return this.checkpoint ? structuredClone(this.checkpoint) : null;
   }
 
+  hasCheckpoint(): boolean {
+    return this.checkpoint !== null;
+  }
+
   setCheckpoint(checkpoint: ConversationCheckpointV1 | null): void {
     this.checkpoint = checkpoint ? structuredClone(checkpoint) : null;
   }
