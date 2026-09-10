@@ -578,17 +578,20 @@ export class SessionManager implements IService {
     return found;
   }
 
-  /** Serialize an entire read-modify-write operation for one session. */
-  private async mutateSession(
+  /** Own submitted values before draining saves and serializing the mutation. */
+  private async mutateSession<T>(
     sessionName: string,
-    update: (session: Session) => void
+    input: T,
+    update: (session: Session, snapshot: T) => void
   ): Promise<boolean> {
+    const snapshot = structuredClone(input);
+    await this.flushPendingAutoSave(sessionName);
     return this.enqueueSessionOperation(sessionName, async () => {
       const manifest = await this.loadSessionManifest(sessionName);
       if (!manifest) throw new Error(`Session ${sessionName} does not exist`);
       const session = await this.hydrateTranscript(sessionName, manifest);
 
-      update(session);
+      update(session, snapshot);
       session.updated_at = new Date().toISOString();
       await this.writeSessionFile(sessionName, session);
       return true;
@@ -722,11 +725,10 @@ export class SessionManager implements IService {
     checkpoint?: ConversationCheckpointV1,
   ): Promise<boolean> {
     try {
-      await this.flushPendingAutoSave(sessionName);
-      await this.mutateSession(sessionName, (session) => {
-        session.messages = this.filterMessagesForPersistence(messages);
-        session.transcript = this.filterMessagesForPersistence(transcript);
-        if (checkpoint) session.conversation_checkpoint = structuredClone(checkpoint);
+      await this.mutateSession(sessionName, { messages, transcript, checkpoint }, (session, snapshot) => {
+        session.messages = this.filterMessagesForPersistence(snapshot.messages);
+        session.transcript = this.filterMessagesForPersistence(snapshot.transcript);
+        if (snapshot.checkpoint) session.conversation_checkpoint = snapshot.checkpoint;
       });
       await this.cleanupOldSessions();
 
@@ -1096,9 +1098,8 @@ export class SessionManager implements IService {
     metadata: Partial<Session['metadata']>
   ): Promise<boolean> {
     try {
-      await this.flushPendingAutoSave(sessionName);
-      return await this.mutateSession(sessionName, (session) => {
-        session.metadata = { ...session.metadata, ...metadata };
+      return await this.mutateSession(sessionName, metadata, (session, snapshot) => {
+        session.metadata = { ...session.metadata, ...snapshot };
       });
     } catch (error) {
       logger.error(`Failed to update metadata for ${sessionName}:`, error);
@@ -1121,9 +1122,8 @@ export class SessionManager implements IService {
     updates: Partial<Omit<Session, 'id' | 'name' | 'created_at'>>
   ): Promise<boolean> {
     try {
-      await this.flushPendingAutoSave(sessionName);
-      return await this.mutateSession(sessionName, (session) => {
-        Object.assign(session, updates);
+      return await this.mutateSession(sessionName, updates, (session, snapshot) => {
+        Object.assign(session, snapshot);
       });
     } catch (error) {
       logger.error(`Failed to update session ${sessionName}:`, error);
@@ -1190,9 +1190,8 @@ export class SessionManager implements IService {
     if (!name) return false;
 
     try {
-      await this.flushPendingAutoSave(name);
-      return await this.mutateSession(name, (session) => {
-        session.todos = todos;
+      return await this.mutateSession(name, todos, (session, snapshot) => {
+        session.todos = snapshot;
       });
     } catch (error) {
       logger.error(`Failed to save todos for ${name}:`, error);
@@ -1268,11 +1267,10 @@ export class SessionManager implements IService {
     if (!name || this.isShuttingDown) return false;
 
     try {
-      await this.flushPendingAutoSave(name);
-      return await this.mutateSession(name, (session) => {
-        session.messages = this.filterMessagesForPersistence(messages);
-        session.transcript = this.filterMessagesForPersistence(transcript);
-        session.provider_state = structuredClone(providerState);
+      return await this.mutateSession(name, { messages, transcript, providerState }, (session, snapshot) => {
+        session.messages = this.filterMessagesForPersistence(snapshot.messages);
+        session.transcript = this.filterMessagesForPersistence(snapshot.transcript);
+        session.provider_state = snapshot.providerState;
         delete session.conversation_checkpoint;
         delete session.transcript_segments;
         delete session.transcript_tail;
@@ -1296,12 +1294,13 @@ export class SessionManager implements IService {
     if (!name || this.isShuttingDown) return false;
 
     try {
+      const snapshot = structuredClone({ messages, transcript, checkpoint });
       await this.flushPendingAutoSave(name);
       return await this.mutateSessionIncremental(name, {
-        messages: this.filterMessagesForPersistence(messages),
-        conversation_checkpoint: structuredClone(checkpoint),
-        provider_state: structuredClone(checkpoint.providerState),
-      }, transcript);
+        messages: this.filterMessagesForPersistence(snapshot.messages),
+        conversation_checkpoint: snapshot.checkpoint,
+        provider_state: snapshot.checkpoint.providerState,
+      }, snapshot.transcript);
     } catch (error) {
       logger.error(`[SESSION] Failed to commit conversation checkpoint ${checkpoint.id}:`, error);
       return false;
