@@ -44,13 +44,15 @@ export const SESSION_SCHEMA: StoreSchema = defineStoreSchema({
 /** ~/.ally/profiles/<profile>/config.json */
 export const CONFIG_SCHEMA: StoreSchema = defineStoreSchema({
   kind: 'config',
-  current: 2,
+  current: 3,
   migrations: [
     identity,
     (data: StoreRecord): StoreRecord => {
       const { compact_threshold: _threshold, show_context_in_prompt: _showContext, ...rest } = data;
       return rest;
     },
+    // v3 adds the optional `hooks` key. Absence is valid, so nothing to move.
+    identity,
   ],
 });
 

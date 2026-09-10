@@ -27,6 +27,7 @@ import type {
   PluginInstallResult,
   PluginUninstallResult,
 } from './types.js';
+import type { HooksConfig } from '../hooks/types.js';
 import type { IService } from '../types/index.js';
 
 export class PluginManager implements IService {
@@ -349,41 +350,50 @@ export class PluginManager implements IService {
    * Read .mcp.json from a plugin directory and perform variable substitution.
    */
   async getPluginMCPConfig(pluginPath: string): Promise<PluginMCPConfig | null> {
-    const configPath = join(pluginPath, '.mcp.json');
-    try {
-      const raw = await readFile(configPath, 'utf-8');
-      const config = JSON.parse(raw) as PluginMCPConfig;
+    const config = await this.readPluginJson<PluginMCPConfig>(join(pluginPath, '.mcp.json'));
+    if (!config) return null;
 
-      // Perform variable substitution
-      for (const [_serverKey, serverConfig] of Object.entries(config)) {
-        // Substitute args
-        if (serverConfig.args) {
-          serverConfig.args = serverConfig.args.map(arg =>
-            this.substituteVars(arg, pluginPath)
-          );
-        }
-
-        // Substitute command
-        serverConfig.command = this.substituteVars(serverConfig.command, pluginPath);
-
-        // Substitute env values
-        if (serverConfig.env) {
-          const substitutedEnv: Record<string, string> = {};
-          for (const [envKey, envVal] of Object.entries(serverConfig.env)) {
-            substitutedEnv[envKey] = this.substituteVars(envVal, pluginPath);
-          }
-          serverConfig.env = substitutedEnv;
-        }
+    for (const serverConfig of Object.values(config)) {
+      if (serverConfig.args) {
+        serverConfig.args = serverConfig.args.map(arg => this.substituteVars(arg, pluginPath));
       }
 
-      return config;
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
-        return null; // Plugin has no MCP servers, just commands/skills
+      serverConfig.command = this.substituteVars(serverConfig.command, pluginPath);
+
+      if (serverConfig.env) {
+        const substitutedEnv: Record<string, string> = {};
+        for (const [envKey, envVal] of Object.entries(serverConfig.env)) {
+          substitutedEnv[envKey] = this.substituteVars(envVal, pluginPath);
+        }
+        serverConfig.env = substitutedEnv;
       }
-      logger.warn(`[PluginManager] Error reading .mcp.json at ${configPath}: ${formatError(error)}`);
-      return null;
     }
+
+    return config;
+  }
+
+  /**
+   * Read hooks/hooks.json from a plugin directory and perform variable
+   * substitution on every hook command. Shape validation belongs to the hook
+   * loader, which applies the same rules to every source.
+   */
+  async getPluginHooksConfig(pluginPath: string): Promise<HooksConfig | null> {
+    const config = await this.readPluginJson<HooksConfig>(join(pluginPath, 'hooks', 'hooks.json'));
+    if (!config) return null;
+
+    for (const groups of Object.values(config)) {
+      if (!Array.isArray(groups)) continue;
+      for (const group of groups) {
+        if (!Array.isArray(group?.hooks)) continue;
+        for (const hook of group.hooks) {
+          if (typeof hook?.command === 'string') {
+            hook.command = this.substituteVars(hook.command, pluginPath);
+          }
+        }
+      }
+    }
+
+    return config;
   }
 
   /**
@@ -438,6 +448,21 @@ export class PluginManager implements IService {
     const entries = this.installedPlugins.plugins[pluginKey];
     if (!entries || entries.length === 0) return null;
     return entries[0] ?? null;
+  }
+
+  /**
+   * Read an optional JSON file from a plugin directory. A plugin that does not
+   * ship the file is the normal case and reads as null; anything else is
+   * reported and also reads as null, so one bad plugin cannot fail startup.
+   */
+  private async readPluginJson<T>(configPath: string): Promise<T | null> {
+    try {
+      return JSON.parse(await readFile(configPath, 'utf-8')) as T;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
+      logger.warn(`[PluginManager] Error reading ${configPath}: ${formatError(error)}`);
+      return null;
+    }
   }
 
   /**

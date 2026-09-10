@@ -6,6 +6,7 @@
  */
 
 import type { Config } from '../types/index.js';
+import { isHooksConfigShape } from '../hooks/types.js';
 import { formatError } from '../utils/errorUtils.js';
 import { REASONING_EFFORT, REASONING_EFFORT_API_VALUES } from './constants.js';
 import { TIMEOUT_LIMITS } from './toolDefaults.js';
@@ -117,6 +118,13 @@ export const DEFAULT_CONFIG: Config = {
   // ==========================================
   search_provider: 'none', // Search provider: 'none', 'brave', or 'serper'
   search_api_key: null, // API key for search provider (encrypted at rest)
+
+  // ==========================================
+  // HOOKS
+  // ==========================================
+  // Declared with no value so the key is recognized on load; the loader
+  // merges it with plugin hooks and any --settings file.
+  hooks: undefined,
 };
 
 /**
@@ -200,6 +208,9 @@ export const CONFIG_TYPES: Record<keyof Config, string> = {
   // Search Integration
   search_provider: 'string',
   search_api_key: 'string',
+
+  // Hooks
+  hooks: 'object',
 };
 
 /**
@@ -296,6 +307,19 @@ export function validateConfigValue(
   // Handle null/undefined search_api_key
   if (key === 'search_api_key' && (value === null || value === undefined || value === '')) {
     return { valid: true, coercedValue: null };
+  }
+
+  // Hooks: the shape check here is the outer object only. Per-event and
+  // per-command validation lives in the hook loader, which applies the same
+  // rules to profile config, plugin files, and --settings.
+  if (key === 'hooks') {
+    if (value === null || value === undefined) {
+      return { valid: true, coercedValue: undefined };
+    }
+    if (isHooksConfigShape(value)) {
+      return { valid: true, coercedValue: value };
+    }
+    return { valid: false, error: 'hooks must be an object keyed by hook event' };
   }
 
   try {

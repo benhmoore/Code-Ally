@@ -3,6 +3,7 @@
  */
 
 import type { ConversationCheckpointV1, ProviderCheckpointState } from '../agent/compaction/types.js';
+import type { HooksConfig } from '../hooks/types.js';
 
 // Agent definition types (data shapes for stored/loaded agents)
 export type { AgentData, AgentInfo, BaseAgentConfig } from './agents.js';
@@ -522,6 +523,9 @@ export interface Config {
   // Search Integration (stored separately in IntegrationStore with encryption)
   search_provider: 'none' | 'brave' | 'serper';
   search_api_key: string | null;
+
+  // Hooks (merged with plugin hooks and any --settings file at startup)
+  hooks?: HooksConfig;
 }
 
 // ===========================

@@ -17,6 +17,7 @@
  */
 
 import type { Agent } from '../agent/Agent.js';
+import type { HookRunner } from '../hooks/HookRunner.js';
 import type { Command } from '../agent/commands/Command.js';
 import type { TokenManager } from '../agent/TokenManager.js';
 import type { TrustManager } from '../agent/TrustManager.js';
@@ -139,6 +140,8 @@ export interface ServiceMap {
   prompt_library_manager: PromptLibraryManager;
 
   // --- Hooks ---
+  /** Always registered, with an empty config when nothing declares a hook. */
+  hook_runner: HookRunner;
   /** Context contributed by SessionStart hooks, rendered into the system prompt. */
   session_context: SessionContext;
 }
