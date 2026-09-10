@@ -277,6 +277,7 @@ function applyModelPatchExact(
   const readRanges: Array<{ start: number; end: number }> = [];
   const editRanges: NonNullable<AppliedModelPatch['editRanges']> = [];
   let precedingLineDelta = 0;
+  let previousSourceEnd = 0;
 
   for (const [index, hunk] of patch.hunks.entries()) {
     const oldLines = hunk.lines
@@ -284,6 +285,9 @@ function applyModelPatchExact(
       .map(line => line.slice(1));
 
     if (oldLines.length === 0) {
+      if (patch.hunks.length !== 1) {
+        return createPatchError('An empty-file insertion must use one combined hunk', 'applyModelPatch');
+      }
       if (normalizedSource.length !== 0) {
         return createPatchError(
           `Hunk ${index + 1} has no original-file context. Include unchanged or removed lines so the target is unambiguous`,
@@ -379,6 +383,16 @@ function applyModelPatchExact(
       );
     }
 
+    // The diff engine consumes source in ascending order. Exact individual
+    // matches do not make overlapping or reversed hunks safe: passing them
+    // through can duplicate already-consumed source instead of rejecting it.
+    if (actualStart < previousSourceEnd) {
+      return createPatchError(
+        `Hunk ${index + 1} overlaps or precedes an earlier hunk. Combine overlapping changes and order hunks by their source positions. No hunks were applied.`,
+        'applyModelPatch',
+      );
+    }
+    previousSourceEnd = actualStart + oldLines.length;
     readRanges.push({
       start: actualStart + 1,
       end: actualStart + oldLines.length,

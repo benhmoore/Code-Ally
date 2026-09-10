@@ -8,6 +8,35 @@ import { createUnifiedDiff } from '../diffUtils.js';
 
 describe('patchApplier', () => {
 describe('applyModelPatch', () => {
+  it('applies adjacent ordered hunks without duplicating source', () => {
+    const result = applyModelPatch(
+      '@@ -1,1 +1,2 @@\n-first\n+FIRST\n+INSERTED\n@@ -2,1 +3,1 @@\n-second\n+SECOND',
+      'first\nsecond\nthird\n',
+    );
+    expect(result.success).toBe(true);
+    expect(result.content).toBe('FIRST\nINSERTED\nSECOND\nthird\n');
+    expect(result.editRanges).toEqual([
+      { oldStart: 1, oldEnd: 1, newStart: 1, newEnd: 2 },
+      { oldStart: 2, oldEnd: 2, newStart: 3, newEnd: 3 },
+    ]);
+  });
+
+  it('rejects multiple context-free insertion hunks into an empty file', () => {
+    const result = applyModelPatch('@@ -0,0 +1,1 @@\n+first\n@@ -0,0 +2,1 @@\n+second', '');
+    expect(result.success).toBe(false);
+    expect(result.error).toContain('one combined hunk');
+  });
+
+  it.each([
+    '@@ -3,2 +3,2 @@\n third anchor\n-fourth line\n+FOURTH\n@@ -1,2 +1,2 @@\n first anchor\n-second line\n+SECOND',
+    '@@ -1,3 +1,3 @@\n first anchor\n-second line\n+SECOND\n third anchor\n@@ -3,2 +3,2 @@\n third anchor\n-fourth line\n+FOURTH',
+  ])('rejects overlapping or reversed source ranges before applying a patch', patch => {
+    const result = applyModelPatch(patch, 'first anchor\nsecond line\nthird anchor\nfourth line\n');
+    expect(result.success).toBe(false);
+    expect(result.content).toBeUndefined();
+    expect(result.error).toContain('overlaps or precedes');
+  });
+
   it('explains that bare hunk markers are not valid unified-diff headers', () => {
     const result = applyModelPatch('@@\n-old\n+new', 'old\n');
 

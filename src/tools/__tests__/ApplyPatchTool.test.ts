@@ -79,6 +79,19 @@ describe('ApplyPatchTool', () => {
     expect(await fs.readFile(file, 'utf8')).toBe(original);
   });
 
+  it('leaves the file unchanged when individually matching hunks overlap', async () => {
+    const original = 'first anchor\nsecond line\nthird anchor\nfourth line\n';
+    const file = await fixture(original);
+    reads.trackRead(file, 1, 4);
+    const result = await tool.execute({
+      file_path: file,
+      patch: '@@ -1,3 +1,3 @@\n first anchor\n-second line\n+SECOND\n third anchor\n@@ -3,2 +3,2 @@\n third anchor\n-fourth line\n+FOURTH',
+    });
+    expect(result.success).toBe(false);
+    expect(result.error).toContain('overlaps or precedes');
+    expect(await fs.readFile(file, 'utf8')).toBe(original);
+  });
+
   it('validates the actual context location rather than trusting a stale line hint', async () => {
     const file = await fixture('prefix\ntarget\nold\n');
     reads.trackRead(file, 1, 1);
