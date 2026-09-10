@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { promises as fs } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -6,6 +6,8 @@ import { spawn } from 'node:child_process';
 import { once } from 'node:events';
 import { RunSupervisor } from '../RunSupervisor.js';
 import { ServiceRegistry } from '../ServiceRegistry.js';
+import * as atomicFile from '../../utils/atomicFile.js';
+import { FileOwnership } from '../../utils/FileOwnership.js';
 
 describe('RunSupervisor', () => {
   let dir: string;
@@ -29,6 +31,7 @@ describe('RunSupervisor', () => {
     await fs.mkdir(dir, { recursive: true });
   });
   afterEach(async () => {
+    vi.restoreAllMocks();
     for (const supervisor of supervisors.splice(0)) await supervisor.interruptForShutdown('test cleanup');
     await fs.rm(dir, { recursive: true, force: true });
   });
@@ -243,6 +246,52 @@ describe('RunSupervisor', () => {
     const runs = await Promise.all([supervisor.startRun('first', policy), supervisor.startRun('second', policy)]);
     expect(runs[0].runId).toBe(runs[1].runId);
     expect(await fs.readdir(dir)).toHaveLength(1);
+  });
+
+  it('surfaces reconciliation write failures and releases ownership for a retry', async () => {
+    const supervisor = createSupervisor();
+    const run = await supervisor.startRun('recover after disk pressure', policy);
+    await supervisor.interruptForShutdown('stop');
+    const statePath = join(dir, run.runId, 'state.json');
+    const snapshot = JSON.parse(await fs.readFile(statePath, 'utf8'));
+    snapshot.status = 'running';
+    await fs.writeFile(statePath, JSON.stringify(snapshot));
+    const failure = Object.assign(new Error('No space left on device'), { code: 'ENOSPC' });
+    const write = vi.spyOn(atomicFile, 'atomicWriteFile').mockRejectedValueOnce(failure);
+    const reopened = createSupervisor();
+    await expect(reopened.initialize()).rejects.toBe(failure);
+    expect(JSON.parse(await fs.readFile(statePath, 'utf8')).status).toBe('running');
+    write.mockRestore();
+    await reopened.initialize();
+    expect((await reopened.listInterruptedRuns())[0]?.runId).toBe(run.runId);
+  });
+
+  it('bounds ownership handles while scanning accumulated history', async () => {
+    for (let index = 0; index < 24; index++) {
+      const runDir = join(dir, `history-${index}`);
+      await fs.mkdir(runDir);
+      await fs.writeFile(join(runDir, 'state.json'), 'null');
+    }
+    const acquire = FileOwnership.acquire.bind(FileOwnership);
+    let pending = 0;
+    let peak = 0;
+    vi.spyOn(FileOwnership, 'acquire').mockImplementation(async filePath => {
+      pending++;
+      peak = Math.max(peak, pending);
+      const ownership = await acquire(filePath);
+      if (!ownership) {
+        pending--;
+        return undefined;
+      }
+      const release = ownership.release.bind(ownership);
+      vi.spyOn(ownership, 'release').mockImplementation(async () => {
+        try { await release(); } finally { pending--; }
+      });
+      return ownership;
+    });
+    await createSupervisor().initialize();
+    expect(peak).toBe(1);
+    expect(pending).toBe(0);
   });
 
   it('retains ownership through terminal bookkeeping and retires it on replacement', async () => {

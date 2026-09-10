@@ -63,20 +63,29 @@ export class RunSupervisor {
     // Reconcile only while holding ownership. A different process may still be
     // executing the objective, even if its last write was arbitrarily long ago.
     const entries = await fs.readdir(this.runsDir, { withFileTypes: true });
-    await Promise.all(entries.filter((entry) => entry.isDirectory()).map(async (entry) => {
+    // Keep ownership handles bounded independently of accumulated run history.
+    for (const entry of entries) {
+      if (!entry.isDirectory()) continue;
       const statePath = path.join(this.runsDir, entry.name, 'state.json');
       const ownership = await FileOwnership.acquire(path.join(this.runsDir, entry.name, 'owner.lock'));
-      if (!ownership) return;
+      if (!ownership) continue;
       try {
-        const snapshot = JSON.parse(await fs.readFile(statePath, 'utf8')) as RunSnapshot;
-        if (snapshot.version !== 1 || !['running', 'waiting_retry'].includes(snapshot.status)) return;
+        let snapshot: RunSnapshot;
+        try {
+          snapshot = JSON.parse(await fs.readFile(statePath, 'utf8')) as RunSnapshot;
+        } catch (error) {
+          // Missing/invalid snapshots remain inspectable. Operational failures
+          // must reach the caller: startup has not successfully reconciled them.
+          if (error instanceof SyntaxError || (error as NodeJS.ErrnoException).code === 'ENOENT') continue;
+          throw error;
+        }
+        if (!snapshot || snapshot.version !== 1 || !['running', 'waiting_retry'].includes(snapshot.status)) continue;
         snapshot.status = 'interrupted';
         snapshot.updatedAt = Date.now();
         snapshot.outcome = { kind: 'cancelled', reason: 'Previous Code-Ally process ended without a clean handoff' };
         await atomicWriteFile(statePath, `${JSON.stringify(snapshot, null, 2)}\n`);
-      } catch { /* corrupt run state remains inspectable on disk */ }
-      finally { await ownership.release(); }
-    }));
+      } finally { await ownership.release(); }
+    }
   }
 
   async listInterruptedRuns(limit: number = 20): Promise<RunSnapshot[]> {
