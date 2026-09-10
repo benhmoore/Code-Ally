@@ -534,8 +534,8 @@ export class BashTool extends BaseTool {
       );
     }
 
-    // Track when process exits
-    child.on('exit', (code: number | null, signal: NodeJS.Signals | null) => {
+    // Publish completion only after the child and its output streams close.
+    child.on('close', (code: number | null, signal: NodeJS.Signals | null) => {
       const info = processManager.getProcess(shellId);
       if (info) {
         info.status = 'exited';

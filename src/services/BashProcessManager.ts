@@ -8,7 +8,7 @@
 import { ChildProcess } from 'child_process';
 import { logger } from './Logger.js';
 import { formatDuration } from '../ui/utils/timeUtils.js';
-import { signalBashProcess } from '../utils/bashProcess.js';
+import { signalBashProcess, waitForBashClose } from '../utils/bashProcess.js';
 
 /**
  * Circular buffer for storing lines of output with automatic overflow handling
@@ -153,6 +153,7 @@ export class BashProcessManager {
   private readonly processes: Map<string, ProcessInfo> = new Map();
   private readonly acknowledgedResults = new Set<string>();
   private readonly maxProcesses: number;
+  private shutdownPromise?: Promise<void>;
 
   constructor(maxProcesses: number = 10) {
     this.maxProcesses = maxProcesses;
@@ -175,6 +176,7 @@ export class BashProcessManager {
    * @throws Error if process limit reached and no completed processes exist
    */
   addProcess(info: ProcessInfo): void {
+    if (this.shutdownPromise) throw new Error('Background process manager is shutting down');
     // Check if we've hit the limit
     if (this.processes.size >= this.maxProcesses) {
       // Try to remove oldest completed process
@@ -357,55 +359,30 @@ export class BashProcessManager {
    * @param gracefulTimeout - Milliseconds to wait for graceful shutdown (default: 5000ms)
    * @returns Promise that resolves when all processes are terminated
    */
-  async shutdown(gracefulTimeout: number = 5000): Promise<void> {
+  shutdown(gracefulTimeout: number = 5000): Promise<void> {
+    this.shutdownPromise ??= Promise.resolve().then(() => this.drainProcesses(gracefulTimeout));
+    return this.shutdownPromise;
+  }
+
+  private async drainProcesses(gracefulTimeout: number): Promise<void> {
     const runningProcesses = Array.from(this.processes.values()).filter(
       info => info.status !== 'exited'
     );
 
-    if (runningProcesses.length === 0) {
-      logger.debug('[BashProcessManager] No running processes to shutdown');
-      return;
-    }
-
     logger.info(`[BashProcessManager] Shutting down ${runningProcesses.length} background process(es)...`);
-
-    // Send SIGTERM to all running processes
-    for (const info of runningProcesses) {
-      try {
-        logger.debug(`[BashProcessManager] Sending SIGTERM to process ${info.id} (pid: ${info.pid})`);
-        this.signalProcessGroup(info, 'SIGTERM');
-      } catch (error) {
-        logger.warn(`[BashProcessManager] Failed to send SIGTERM to ${info.id}:`, error);
-      }
+    const controller = new AbortController();
+    const closing = runningProcesses.map(info => {
+      info.status = 'stopping';
+      info.terminationSignal = 'SIGTERM';
+      return waitForBashClose(info.process, controller.signal, gracefulTimeout);
+    });
+    controller.abort();
+    // Observe every child before reporting errors or releasing any tracking.
+    const results = await Promise.allSettled(closing);
+    const failures = results.filter(result => result.status === 'rejected');
+    if (failures.length) {
+      throw new AggregateError(failures.map(result => result.reason), 'Background process shutdown failed');
     }
-
-    // Wait for graceful shutdown
-    const startTime = Date.now();
-    while (Date.now() - startTime < gracefulTimeout) {
-      const stillRunning = runningProcesses.filter(info => info.status !== 'exited');
-      if (stillRunning.length === 0) {
-        logger.info('[BashProcessManager] All processes exited gracefully');
-        return;
-      }
-      // Wait a bit before checking again
-      await new Promise(resolve => setTimeout(resolve, 100));
-    }
-
-    // Force kill any remaining processes
-    const remainingProcesses = runningProcesses.filter(info => info.status !== 'exited');
-    if (remainingProcesses.length > 0) {
-      logger.warn(`[BashProcessManager] ${remainingProcesses.length} process(es) did not exit gracefully, sending SIGKILL`);
-      for (const info of remainingProcesses) {
-        try {
-          logger.debug(`[BashProcessManager] Sending SIGKILL to process ${info.id} (pid: ${info.pid})`);
-          this.signalProcessGroup(info, 'SIGKILL');
-        } catch (error) {
-          logger.warn(`[BashProcessManager] Failed to send SIGKILL to ${info.id}:`, error);
-        }
-      }
-    }
-
-    // Clear all processes from tracking
     this.processes.clear();
     this.acknowledgedResults.clear();
     logger.info('[BashProcessManager] Shutdown complete');

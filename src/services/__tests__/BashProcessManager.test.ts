@@ -1,4 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { EventEmitter, once } from 'node:events';
+import { spawnBashCommand } from '../../utils/bashProcess.js';
 import {
   BashProcessManager,
   CircularBuffer,
@@ -24,6 +26,58 @@ function processInfo(overrides: Partial<ProcessInfo> = {}): ProcessInfo {
 }
 
 describe('BashProcessManager lifecycle', () => {
+  it.skipIf(process.platform === 'win32')('awaits a real SIGTERM-resistant child during shutdown', async () => {
+    const child = spawnBashCommand("trap '' TERM; printf ready; while :; do sleep 1; done", {
+      detached: true, stdio: ['ignore', 'pipe', 'ignore'],
+    });
+    const manager = new BashProcessManager();
+    manager.addProcess(processInfo({ pid: child.pid!, process: child }));
+    try {
+      await once(child.stdout!, 'data');
+      await manager.shutdown(30);
+      expect(child.signalCode).toBe('SIGKILL');
+      expect(manager.listProcesses()).toEqual([]);
+      expect(() => process.kill(child.pid!, 0)).toThrow();
+    } finally { await manager.shutdown(30); }
+  });
+
+  it('keeps shutdown pending through escalation until close and rejects new admission', async () => {
+    vi.useFakeTimers();
+    const child = Object.assign(new EventEmitter(), { kill: vi.fn(() => true), exitCode: null, signalCode: null });
+    const manager = new BashProcessManager();
+    const info = processInfo({ process: child as any });
+    manager.addProcess(info);
+    const shutdown = manager.shutdown(100);
+    expect(manager.shutdown(100)).toBe(shutdown);
+    expect(() => manager.addProcess(processInfo({ id: 'late' }))).toThrow(/shutting down/);
+    let settled = false;
+    void shutdown.then(() => { settled = true; });
+    try {
+      await vi.advanceTimersByTimeAsync(100);
+      expect(child.kill).toHaveBeenLastCalledWith('SIGKILL');
+      expect(settled).toBe(false);
+      expect(manager.getProcess(info.id)).toBe(info);
+      child.emit('close', null, 'SIGKILL');
+      await shutdown;
+      expect(manager.listProcesses()).toEqual([]);
+      expect(vi.getTimerCount()).toBe(0);
+    } finally { child.emit('close', null); vi.useRealTimers(); }
+  });
+
+  it('retains tracking and surfaces errors after all children close', async () => {
+    const child = Object.assign(new EventEmitter(), { kill: vi.fn(() => true) });
+    const manager = new BashProcessManager();
+    const info = processInfo({ process: child as any });
+    manager.addProcess(info);
+    const shutdown = manager.shutdown();
+    const rejected = expect(shutdown).rejects.toThrow('Background process shutdown failed');
+    await Promise.resolve();
+    child.emit('error', new Error('signal failed'));
+    child.emit('close', null);
+    await rejected;
+    expect(manager.getProcess(info.id)).toBe(info);
+  });
+
   it('retains an unconsumed completed dependency under capacity pressure', () => {
     const manager = new BashProcessManager(1);
     const required = processInfo({ id: 'required', status: 'exited', exitCode: 0, exitTime: Date.now(), blocksCompletion: true });
