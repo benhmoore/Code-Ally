@@ -6,6 +6,7 @@ import { SessionManager } from '../SessionManager.js';
 import type { Message } from '../../types/index.js';
 import type { TodoItem } from '../TodoManager.js';
 import { emptySemanticCheckpoint, type ConversationCheckpointV1 } from '../../agent/compaction/types.js';
+import { ConversationManager } from '../../agent/ConversationManager.js';
 
 describe('explicit session snapshot ownership', () => {
   let dir: string;
@@ -21,6 +22,31 @@ describe('explicit session snapshot ownership', () => {
   afterEach(async () => {
     await manager.cleanup();
     await fs.rm(dir, { recursive: true, force: true });
+  });
+
+  it.each([false, true])('preserves ephemeral tool completion across cleanup and reload (error=%s)', async isError => {
+    const conversation = new ConversationManager();
+    conversation.addMessage({
+      id: 'call-message', role: 'assistant', content: '',
+      tool_calls: [{ id: 'temporary-read', type: 'function', function: { name: 'read', arguments: {} } }],
+    });
+    conversation.addMessage({
+      id: 'result-message', role: 'tool', tool_call_id: 'temporary-read', name: 'read',
+      content: 'PRIVATE_EPHEMERAL_PAYLOAD', images: ['PRIVATE_IMAGE'], is_error: isError,
+      metadata: { ephemeral: true, tool_status: { 'temporary-read': isError ? 'error' : 'success' } },
+    });
+    expect(JSON.stringify(conversation.getTranscript())).not.toContain('PRIVATE_');
+    // A save while the payload is still live must already persist only its receipt.
+    expect(await manager.saveSession('owned', conversation.getMessages(), conversation.getTranscript())).toBe(true);
+    const restored = await new SessionManager({ sessionsDir: dir }).loadSession('owned');
+    expect(JSON.stringify(restored)).not.toContain('PRIVATE_');
+    expect(restored?.messages.at(-1)).toMatchObject({
+      role: 'tool', tool_call_id: 'temporary-read', is_error: isError,
+      metadata: { tool_status: { 'temporary-read': isError ? 'error' : 'success' } },
+    });
+    expect(conversation.cleanupEphemeralMessages()).toBe(1);
+    expect(conversation.getMessages().at(-1)).toEqual(restored?.messages.at(-1));
+    expect(conversation.cleanupEphemeralMessages()).toBe(0);
   });
 
   it.each(['metadata', 'todos', 'fields'] as const)('updates %s without reading or rewriting archived history', async mode => {

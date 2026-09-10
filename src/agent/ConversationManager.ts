@@ -13,7 +13,7 @@
 
 import { Message } from '../types/index.js';
 import { generateMessageId } from '../utils/id.js';
-import { isPersistentMessage } from '../utils/messagePersistence.js';
+import { isPersistentMessage, persistentMessage, persistentMessages } from '../utils/messagePersistence.js';
 import { logger } from '../services/Logger.js';
 import { SYSTEM_REMINDER } from '../config/constants.js';
 import { createToolResultMessage } from '../llm/FunctionCalling.js';
@@ -100,8 +100,7 @@ export class ConversationManager {
       }));
       // Build tool result index from initial messages
       this.rebuildToolResultIndex();
-      this.transcript = (config.initialTranscript ?? this.messages)
-        .filter(isPersistentMessage)
+      this.transcript = persistentMessages(config.initialTranscript ?? this.messages)
         .slice(-ConversationManager.MAX_TRANSCRIPT_TAIL)
         .map(msg => ({ ...msg, id: msg.id || generateMessageId() }));
       this.rebuildCanonicalActiveMessages([
@@ -110,8 +109,7 @@ export class ConversationManager {
       ]);
       logger.debug('[CONVERSATION_MANAGER]', this.instanceId, 'Initialized with', this.messages.length, 'messages');
     } else if (config.initialTranscript?.length) {
-      this.transcript = config.initialTranscript
-        .filter(isPersistentMessage)
+      this.transcript = persistentMessages(config.initialTranscript)
         .slice(-ConversationManager.MAX_TRANSCRIPT_TAIL)
         .map(msg => ({ ...msg, id: msg.id || generateMessageId() }));
     }
@@ -136,8 +134,9 @@ export class ConversationManager {
       this.canonicalActiveMessages.set(messageWithMetadata.id, messageWithMetadata);
     }
 
-    if (isPersistentMessage(messageWithMetadata)) {
-      this.transcript.push(messageWithMetadata);
+    const durableMessage = persistentMessage(messageWithMetadata);
+    if (durableMessage) {
+      this.transcript.push(durableMessage);
       if (this.transcript.length > ConversationManager.MAX_TRANSCRIPT_TAIL) {
         this.transcript.splice(0, this.transcript.length - ConversationManager.MAX_TRANSCRIPT_TAIL);
       }
@@ -269,8 +268,7 @@ export class ConversationManager {
       ...msg,
       id: msg.id || generateMessageId(),
     }));
-    this.transcript = this.messages
-      .filter(isPersistentMessage)
+    this.transcript = persistentMessages(this.messages)
       .slice(-ConversationManager.MAX_TRANSCRIPT_TAIL)
       .map(msg => ({ ...msg }));
     this.rebuildCanonicalActiveMessages();
@@ -300,8 +298,7 @@ export class ConversationManager {
     canonicalMessages: readonly Message[] = [],
   ): void {
     this.messages = activeMessages.map(msg => ({ ...msg, id: msg.id || generateMessageId() }));
-    this.transcript = transcript
-      .filter(isPersistentMessage)
+    this.transcript = persistentMessages(transcript)
       .slice(-ConversationManager.MAX_TRANSCRIPT_TAIL)
       .map(msg => ({ ...msg, id: msg.id || generateMessageId() }));
     this.checkpoint = checkpoint ? structuredClone(checkpoint) : null;
@@ -562,12 +559,23 @@ export class ConversationManager {
    * Clean up ephemeral messages from conversation history
    *
    * Ephemeral messages are marked with metadata.ephemeral = true
-   * and should be removed at end of turn.
+   * and their payloads should be removed at end of turn. Tool outcomes retain
+   * a bounded receipt so their calls do not become unmatched after cleanup.
    *
-   * @returns Number of ephemeral messages removed
+   * @returns Number of ephemeral payloads discarded
    */
   cleanupEphemeralMessages(): number {
-    return this.removeMessages(msg => msg.metadata?.ephemeral === true);
+    const count = this.messages.filter(msg => msg.metadata?.ephemeral === true).length;
+    this.messages = this.messages.flatMap(message => {
+      if (!message.metadata?.ephemeral) return [message];
+      const receipt = persistentMessage(message);
+      if (!receipt) return [];
+      if (receipt.id) this.canonicalActiveMessages.set(receipt.id, receipt);
+      return [receipt];
+    });
+    this.rebuildCanonicalActiveMessages([], this.canonicalActiveMessages);
+    this.rebuildToolResultIndex();
+    return count;
   }
 
   /**

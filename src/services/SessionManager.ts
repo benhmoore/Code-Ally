@@ -25,7 +25,7 @@ import { migrateRecord, stampVersion, SchemaTooNewError } from '../utils/version
 import { SESSION_SCHEMA } from '../config/schemas.js';
 import type { ConversationCheckpointV1, ProviderCheckpointState } from '../agent/compaction/types.js';
 import { checkpointSourceDigest } from '../agent/compaction/CheckpointReducer.js';
-import { isPersistentMessage } from '../utils/messagePersistence.js';
+import { isPersistentMessage, persistentMessages } from '../utils/messagePersistence.js';
 
 /**
  * Configuration for SessionManager
@@ -348,7 +348,7 @@ export class SessionManager implements IService {
    * - Preserve prepared tool-call messages so crash recovery can reconcile them
    */
   private filterMessagesForPersistence(messages: readonly Message[]): Message[] {
-    return messages.filter(isPersistentMessage);
+    return persistentMessages(messages);
   }
 
   /**
