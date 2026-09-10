@@ -338,20 +338,43 @@ function applyModelPatchExact(
       // context misses, surface exact, unique lines that still exist so the
       // caller can read the right region instead of trusting the stale header
       // or rereading the whole file.
-      const uniqueAnchorLines = oldLines
-        .filter(line => line.trim().length >= 8)
-        .flatMap(line => {
+      const uniqueAnchors = oldLines
+        .map((line, offset) => ({ line, offset }))
+        .filter(({ line }) => line.trim().length >= 8)
+        .flatMap(({ line, offset }) => {
           const matches = sourceLines
             .map((sourceLine, sourceIndex) => sourceLine === line ? sourceIndex + 1 : 0)
             .filter(Boolean);
-          return matches.length === 1 ? matches : [];
+          return matches.length === 1 ? [{ line: matches[0]!, start: matches[0]! - 1 - offset }] : [];
         });
-      const anchors = [...new Set(uniqueAnchorLines)].sort((a, b) => a - b).slice(0, 4);
+      const anchors = [...new Set(uniqueAnchors.map(anchor => anchor.line))].sort((a, b) => a - b).slice(0, 4);
       const anchorHint = anchors.length > 0
         ? ` Exact unique context from this hunk exists near current file line${anchors.length === 1 ? '' : 's'} ${anchors.join(', ')}.`
         : '';
+      // Diagnostic only: never use a partial match to authorize a mutation.
+      // Compare text only when every surviving unique anchor agrees on one
+      // candidate position; conflicting anchors cannot identify a mismatch.
+      const starts = [...new Set(uniqueAnchors.map(anchor => anchor.start))];
+      let mismatchHint = '';
+      if (starts.length === 1) {
+        const start = starts[0]!;
+        if (start >= 0 && start + oldLines.length <= sourceLines.length) {
+          const offset = oldLines.findIndex((line, i) => line !== sourceLines[start + i]);
+          if (offset >= 0) {
+            const expected = Array.from(oldLines[offset]!);
+            const actual = Array.from(sourceLines[start + offset]!);
+            let column = 0;
+            while (column < expected.length && column < actual.length && expected[column] === actual[column]) column++;
+            const from = Math.max(0, column - 30);
+            const excerpt = (characters: string[]) => JSON.stringify(
+              `${from > 0 ? '…' : ''}${characters.slice(from, from + 90).join('')}${characters.length > from + 90 ? '…' : ''}`,
+            );
+            mismatchHint = ` At candidate file line ${start + offset + 1}, column ${column + 1}: patch expects ${excerpt(expected)}; file contains ${excerpt(actual)}.`;
+          }
+        }
+      }
       return createPatchError(
-        `Cannot apply hunk ${index + 1}: ${reason}.${anchorHint} Re-read that narrow region and correct this hunk before resubmitting the patch.`,
+        `Cannot apply hunk ${index + 1}: ${reason}.${anchorHint}${mismatchHint} Re-read that narrow region and correct this hunk before resubmitting the patch.`,
         'applyModelPatch'
       );
     }

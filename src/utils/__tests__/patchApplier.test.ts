@@ -33,6 +33,40 @@ describe('applyModelPatch', () => {
     expect(result.error).toContain('before resubmitting the patch');
   });
 
+  it('shows literal whitespace differences without accepting an inexact patch', () => {
+    const source = 'function example() {\n  return "  - ";\n}\n';
+    const result = applyModelPatch(
+      '@@ -1,3 +1,3 @@\n function example() {\n-  return "    - ";\n+  return "changed";\n }', source,
+    );
+    expect(result.success).toBe(false);
+    expect(result.content).toBeUndefined();
+    expect(result.error).toContain('candidate file line 2, column 13');
+    expect(result.error).toContain(`patch expects ${JSON.stringify('  return "    - ";')}`);
+    expect(result.error).toContain(`file contains ${JSON.stringify('  return "  - ";')}`);
+  });
+
+  it('does not guess a mismatch position when unique anchors disagree', () => {
+    const result = applyModelPatch(
+      '@@ -1,3 +1,3 @@\n first unique anchor\n-missing old content\n+replacement\n last unique anchor',
+      'first unique anchor\ninserted\nactual content\nlast unique anchor\n',
+    );
+    expect(result.success).toBe(false);
+    expect(result.error).not.toContain('candidate file line');
+  });
+
+  it('bounds mismatch excerpts around the differing Unicode character', () => {
+    const prefix = '😀'.repeat(500);
+    const result = applyModelPatch(
+      `@@ -1,2 +1,2 @@\n unique anchor line\n-${prefix}expected\n+replacement`,
+      `unique anchor line\n${prefix}actual\n`,
+    );
+    expect(result.success).toBe(false);
+    expect(result.error).toContain('column 501');
+    expect(result.error!.length).toBeLessThan(700);
+    expect(result.error).toContain('expected');
+    expect(result.error).toContain('actual');
+  });
+
     it('applies headerless unified hunks and reports their actual source ranges', () => {
       const result = applyModelPatch(
         '@@ -1,3 +1,3 @@\n alpha\n-beta\n+BETA\n gamma',
