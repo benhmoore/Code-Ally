@@ -392,7 +392,9 @@ For multi-step investigations with unknown scope, prefer explore() to preserve c
         }
       }
 
-      responseData.content = content;
+      // Structured matches/files/counts are the model payload. The formatted
+      // duplicate belongs only to terminal rendering.
+      responseData.display_content = content;
 
       return this.formatSuccessResponse(responseData);
     } catch (error) {

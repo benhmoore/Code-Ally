@@ -5,6 +5,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { GrepTool } from '../GrepTool.js';
 import { ActivityStream } from '@services/ActivityStream.js';
+import { resolveDisplayContent, toModelToolResult } from '../../utils/toolResultContent.js';
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import * as os from 'os';
@@ -65,6 +66,18 @@ describe('GrepTool', () => {
   });
 
   describe('execute', () => {
+    it.each(['content', 'count', 'files_with_matches'])('separates readable display from structured %s output', async output_mode => {
+      const result = await grepTool.execute({ pattern: 'test', path: tempDir, output_mode });
+      expect(result.success).toBe(true);
+      expect(resolveDisplayContent(result).length).toBeGreaterThan(0);
+      const wire = toModelToolResult(result);
+      expect(wire.display_content).toBeUndefined();
+      expect(wire.content ?? '').toBe('');
+      const field = output_mode === 'content' ? 'matches' : output_mode === 'count' ? 'file_counts' : 'files';
+      expect(wire[field].length).toBeGreaterThan(0);
+      expect(JSON.stringify(wire).length).toBeLessThan(JSON.stringify(result).length);
+    });
+
     it('should find matches in files', async () => {
       const result = await grepTool.execute({
         pattern: 'test',
