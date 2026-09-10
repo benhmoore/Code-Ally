@@ -150,6 +150,72 @@ function envelopeTurn(pairCount: number, resultWords: number, pathPrefix = '/rep
 }
 
 describe('ConversationCompactor', () => {
+  it.each(['reduction', 'commit'] as const)('preserves input admitted during checkpoint %s in memory and persistence', async phase => {
+    const manager = new ConversationManager({ initialMessages: history() });
+    const client = chatClient();
+    const incoming: Message = { id: 'new-requirement', role: 'user', content: 'Preserve the new acceptance requirement.', timestamp: 100 };
+    let injected = false;
+    const inject = () => {
+      if (!injected) {
+        injected = true;
+        manager.addMessage(incoming);
+      }
+    };
+    if (phase === 'reduction') {
+      client.send.mockImplementationOnce(async () => {
+        inject();
+        return { role: 'assistant', content: 'not-json' };
+      });
+    }
+    let persisted: readonly Message[] = [];
+    const compactor = new ConversationCompactor(client, manager, new TokenManager(8192), new ActivityStream(), async messages => {
+      persisted = structuredClone(messages);
+      if (phase === 'commit') inject();
+      return true;
+    });
+    await compactor.compactAndApply(context());
+    expect(injected).toBe(true);
+    expect(manager.getMessages()).toContainEqual(expect.objectContaining({ id: incoming.id, content: incoming.content }));
+    expect(persisted).toContainEqual(expect.objectContaining({ id: incoming.id, content: incoming.content }));
+  });
+
+  it('settles input admitted during a successful commit even if generation is cancelled', async () => {
+    const manager = new ConversationManager({ initialMessages: history() });
+    const controller = new AbortController();
+    const incoming: Message = { id: 'late-input', role: 'user', content: 'Keep this requirement.', timestamp: 100 };
+    let persisted: readonly Message[] = [];
+    let commits = 0;
+    const compactor = new ConversationCompactor(chatClient(), manager, new TokenManager(8192), new ActivityStream(), async messages => {
+      persisted = structuredClone(messages);
+      if (++commits === 1) {
+        manager.addMessage(incoming);
+        controller.abort();
+      }
+      return true;
+    });
+    const result = await compactor.compactAndApply({ ...context(), signal: controller.signal });
+    expect(commits).toBe(2);
+    expect(persisted).toEqual(result.compactedMessages);
+    expect(manager.getMessages()).toEqual(result.compactedMessages);
+    expect(result.checkpoint.retainedMessageIds).toContain(incoming.id);
+    expect(result.compactedMessages.at(-1)?.content).toBe(incoming.content);
+  });
+
+  it('refuses to install a candidate over a rewritten source window', async () => {
+    const manager = new ConversationManager({ initialMessages: history() });
+    const client = chatClient();
+    const replacement: Message[] = [{ id: 'replacement', role: 'user', content: 'A different conversation.' }];
+    client.send.mockImplementationOnce(async () => {
+      manager.setMessages(replacement);
+      return { role: 'assistant', content: 'not-json' };
+    });
+    const commit = vi.fn(async () => true);
+    const compactor = new ConversationCompactor(client, manager, new TokenManager(8192), new ActivityStream(), commit);
+    await expect(compactor.compactAndApply(context())).rejects.toThrow();
+    expect(commit).not.toHaveBeenCalled();
+    expect(manager.getMessages()).toEqual(replacement);
+  });
+
   it('does not replace a leading durable system event when refreshing the system prompt', () => {
     const event = { ...createSystemReminder('Keep this durable fact', true), id: 'event' };
     const manager = new ConversationManager({ initialMessages: [event] });

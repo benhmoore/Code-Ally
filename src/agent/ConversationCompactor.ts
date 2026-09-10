@@ -1,4 +1,5 @@
 import type { ModelClient } from '../llm/ModelClient.js';
+import { isDeepStrictEqual } from 'node:util';
 import type { ConversationManager } from './ConversationManager.js';
 import type { TokenManager } from './TokenManager.js';
 import type { ActivityStream } from '../services/ActivityStream.js';
@@ -94,6 +95,7 @@ export interface AppliedCompactionResult {
 interface Candidate {
   checkpoint: ConversationCheckpointV1;
   replacement: Message[];
+  sourceMessages: Message[];
 }
 
 export interface CompactionDebugState {
@@ -354,12 +356,32 @@ export class ConversationCompactor {
       }
 
       this.debugState.stage = 'committing';
-      const committed = await this.commitWithRetry(
-        candidate.replacement,
-        candidate.checkpoint,
-        context.signal,
-      );
-      if (!committed) throw new Error('Checkpoint persistence failed; active context was left unchanged.');
+      let committedOnce = false;
+      let commitSignal = context.signal;
+      while (true) {
+        candidate = this.rebaseAppendedMessages(candidate);
+        candidate.checkpoint.budget.after = await this.countCandidate(candidate, { ...context, signal: commitSignal });
+        if (!committedOnce && candidate.checkpoint.budget.after > maximumPostCompactionBudget) {
+          throw new Error('New conversation input exhausted checkpoint headroom; active context was left unchanged.');
+        }
+        // Counting and persistence both yield. Rebase until the durable window
+        // covers exactly the source observed at the synchronous install point.
+        if (!this.matchesCandidateSource(candidate)) continue;
+        const committed = await this.commitWithRetry(
+          candidate.replacement,
+          candidate.checkpoint,
+          commitSignal,
+        );
+        if (!committed) throw new Error('Checkpoint persistence failed; active context was left unchanged.');
+        if (this.matchesCandidateSource(candidate)) break;
+        // Once a checkpoint is durable, settle newly admitted input even when
+        // generation was cancelled. It remains authoritative raw context; the
+        // next request must plan its budget against this complete window.
+        if (!committedOnce) {
+          committedOnce = true;
+          commitSignal = new AbortController().signal;
+        }
+      }
 
       this.conversationManager.replaceActiveMessages(candidate.replacement);
       this.conversationManager.setCheckpoint(candidate.checkpoint);
@@ -516,6 +538,32 @@ export class ConversationCompactor {
       + this.estimateRequestOverhead(context);
   }
 
+  private matchesCandidateSource(candidate: Candidate): boolean {
+    return isDeepStrictEqual(this.conversationManager.getMessages(), candidate.sourceMessages);
+  }
+
+  /** New input is a raw continuation of the checkpoint, never reducer history. */
+  private rebaseAppendedMessages(candidate: Candidate): Candidate {
+    const current = this.conversationManager.getMessages();
+    const sourceLength = candidate.sourceMessages.length;
+    if (current.length < sourceLength || !isDeepStrictEqual(current.slice(0, sourceLength), candidate.sourceMessages)) {
+      throw new Error('Conversation changed during compaction; the checkpoint cannot replace a different source window.');
+    }
+    if (current.length === sourceLength) return candidate;
+    const appended = structuredClone(current.slice(sourceLength));
+    const replacement = [...candidate.replacement, ...appended];
+    return {
+      sourceMessages: structuredClone([...current]),
+      replacement,
+      checkpoint: {
+        ...candidate.checkpoint,
+        retainedMessageIds: [...candidate.checkpoint.retainedMessageIds,
+          ...appended.map(message => message.id).filter((id): id is string => Boolean(id))],
+        replacementMessages: replacement.filter(message => message.role !== 'system'),
+      },
+    };
+  }
+
   private fitCandidateCheckpoint(
     candidate: Candidate,
     context: CompactionContext,
@@ -544,7 +592,7 @@ export class ConversationCompactor {
       semanticState,
       replacementMessages: replacement.filter(message => message.role !== 'system'),
     };
-    return { checkpoint, replacement };
+    return { ...candidate, checkpoint, replacement };
   }
 
   private async commitWithRetry(
@@ -571,7 +619,8 @@ export class ConversationCompactor {
     options: CompactionOptions,
     budget: ContextBudgetSnapshot,
   ): Promise<Candidate> {
-    const active = this.conversationManager.getMessages()
+    const sourceMessages = structuredClone([...this.conversationManager.getMessages()]);
+    const active = sourceMessages
       .filter(message => !message.metadata?.ephemeral);
     const system = active[0]?.role === 'system' && !isPersistentMessage(active[0]) ? active[0] : null;
     const domain = (system ? active.slice(1) : active)
@@ -738,7 +787,7 @@ export class ConversationCompactor {
       ...(options.customInstructions ? { focus: options.customInstructions } : {}),
       ...(degradedReason ? { degradedReason } : {}),
     };
-    return { checkpoint, replacement };
+    return { checkpoint, replacement, sourceMessages };
   }
 
   private retainedSplit(
