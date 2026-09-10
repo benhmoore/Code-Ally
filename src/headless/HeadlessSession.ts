@@ -30,10 +30,53 @@ export function isHeadlessRun(options: CLIOptions): boolean {
   return Boolean(options.once) || options.inputFormat === 'stream-json';
 }
 
+/** The session a run writes to, and whether it already held messages. */
+export interface HeadlessSessionHandle {
+  name: string;
+  existed: boolean;
+}
+
+/** The session name this run writes to, or null when it keeps no session. */
+export function resolveHeadlessSessionName(options: CLIOptions): string | null {
+  if (options.noSession) return null;
+  if (options.sessionId) {
+    assertSafeSessionId(options.sessionId);
+    return options.sessionId;
+  }
+  return options.session ?? null;
+}
+
+/**
+ * Create or select the run's session and make it current.
+ *
+ * The composition root calls this before the first hook, so SessionStart and
+ * every wire event report the same session id.
+ */
+export async function openHeadlessSession(
+  options: CLIOptions,
+  sessionManager: SessionManager,
+): Promise<HeadlessSessionHandle | null> {
+  const name = resolveHeadlessSessionName(options);
+  if (!name) return null;
+
+  const existed = await sessionManager.sessionExists(name);
+  if (!existed) await sessionManager.createSession(name);
+  sessionManager.setCurrentSession(name);
+
+  const patchManager = ServiceRegistry.getInstance().get('patch_manager');
+  if (patchManager && typeof (patchManager as any).onSessionChange === 'function') {
+    await (patchManager as any).onSessionChange();
+  }
+
+  return { name, existed };
+}
+
 export interface HeadlessSessionDeps {
   agent: Agent;
   sessionManager: SessionManager;
   options: CLIOptions;
+  /** The session opened for this run, from `openHeadlessSession`. */
+  session: HeadlessSessionHandle | null;
   /** Model name reported by the init event. */
   model: string;
   /** Tool names reported by the init event. */
@@ -81,8 +124,11 @@ export class HeadlessSession {
       throw new Error('Headless mode needs --once <message> unless --input-format stream-json');
     }
 
-    this.sessionName = this.resolveSessionName();
-    if (this.sessionName) await this.openSession(this.sessionName);
+    const opened = this.deps.session;
+    this.sessionName = opened?.name ?? null;
+    if (opened?.existed) {
+      this.deps.agent.setMessages(await this.deps.sessionManager.getSessionMessages(opened.name));
+    }
     this.sessionId = this.sessionName
       ?? this.deps.sessionManager.getCurrentSession()
       ?? `headless-${generateShortId()}`;
@@ -104,30 +150,6 @@ export class HeadlessSession {
     } finally {
       this.writer?.detach();
     }
-  }
-
-  /** `--session-id` is `--session` with a caller-chosen name and a validity check. */
-  private resolveSessionName(): string | null {
-    if (this.options.noSession) return null;
-    if (this.options.sessionId) {
-      assertSafeSessionId(this.options.sessionId);
-      return this.options.sessionId;
-    }
-    return this.options.session ?? null;
-  }
-
-  private async openSession(name: string): Promise<void> {
-    const { sessionManager, agent } = this.deps;
-    const existed = await sessionManager.sessionExists(name);
-    if (!existed) await sessionManager.createSession(name);
-    sessionManager.setCurrentSession(name);
-
-    const patchManager = ServiceRegistry.getInstance().get('patch_manager');
-    if (patchManager && typeof (patchManager as any).onSessionChange === 'function') {
-      await (patchManager as any).onSessionChange();
-    }
-
-    if (existed) agent.setMessages(await sessionManager.getSessionMessages(name));
   }
 
   /** Read line-delimited commands from stdin until it closes and the last turn ends. */

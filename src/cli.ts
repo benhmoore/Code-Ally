@@ -41,7 +41,13 @@ import { ScheduledTaskManager, ScheduledTask, presetPolicy } from './services/Sc
 import { SchedulerInstaller } from './services/SchedulerInstaller.js';
 import { generateShortId } from './utils/id.js';
 import { atomicWriteFile } from './utils/atomicFile.js';
-import { HeadlessSession, isHeadlessRun, resolveStructuredOutputSchema } from './headless/index.js';
+import {
+  HeadlessSession,
+  advertisedToolNames,
+  isHeadlessRun,
+  openHeadlessSession,
+  resolveStructuredOutputSchema,
+} from './headless/index.js';
 
 let terminalOutputAvailable = true;
 
@@ -1452,6 +1458,12 @@ async function main() {
     }
     logger.debug(`[CLI] Plugin skills, agents, and ${pluginCommands.length} command(s) loaded`);
 
+    // The headless run's session is opened here, before the first hook, so
+    // SessionStart reports the same id as every wire event that follows it.
+    const headlessSessionHandle = isHeadlessRun(options)
+      ? await openHeadlessSession(options, sessionManager)
+      : null;
+
     // Hooks. Registered even when nothing declares one, so call sites can ask
     // hasHooks() instead of null-checking the service.
     const { HookRunner, loadHooksConfig } = await import('./hooks/index.js');
@@ -1657,8 +1669,12 @@ async function main() {
         agent,
         sessionManager,
         options,
+        session: headlessSessionHandle,
         model: agentModelClient.modelName,
-        toolNames: toolManager.getAllTools().map(tool => tool.name),
+        toolNames: advertisedToolNames(
+          toolManager.getAllTools().map(tool => tool.name),
+          trustManager.getDisallowedToolPatterns(),
+        ),
       });
       if (structuredOutputSchema) {
         registry.registerInstance('structured_output_sink', {

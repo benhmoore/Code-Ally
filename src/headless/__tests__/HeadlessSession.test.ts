@@ -11,7 +11,7 @@ import type { RunOutcome } from '@services/RunSupervisor.js';
 import { ServiceRegistry } from '@services/ServiceRegistry.js';
 import { StructuredOutputTool, STRUCTURED_OUTPUT_TOOL } from '@tools/StructuredOutputTool.js';
 import type { ParameterSchema } from '@shared/index.js';
-import { HeadlessSession, assertSafeSessionId } from '../HeadlessSession.js';
+import { HeadlessSession, assertSafeSessionId, openHeadlessSession } from '../HeadlessSession.js';
 import type { WireEvent } from '../wire.js';
 
 /** The verdict-shaped schema a triage caller asks for. */
@@ -102,15 +102,19 @@ describe('HeadlessSession', () => {
   /** Replies the fake model returns, in order. A function waits for the signal. */
   let replies: Array<string | ((signal: AbortSignal) => Promise<LLMResponse>)>;
 
-  function session(options: CLIOptions, extra: Partial<{
+  /** Build the session the way the composition root does, session first. */
+  async function session(options: CLIOptions, extra: Partial<{
     stdin: NodeJS.ReadableStream;
     stdout: NodeJS.WritableStream;
     getOutcome: () => RunOutcome | undefined;
-  }> = {}): HeadlessSession {
+    sessionManager: SessionManager;
+  }> = {}): Promise<HeadlessSession> {
+    const sessionManager = extra.sessionManager ?? sessionManagerStub();
     return new HeadlessSession({
       agent,
-      sessionManager: sessionManagerStub(),
+      sessionManager,
       options,
+      session: await openHeadlessSession(options, sessionManager),
       model: 'test-model',
       toolNames: ['bash', 'read'],
       cwd: '/work',
@@ -156,7 +160,7 @@ describe('HeadlessSession', () => {
     const log = vi.spyOn(console, 'log').mockImplementation(() => {});
     replies = ['The answer.'];
 
-    const outcome = await session({ once: 'question' }).run();
+    const outcome = await (await session({ once: 'question' })).run();
 
     expect(outcome).toEqual(COMPLETED);
     expect(log.mock.calls).toEqual([['The answer.']]);
@@ -166,7 +170,7 @@ describe('HeadlessSession', () => {
     const out = collector();
     replies = ['The answer.'];
 
-    await session({ once: 'question', outputFormat: 'json' }, { stdout: out.stream }).run();
+    await (await session({ once: 'question', outputFormat: 'json' }, { stdout: out.stream })).run();
 
     expect(out.events()).toEqual([expect.objectContaining({
       type: 'result',
@@ -182,8 +186,8 @@ describe('HeadlessSession', () => {
     const out = collector();
     replies = ['The answer.'];
 
-    await session({ once: 'question', outputFormat: 'stream-json', sessionId: 'run-1' },
-      { stdout: out.stream }).run();
+    await (await session({ once: 'question', outputFormat: 'stream-json', sessionId: 'run-1' },
+      { stdout: out.stream })).run();
 
     const events = out.events();
     expect(events[0]).toEqual({
@@ -223,8 +227,8 @@ describe('HeadlessSession', () => {
       return { content: 'Listed.', tool_calls: [], interrupted: false };
     }];
 
-    await session({ once: 'list files', outputFormat: 'stream-json', sessionId: 'run-2' },
-      { stdout: out.stream }).run();
+    await (await session({ once: 'list files', outputFormat: 'stream-json', sessionId: 'run-2' },
+      { stdout: out.stream })).run();
 
     const events = out.events();
     expect(events).toContainEqual({
@@ -241,8 +245,8 @@ describe('HeadlessSession', () => {
     const stdin = new PassThrough();
     replies = ['First.', 'Second.'];
 
-    const run = session({ inputFormat: 'stream-json', outputFormat: 'stream-json', sessionId: 'run-3' },
-      { stdin, stdout: out.stream }).run();
+    const run = (await session({ inputFormat: 'stream-json', outputFormat: 'stream-json', sessionId: 'run-3' },
+      { stdin, stdout: out.stream })).run();
 
     stdin.write(`${JSON.stringify({ type: 'user', message: { role: 'user', content: 'one' } })}\n`);
     await vi.waitFor(() => expect(out.events().filter(e => e.type === 'result')).toHaveLength(1));
@@ -264,8 +268,8 @@ describe('HeadlessSession', () => {
     const held = new Promise<void>(resolve => { release = resolve; });
     replies = [async () => { await held; return { content: 'Done.', tool_calls: [], interrupted: false }; }];
 
-    const run = session({ once: 'start', inputFormat: 'stream-json', outputFormat: 'stream-json' },
-      { stdin, stdout: out.stream }).run();
+    const run = (await session({ once: 'start', inputFormat: 'stream-json', outputFormat: 'stream-json' },
+      { stdin, stdout: out.stream })).run();
 
     await vi.waitFor(() => expect(modelClient.send).toHaveBeenCalled());
     stdin.write(`${JSON.stringify({ type: 'user', message: { role: 'user', content: 'also this' } })}\n`);
@@ -288,8 +292,8 @@ describe('HeadlessSession', () => {
       'Wrapped up.',
     ];
 
-    const run = session({ once: 'long task', inputFormat: 'stream-json', outputFormat: 'stream-json' },
-      { stdin, stdout: out.stream }).run();
+    const run = (await session({ once: 'long task', inputFormat: 'stream-json', outputFormat: 'stream-json' },
+      { stdin, stdout: out.stream })).run();
 
     await vi.waitFor(() => expect(modelClient.send).toHaveBeenCalled());
     stdin.write(`${JSON.stringify({
@@ -313,9 +317,11 @@ describe('HeadlessSession', () => {
 
   it('reports the structured output slot on the result once it is set', async () => {
     const out = collector();
-    replies = ['The answer.'];
-    const headless = session({ once: 'question', outputFormat: 'json' }, { stdout: out.stream });
-    headless.setStructuredOutput({ verdict: 'ok' });
+    const headless = await session({ once: 'question', outputFormat: 'json' }, { stdout: out.stream });
+    replies = [async () => {
+      headless.setStructuredOutput({ verdict: 'ok' });
+      return { content: 'The answer.', tool_calls: [], interrupted: false };
+    }];
 
     await headless.run();
 
@@ -352,7 +358,7 @@ describe('HeadlessSession', () => {
       const out = collector();
       replies = [async () => structuredCall(VERDICT), 'Recorded.'];
 
-      const headless = sinkFor(session({ once: 'triage', outputFormat: 'json' }, { stdout: out.stream }));
+      const headless = sinkFor(await session({ once: 'triage', outputFormat: 'json' }, { stdout: out.stream }));
       await headless.run();
 
       expect(out.events()[0]).toMatchObject({
@@ -366,7 +372,7 @@ describe('HeadlessSession', () => {
       const out = collector();
       replies = ['Nothing to report.', async () => structuredCall(VERDICT), 'Recorded.'];
 
-      const headless = sinkFor(session({ once: 'triage', outputFormat: 'json' }, { stdout: out.stream }));
+      const headless = sinkFor(await session({ once: 'triage', outputFormat: 'json' }, { stdout: out.stream }));
       await headless.run();
 
       const sent = vi.mocked(modelClient.send).mock.calls;
@@ -376,13 +382,34 @@ describe('HeadlessSession', () => {
     });
   });
 
+  it('gives the session id to a hook reading it before the first turn', async () => {
+    const out = collector();
+    const manager = sessionManagerStub();
+    let current: string | null = null;
+    vi.mocked(manager.setCurrentSession).mockImplementation(name => { current = name; });
+    vi.mocked(manager.getCurrentSession).mockImplementation(() => current);
+    replies = ['The answer.'];
+
+    const headless = await session(
+      { once: 'question', outputFormat: 'stream-json', sessionId: 'run-hook' },
+      { stdout: out.stream, sessionManager: manager },
+    );
+    // The hook runner reads the id through the session manager, the way the
+    // SessionStart block does before the session ever runs.
+    const idAtHookTime = manager.getCurrentSession();
+    await headless.run();
+
+    expect(idAtHookTime).toBe('run-hook');
+    expect(new Set(out.events().map(event => event.session_id))).toEqual(new Set(['run-hook']));
+  });
+
   it('keeps stdout free of everything but wire events', async () => {
     const out = collector();
     const stdout = vi.spyOn(process.stdout, 'write').mockReturnValue(true);
     const log = vi.spyOn(console, 'log').mockImplementation(() => {});
     replies = ['The answer.'];
 
-    await session({ once: 'question', outputFormat: 'stream-json' }, { stdout: out.stream }).run();
+    await (await session({ once: 'question', outputFormat: 'stream-json' }, { stdout: out.stream })).run();
 
     expect(stdout).not.toHaveBeenCalled();
     expect(log).not.toHaveBeenCalled();

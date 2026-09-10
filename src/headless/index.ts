@@ -2,7 +2,10 @@ export {
   HeadlessSession,
   isHeadlessRun,
   assertSafeSessionId,
+  openHeadlessSession,
+  resolveHeadlessSessionName,
   type HeadlessSessionDeps,
+  type HeadlessSessionHandle,
 } from './HeadlessSession.js';
 export { JsonlEventWriter, type JsonlEventWriterOptions } from './JsonlEventWriter.js';
 export { parseJsonSchemaOption, resolveStructuredOutputSchema } from './jsonSchemaOption.js';
