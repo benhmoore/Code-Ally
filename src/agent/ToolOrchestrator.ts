@@ -38,6 +38,7 @@ import { resolveDisplayContent, toModelToolResult } from '../utils/toolResultCon
 import { FormCancelledError } from '../services/FormManager.js';
 import { FileInteractionTracker } from '../services/FileInteractionTracker.js';
 import type { BaseTool } from '../tools/BaseTool.js';
+import { RunPersistenceError } from '../services/RunSupervisor.js';
 
 /**
  * Safe tools that can run concurrently
@@ -464,6 +465,7 @@ export class ToolOrchestrator {
         }
 
         if (settledResult.status === 'rejected') {
+          if (settledResult.reason instanceof RunPersistenceError) throw settledResult.reason;
           // Check if this is a permission denial
           if (isPermissionDeniedError(settledResult.reason)) {
             logger.debug('[TOOL_ORCHESTRATOR] Permission denied in concurrent execution, stopping group');
@@ -614,6 +616,15 @@ export class ToolOrchestrator {
       // Return results (filter out any nulls that shouldn't exist but TypeScript requires)
       return successfulResults.filter((r): r is ToolResult => r !== null);
     } catch (error) {
+      if (error instanceof RunPersistenceError) {
+        this.emitEvent({
+          id: groupId,
+          type: ActivityEventType.TOOL_CALL_END,
+          timestamp: Date.now(),
+          parentId: this.parentCallId,
+          data: { groupExecution: true, toolCount: toolCalls.length, success: false, error: error.message },
+        });
+      }
       // Emit error event (with parent context if nested)
       this.emitEvent({
         id: groupId,
@@ -909,6 +920,7 @@ export class ToolOrchestrator {
     let validationFailed = false; // Track if validation failed (already emitted TOOL_CALL_END)
     let executionStartTime: number | undefined; // Track execution start time for session persistence
     let journaledEffect: ReturnType<BaseTool['effectFor']> | undefined;
+    let toolResultObserved = false;
     const scopedRegistry = this.agent.getScopedRegistry?.();
     const executionContext: ToolExecutionContext = {
       ...(scopedRegistry ? { registryScope: scopedRegistry } : {}),
@@ -1052,6 +1064,7 @@ export class ToolOrchestrator {
         this.agent.getAgentName(), // currentAgentName for tool-agent binding validation
         executionContext
       );
+      toolResultObserved = true;
 
       if (journaledEffect) {
         const outcome = tool?.effectOutcomeFor(args, result)
@@ -1102,6 +1115,13 @@ export class ToolOrchestrator {
         }
       }
     } catch (error) {
+      // A journal failure is an execution-infrastructure fault, not evidence
+      // that the tool failed. Never reclassify an observed effect or attempt
+      // another journal write through the same failed persistence boundary.
+      if (error instanceof RunPersistenceError) {
+        if (!toolResultObserved) result = createStructuredError(error.message, 'system_error', toolName, args);
+        throw error;
+      }
       // Automatic policy denials are ordinary model-visible tool results. They
       // do not interrupt the turn: the next model response can choose a safe
       // alternative without waiting for a user.
