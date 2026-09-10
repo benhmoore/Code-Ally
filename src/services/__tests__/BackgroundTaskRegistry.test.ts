@@ -17,13 +17,28 @@ function fakeAgentManager(tasks: any[] = []) {
   } as any;
 }
 function fakeBashManager(processes: any[] = []) {
-  return { listProcesses: () => processes, acknowledgeCompletedResults: vi.fn() } as any;
+  return { listProcesses: () => processes, acknowledgeCompletedResults: vi.fn(), isResultAcknowledged: () => false } as any;
 }
 function fakeStream() {
   return { emit: vi.fn() } as any;
 }
 
 describe('BackgroundTaskRegistry', () => {
+  it('retains a required watcher result until delivery even if its wake preference is cleared', async () => {
+    const registry = new BackgroundTaskRegistry(fakeAgentManager(), fakeBashManager(), fakeStream());
+    const task = registry.createWatcher({ description: 'ready', intervalMs: 1, timeoutMs: 100, watched: true, check: async () => true });
+    const results = await registry.waitFor([task.id], { timeoutMs: 100, pollMs: 1 });
+    const now = vi.spyOn(Date, 'now').mockReturnValue(results[0].endTime! + 1000);
+    try {
+      registry.clearWatched(task.id);
+      registry.pruneWatchers(10);
+      expect(registry.get(task.id)?.resultPending).toBe(true);
+      registry.acknowledgeResults(results);
+      expect(registry.get(task.id)?.resultPending).toBe(false);
+      registry.pruneWatchers(10);
+      expect(registry.get(task.id)).toBeUndefined();
+    } finally { now.mockRestore(); await registry.shutdown(); }
+  });
   it.each([-3600000, 3600000])('uses elapsed time for waits and watchers across a %i ms wall-clock adjustment', async adjustment => {
     vi.useFakeTimers({ toFake: ['Date', 'performance', 'setTimeout', 'clearTimeout'] });
     const reg = new BackgroundTaskRegistry(fakeAgentManager([
@@ -58,6 +73,7 @@ describe('BackgroundTaskRegistry', () => {
     expect(registry.getResult('verification')?.result).toBe('verification passed');
     expect(() => manager.addProcess({ id: 'next', status: 'running' } as any)).toThrow();
     registry.acknowledgeResults(results);
+    expect(registry.get('verification')?.resultPending).toBe(false);
     manager.addProcess({ id: 'next', status: 'running' } as any);
     expect(manager.getProcess('verification')).toBeUndefined();
   });

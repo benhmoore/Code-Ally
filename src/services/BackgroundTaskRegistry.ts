@@ -47,6 +47,8 @@ export interface BackgroundTask {
   watched: boolean;
   /** Whether durable completion must wait for settlement and result delivery */
   blocksCompletion: boolean;
+  /** A settled result remains pending independently of auto-wake preferences. */
+  resultPending: boolean;
 }
 
 interface WatcherTask {
@@ -58,6 +60,7 @@ interface WatcherTask {
   result: string | null;
   error: string | null;
   blocksCompletion: boolean;
+  resultDelivered: boolean;
   cancel: () => void;
   settled: Promise<void>;
 }
@@ -133,6 +136,7 @@ export class BackgroundTaskRegistry {
         error: t.error,
         watched: this.watchedIds.has(t.id),
         blocksCompletion: true,
+        resultPending: t.status !== 'running' && !t.consumed,
       });
     }
 
@@ -148,6 +152,7 @@ export class BackgroundTaskRegistry {
         error: null,
         watched: this.watchedIds.has(p.id),
         blocksCompletion: p.blocksCompletion,
+        resultPending: p.status === 'exited' && !this.bashManager.isResultAcknowledged(p.id),
       });
     }
 
@@ -163,6 +168,7 @@ export class BackgroundTaskRegistry {
         error: w.error,
         watched: this.watchedIds.has(w.id),
         blocksCompletion: w.blocksCompletion,
+        resultPending: w.status !== 'running' && !w.resultDelivered,
       });
     }
 
@@ -199,7 +205,11 @@ export class BackgroundTaskRegistry {
     const settledShellIds = tasks.filter(task => task.kind === 'shell' && task.status !== 'running').map(task => task.id);
     if (settledShellIds.length) this.bashManager.acknowledgeCompletedResults(settledShellIds);
     for (const task of tasks) {
-      if (task.status !== 'running') this.clearWatched(task.id);
+      if (task.status !== 'running') {
+        const watcher = this.watchers.get(task.id);
+        if (watcher) watcher.resultDelivered = true;
+        this.clearWatched(task.id);
+      }
     }
   }
 
@@ -275,6 +285,7 @@ export class BackgroundTaskRegistry {
       result: null,
       error: null,
       blocksCompletion: spec.watched,
+      resultDelivered: false,
       cancel: () => { cancelled = true; controller.abort(); },
       settled,
     };
@@ -342,8 +353,10 @@ export class BackgroundTaskRegistry {
   pruneWatchers(retentionMs: number): void {
     const now = Date.now();
     for (const [id, w] of this.watchers.entries()) {
-      if (w.status !== 'running' && w.endTime != null && now - w.endTime > retentionMs) {
+      if (w.status !== 'running' && (!w.blocksCompletion || w.resultDelivered)
+        && w.endTime != null && now - w.endTime > retentionMs) {
         this.watchers.delete(id);
+        this.watchedIds.delete(id);
       }
     }
   }

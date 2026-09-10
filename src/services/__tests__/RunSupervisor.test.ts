@@ -175,12 +175,13 @@ describe('RunSupervisor', () => {
     expect(completion.blockers.join(' ')).toContain('background dependency');
   });
 
-  it('refuses completion while a settled watched result awaits delivery', async () => {
+  it.each([false, true])('refuses completion while a settled result awaits delivery (watched=%s)', async watched => {
+    let resultPending = true;
     ServiceRegistry.getInstance().registerInstance('background_task_registry', {
       list: () => [{
         id: 'agent-review', kind: 'agent', label: 'review', status: 'done',
-        startTime: 1, endTime: 2, result: 'findings', error: null, watched: true,
-        blocksCompletion: true,
+        startTime: 1, endTime: 2, result: 'findings', error: null, watched,
+        blocksCompletion: true, resultPending,
       }],
     } as any);
     ServiceRegistry.getInstance().registerInstance('background_agent_manager', {
@@ -193,6 +194,8 @@ describe('RunSupervisor', () => {
     const completion = await supervisor.claimComplete('done');
     expect(completion.accepted).toBe(false);
     expect(completion.blockers.join(' ')).toContain('await delivery');
+    resultPending = false;
+    expect((await supervisor.claimComplete('review incorporated')).accepted).toBe(true);
   });
 
   it('reconciles a crash-left running state without auto-resuming it', async () => {

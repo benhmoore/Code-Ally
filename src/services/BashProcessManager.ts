@@ -239,6 +239,10 @@ export class BashProcessManager {
     }
   }
 
+  isResultAcknowledged(id: string): boolean {
+    return this.acknowledgedResults.has(id);
+  }
+
   /**
    * Request process termination and mark it as stopping
    *
