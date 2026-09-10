@@ -28,7 +28,8 @@ export class WaitTool extends BaseTool {
   readonly hideOutput = false;
   readonly usageGuidance = `**When to use wait:**
 After spawning background agents/processes, call wait when your NEXT step depends
-on their results. Pass specific ids, or "all" to join everything still running.
+on their results. Pass specific ids, or all=true to join running work and collect
+completed results that have not yet been delivered.
 Returns results inline once they finish (or partial state on timeout).`;
 
   constructor(activityStream: ActivityStream) {
@@ -46,12 +47,12 @@ Returns results inline once they finish (or partial state on timeout).`;
           properties: {
             task_ids: {
               type: 'array',
-              description: 'Specific background task ids to wait for (agent-…, shell-…, watch-…). Omit with all=true to wait for everything running.',
+              description: 'Specific background task ids to wait for (agent-…, shell-…, watch-…). Omit with all=true to join running work and undelivered results.',
               items: { type: 'string' },
             },
             all: {
               type: 'boolean',
-              description: 'Wait for ALL currently-running background tasks. Ignored if task_ids is given.',
+              description: 'Join all background tasks currently running or awaiting result delivery. Already-delivered completions are excluded. Ignored if task_ids is given.',
             },
             timeout_seconds: {
               type: 'number',
@@ -133,7 +134,7 @@ Returns results inline once they finish (or partial state on timeout).`;
    */
   private renderResults(tasks: BackgroundTask[], aborted: boolean, forDisplay: boolean): string {
     if (tasks.length === 0) {
-      return 'No matching background tasks were running.';
+      return 'No background tasks require waiting or result delivery.';
     }
 
     const lines = tasks.map((t) => {

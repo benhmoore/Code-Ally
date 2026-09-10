@@ -24,6 +24,29 @@ function fakeStream() {
 }
 
 describe('BackgroundTaskRegistry', () => {
+  it('joins undelivered completions of every kind even when they finish before wait-all', async () => {
+    const agent = { id: 'review', agentType: 'review', mode: 'background', status: 'done',
+      startTime: 1, endTime: 2, result: 'review findings', error: null, consumed: false };
+    const agents = fakeAgentManager([agent]);
+    agents.acknowledgeCompletedResults.mockImplementation(() => { agent.consumed = true; });
+    const shells = new BashProcessManager(1);
+    const outputBuffer = new CircularBuffer();
+    outputBuffer.append('verification passed');
+    shells.addProcess({ id: 'verification', status: 'exited', exitCode: 0, exitSignal: null,
+      startTime: 1, exitTime: 2, blocksCompletion: true, outputBuffer } as any);
+    const registry = new BackgroundTaskRegistry(agents, shells, fakeStream());
+    const watcher = registry.createWatcher({ description: 'ready', intervalMs: 1,
+      timeoutMs: 100, watched: true, check: async () => true });
+    try {
+      await registry.waitFor([watcher.id], { timeoutMs: 100, pollMs: 1 });
+      const results = await registry.waitFor('all', { timeoutMs: 100 });
+      expect(results.map(task => task.id).sort()).toEqual(['review', 'verification', watcher.id].sort());
+      expect(results.find(task => task.id === 'verification')?.result).toBe('verification passed');
+      registry.acknowledgeResults(results);
+      expect(await registry.waitFor('all', { timeoutMs: 100 })).toEqual([]);
+    } finally { await registry.shutdown(); }
+  });
+
   it.each(['cancel', 'deadline', 'check timeout'] as const)('does not accept a late predicate success after %s', async boundary => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'performance'] });
     const stream = fakeStream();

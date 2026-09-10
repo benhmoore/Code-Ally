@@ -245,7 +245,7 @@ export class BackgroundTaskRegistry {
     const deadline = performance.now() + opts.timeoutMs;
 
     const ids = [...new Set(target === 'all'
-      ? this.list().filter(t => t.status === 'running').map(t => t.id)
+      ? this.list().filter(t => t.status === 'running' || t.resultPending).map(t => t.id)
       : target)];
     while (true) {
       const tasks: BackgroundTask[] = [];
