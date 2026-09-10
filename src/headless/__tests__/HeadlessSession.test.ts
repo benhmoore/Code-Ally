@@ -8,8 +8,51 @@ import { ActivityEventType, type Config, type Message } from '@shared/index.js';
 import type { SessionManager } from '@services/SessionManager.js';
 import type { CLIOptions } from '@cli/ArgumentParser.js';
 import type { RunOutcome } from '@services/RunSupervisor.js';
+import { ServiceRegistry } from '@services/ServiceRegistry.js';
+import { StructuredOutputTool, STRUCTURED_OUTPUT_TOOL } from '@tools/StructuredOutputTool.js';
+import type { ParameterSchema } from '@shared/index.js';
 import { HeadlessSession, assertSafeSessionId } from '../HeadlessSession.js';
 import type { WireEvent } from '../wire.js';
+
+/** The verdict-shaped schema a triage caller asks for. */
+const VERDICT_SCHEMA: ParameterSchema = {
+  type: 'object',
+  required: ['results'],
+  properties: {
+    results: {
+      type: 'array',
+      items: {
+        type: 'object',
+        required: ['fingerprint', 'outcome', 'summary'],
+        properties: {
+          fingerprint: { type: 'string' },
+          outcome: { enum: ['fixed', 'dismissed', 'escalated', 'skipped', 'resolved'] },
+          repo: { type: 'string' },
+          branch: { type: 'string' },
+          commit: { type: 'string' },
+          summary: { type: 'string' },
+        },
+      },
+    },
+  },
+};
+
+const VERDICT = {
+  results: [{ fingerprint: 'abc123', outcome: 'fixed', summary: 'Patched the null guard.' }],
+};
+
+/** A model reply that calls the structured-output tool with `payload`. */
+function structuredCall(payload: unknown): LLMResponse {
+  return {
+    content: '',
+    tool_calls: [{
+      id: 'call-structured',
+      type: 'function',
+      function: { name: STRUCTURED_OUTPUT_TOOL, arguments: payload as Record<string, any> },
+    }],
+    interrupted: false,
+  };
+}
 
 const CONFIG = {
   model: 'test-model',
@@ -277,6 +320,60 @@ describe('HeadlessSession', () => {
     await headless.run();
 
     expect(out.events()[0]).toMatchObject({ structured_output: { verdict: 'ok' } });
+  });
+
+  describe('structured output', () => {
+    const REMINDER = `Record your final answer with the ${STRUCTURED_OUTPUT_TOOL} tool before ending your turn.`;
+
+    beforeEach(async () => {
+      await agent.cleanup();
+      agent = new Agent(modelClient, new ToolManager([
+        new StructuredOutputTool(activityStream, VERDICT_SCHEMA),
+      ]), activityStream, {
+        config: CONFIG,
+        isSpecializedAgent: false,
+        isOnceMode: true,
+        requirements: {
+          required_tools_all: [STRUCTURED_OUTPUT_TOOL],
+          reminder_message: REMINDER,
+        },
+      });
+    });
+
+    /** Wire the sink the way the composition root does. */
+    function sinkFor(headless: HeadlessSession): HeadlessSession {
+      ServiceRegistry.getInstance().registerInstance('structured_output_sink', {
+        set: value => headless.setStructuredOutput(value),
+      });
+      return headless;
+    }
+
+    it('carries the payload the model recorded onto the result event', async () => {
+      const out = collector();
+      replies = [async () => structuredCall(VERDICT), 'Recorded.'];
+
+      const headless = sinkFor(session({ once: 'triage', outputFormat: 'json' }, { stdout: out.stream }));
+      await headless.run();
+
+      expect(out.events()[0]).toMatchObject({
+        type: 'result',
+        subtype: 'success',
+        structured_output: VERDICT,
+      });
+    });
+
+    it('reminds a model that ends its turn without recording anything', async () => {
+      const out = collector();
+      replies = ['Nothing to report.', async () => structuredCall(VERDICT), 'Recorded.'];
+
+      const headless = sinkFor(session({ once: 'triage', outputFormat: 'json' }, { stdout: out.stream }));
+      await headless.run();
+
+      const sent = vi.mocked(modelClient.send).mock.calls;
+      expect(sent.length).toBe(3);
+      expect(JSON.stringify(sent[1]![0])).toContain(REMINDER);
+      expect(out.events()[0]).toMatchObject({ structured_output: VERDICT });
+    });
   });
 
   it('keeps stdout free of everything but wire events', async () => {

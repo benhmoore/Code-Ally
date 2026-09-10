@@ -10,6 +10,7 @@ Run Code Ally unattended and read its output as JSON.
 | `--output-format` | `text`, `json`, `stream-json` | `text` | What stdout carries. |
 | `--input-format` | `text`, `stream-json` | `text` | Where turns come from. |
 | `--session-id <id>` | safe file name | - | Create this run's session under a caller-chosen id. |
+| `--json-schema <schema>` | inline JSON or `@path` | - | Schema the final answer must satisfy. Needs a json output format. |
 
 `--session-id` is `--session <name>` with a caller-chosen name: same code path,
 plus a check that the id is a single safe file name of letters, digits, dot,
@@ -40,6 +41,25 @@ Every turn ends with exactly one `result`.
 - `outcome` is the run supervisor's typed outcome, untouched.
 - `structured_output` is present once a structured-output schema is in use.
 - `is_error` is true whenever `subtype` is not `success`.
+
+## Structured output
+
+`--json-schema <schema>` takes an object schema, inline or as `@path`. It
+requires `--output-format json` or `stream-json`; a schema that is malformed,
+unreadable, or not an object schema is a startup error.
+
+The schema becomes the parameters of a `structured-output` tool registered for
+that run only. The root agent must call it before its turn can end, so the
+final answer is a validated tool call rather than prose to parse. The payload
+appears as `structured_output` on the `result` event.
+
+Validation is exact: `enum`, nested objects with `required`, array `items`,
+`integer` against `number`, and `additionalProperties: false`. A rejected call
+returns a `validation_error` naming the JSON path, and the model retries.
+
+```bash
+ally --once "triage the open findings" --output-format json --json-schema @verdict.json
+```
 
 ## Stdin protocol
 
