@@ -23,6 +23,7 @@ import {
   type HookEvent,
   type ResolvedHookGroup,
   type ResolvedHooksConfig,
+  hookEventMap,
 } from './types.js';
 
 export interface LoadHooksConfigOptions {
@@ -92,7 +93,7 @@ export function normalizeHooksConfig(
     return result;
   }
 
-  for (const [event, groups] of Object.entries(raw as Record<string, unknown>)) {
+  for (const [event, groups] of Object.entries(hookEventMap(raw))) {
     if (!isHookEvent(event)) {
       logger.warn(`[HOOKS] Ignoring unknown hook event '${event}' from ${source}`);
       continue;

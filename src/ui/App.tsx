@@ -99,6 +99,9 @@ export interface AppProps {
 
   /** Called once startup services and any direct session resume are ready. */
   onInteractiveReady?: () => void;
+
+  /** One-off notices from session startup, shown with the header. */
+  startupNotices?: string[];
 }
 
 /**
@@ -123,6 +126,7 @@ const AppContentComponent: React.FC<{
   activeMcpCount?: number;
   totalMcpCount?: number;
   onInteractiveReady?: () => void;
+  startupNotices?: string[];
 }> = ({
   foregroundAgent,
   foregroundAgentId,
@@ -138,6 +142,7 @@ const AppContentComponent: React.FC<{
   activeMcpCount,
   totalMcpCount,
   onInteractiveReady,
+  startupNotices,
 }) => {
   const { state, actions } = useAppContext();
   const activityStream = useActivityStreamContext();
@@ -630,6 +635,7 @@ const AppContentComponent: React.FC<{
           activePluginCount={activePluginCount}
           totalPluginCount={totalPluginCount}
           activeMcpCount={activeMcpCount}
+          startupNotices={startupNotices}
           totalMcpCount={totalMcpCount}
           currentAgent={displayedAgentName}
           />
@@ -1227,6 +1233,7 @@ export const App: React.FC<AppProps> = ({
   activeMcpCount,
   totalMcpCount,
   onInteractiveReady,
+  startupNotices,
 }) => {
   // Create activity stream if not provided
   const streamRef = useRef(activityStream || new ActivityStream());
@@ -1252,6 +1259,7 @@ export const App: React.FC<AppProps> = ({
             activeMcpCount={activeMcpCount}
             totalMcpCount={totalMcpCount}
             onInteractiveReady={onInteractiveReady}
+            startupNotices={startupNotices}
           />
         </AppProvider>
       </ActivityProvider>

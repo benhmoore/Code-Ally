@@ -70,6 +70,9 @@ interface ConversationViewProps {
   activeMcpCount?: number;
   /** Total number of configured MCP servers */
   totalMcpCount?: number;
+
+  /** One-off notices from session startup, shown with the header. */
+  startupNotices?: string[];
   /** Current agent name (to prefix non-ally responses) */
   currentAgent?: string;
 }
@@ -329,6 +332,7 @@ const ConversationViewComponent: React.FC<ConversationViewProps> = ({
   totalPluginCount,
   activeMcpCount,
   totalMcpCount,
+  startupNotices = [],
   currentAgent,
 }) => {
   const terminalWidth = useContentWidth();
@@ -639,6 +643,9 @@ const ConversationViewComponent: React.FC<ConversationViewProps> = ({
               {(totalMcpCount ?? 0) > 0 ? `${activeMcpCount ?? 0}/${totalMcpCount} MCP` : ''}
             </Text>
           )}
+          {startupNotices.map((notice, index) => (
+            <Text key={`startup-notice-${index}`} dimColor>{notice}</Text>
+          ))}
         </Box>
       )}
 

@@ -478,6 +478,10 @@ name.
 }
 ```
 
+A plugin hooks file may nest its events under a top-level `hooks` key, which is
+the shape Claude Code plugins use, or give the event map directly. Both load, so
+one file serves either host.
+
 `matcher` is a case-insensitive regex over the tool name, which is normalized
 first, so `Bash` and `bash` both match `bash` and `Edit` matches `apply-patch`.
 A missing matcher, or `*`, matches every call. `timeout` is in seconds and
@@ -526,10 +530,10 @@ block. `updatedInput` replaces the tool arguments before execution. For
 as one **Session context:** block.
 
 A `SessionStart` hook runs before the terminal UI exists, so its
-`systemMessage` is held and shown once the UI accepts input. A run that opens
-the setup wizard, the model selector or the session picker never reaches that
-point and shows no startup message. In a headless run it goes to stderr, which
-keeps stdout carrying only wire events.
+`systemMessage` is rendered with the startup header rather than as a
+conversation event, dimmed and below the plugin and MCP counts. It shows only
+on the header, so a session that already has messages does not repeat it. In a
+headless run it goes to stderr, which keeps stdout carrying only wire events.
 
 ---
 

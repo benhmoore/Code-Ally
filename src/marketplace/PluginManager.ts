@@ -27,7 +27,7 @@ import type {
   PluginInstallResult,
   PluginUninstallResult,
 } from './types.js';
-import type { HooksConfig } from '../hooks/types.js';
+import { hookEventMap, type HooksConfig } from '../hooks/types.js';
 import type { IService } from '../types/index.js';
 
 export class PluginManager implements IService {
@@ -381,7 +381,7 @@ export class PluginManager implements IService {
     const config = await this.readPluginJson<HooksConfig>(join(pluginPath, 'hooks', 'hooks.json'));
     if (!config) return null;
 
-    for (const groups of Object.values(config)) {
+    for (const groups of Object.values(hookEventMap(config))) {
       if (!Array.isArray(groups)) continue;
       for (const group of groups) {
         if (!Array.isArray(group?.hooks)) continue;

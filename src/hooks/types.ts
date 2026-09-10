@@ -111,3 +111,20 @@ export const PROCEED: HookVerdict = Object.freeze({
   additionalContext: Object.freeze([]) as unknown as string[],
   systemMessages: Object.freeze([]) as unknown as string[],
 });
+
+/**
+ * The event map inside a hooks document.
+ *
+ * A plugin hooks file written for Claude Code nests its events under a `hooks`
+ * key; a settings or profile block is already the event map. Both shapes are
+ * accepted, so one file serves either host, and every reader resolves them
+ * here rather than repeating the check.
+ */
+export function hookEventMap(raw: unknown): Record<string, unknown> {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {};
+  const record = raw as Record<string, unknown>;
+  const nested = record.hooks;
+  return nested && typeof nested === 'object' && !Array.isArray(nested)
+    ? (nested as Record<string, unknown>)
+    : record;
+}

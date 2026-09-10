@@ -1464,7 +1464,7 @@ async function main() {
       ? await openHeadlessSession(options, sessionManager)
       : null;
 
-    /** Interactive SessionStart messages, shown once the UI accepts input. */
+    /** Interactive SessionStart messages, rendered with the startup header. */
     const startupStatusMessages: string[] = [];
 
     // Hooks. Registered even when nothing declares one, so call sites can ask
@@ -1496,9 +1496,9 @@ async function main() {
       } else {
         for (const entry of verdict.additionalContext) sessionContext.add(entry);
         for (const message of verdict.systemMessages) {
-          // The terminal UI has not mounted yet and the activity stream does
-          // not replay to late subscribers, so an interactive message is held
-          // until the UI can show it. See announceStartupMessages below.
+          // Startup notices are header chrome, not conversation events, so
+          // they reach the UI as a prop rather than through the activity
+          // stream, which has no subscriber this early and paints red.
           if (isHeadlessRun(options)) process.stderr.write(`${message}\n`);
           else startupStatusMessages.push(message);
         }
@@ -1688,20 +1688,6 @@ async function main() {
     // IMPORTANT: exitOnCtrlC must be false to allow custom Ctrl+C handling in InputPrompt
     inkUIStarted = true;
 
-    // Held SessionStart messages, flushed when the UI can display them. Called
-    // once, from onInteractiveReady.
-    const announceStartupMessages = (): void => {
-      for (const message of startupStatusMessages) {
-        activityStream.emit({
-          id: `hook-session-start-${generateShortId()}`,
-          type: ActivityEventType.STATUS_MESSAGE,
-          timestamp: Date.now(),
-          data: { message },
-        });
-      }
-      startupStatusMessages.length = 0;
-    };
-
     // Set default terminal title
     const { setTerminalTitle } = await import('./utils/terminal.js');
     setTerminalTitle('New Session');
@@ -1719,13 +1705,14 @@ async function main() {
         totalPluginCount: pluginCount,
         activeMcpCount,
         totalMcpCount,
-        onInteractiveReady: () => {
-          announceStartupMessages();
-          if (!options.readyFile) return;
-          void atomicWriteFile(options.readyFile, `${process.pid}\n`).catch(error => {
-            logger.error(`[CLI] Could not write interactive readiness marker ${options.readyFile}:`, error);
-          });
-        },
+        startupNotices: startupStatusMessages,
+        onInteractiveReady: options.readyFile
+          ? () => {
+              void atomicWriteFile(options.readyFile!, `${process.pid}\n`).catch(error => {
+                logger.error(`[CLI] Could not write interactive readiness marker ${options.readyFile}:`, error);
+              });
+            }
+          : undefined,
       }),
       {
         exitOnCtrlC: false,

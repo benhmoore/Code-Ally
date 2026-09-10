@@ -125,6 +125,28 @@ describe('normalizeHooksConfig', () => {
     expect(config.NotAnEvent as unknown).toBeUndefined();
   });
 
+  it('accepts a plugin file that nests events under a hooks key', () => {
+    // The shape Claude Code plugins use, so one hooks.json serves both hosts.
+    const config = normalizeHooksConfig(
+      {
+        hooks: {
+          SessionStart: [{ hooks: [{ type: 'command', command: 'brief --hook', timeout: 10 }] }],
+        },
+      },
+      'plugin:guardrails',
+    );
+    expect(config.SessionStart).toHaveLength(1);
+    expect(config.SessionStart?.[0]?.hooks[0]).toMatchObject({ command: 'brief --hook', timeout: 10 });
+  });
+
+  it('still reads an event map given directly', () => {
+    const config = normalizeHooksConfig(
+      { SessionStart: [{ hooks: [{ type: 'command', command: 'direct' }] }] },
+      'settings',
+    );
+    expect(config.SessionStart?.[0]?.hooks[0]?.command).toBe('direct');
+  });
+
   it('ignores a hooks value that is not an object', () => {
     expect(normalizeHooksConfig(['nope'], 'profile')).toEqual({});
     expect(normalizeHooksConfig(undefined, 'profile')).toEqual({});
