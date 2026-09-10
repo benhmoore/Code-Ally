@@ -119,6 +119,20 @@ function reassertTerminalState(): void {
  */
 let cleanExitPromise: Promise<void> | undefined;
 let requestedExitCode = 0;
+/** True once the registry holds services, so an exit has something to tear down. */
+let servicesRegistered = false;
+
+/**
+ * Exit path for a fatal error or a signal.
+ *
+ * Cleanup is not the interactive UI's business: a headless run needs the same
+ * SessionEnd hook and the same stdout drain, and stdout is a pipe there, so a
+ * bare process.exit can truncate the last event the consumer is reading.
+ */
+async function abortExit(code: number): Promise<void> {
+  if (!servicesRegistered) process.exit(code);
+  await cleanExit(code);
+}
 
 /** How long exit waits on SessionEnd hooks before leaving them behind. */
 const SESSION_END_HOOK_BUDGET_MS = 2000;
@@ -1052,6 +1066,7 @@ async function main() {
     const registry = ServiceRegistry.getInstance();
     registry.registerInstance('config_manager', configManager);
     registry.registerInstance('session_manager', sessionManager);
+    servicesRegistered = true;
 
     // Initialize autonomous project memory (stored alongside sessions under ~/.ally)
     const memoryService = new MemoryService();
@@ -1697,11 +1712,7 @@ async function main() {
   } catch (error) {
     // Critical: Reset terminal even on fatal errors (only if UI was started)
     console.error('Fatal error:', error);
-    if (inkUIStarted) {
-      await cleanExit(1);
-    } else {
-      process.exit(1);
-    }
+    await abortExit(1);
   }
 }
 
@@ -1714,19 +1725,11 @@ process.on('exit', () => {
 });
 
 process.on('SIGINT', () => {
-  if (inkUIStarted) {
-    cleanExit(130).catch(() => process.exit(130)); // Standard exit code for SIGINT
-  } else {
-    process.exit(130);
-  }
+  abortExit(130).catch(() => process.exit(130)); // Standard exit code for SIGINT
 });
 
 process.on('SIGTERM', () => {
-  if (inkUIStarted) {
-    cleanExit(143).catch(() => process.exit(143)); // Standard exit code for SIGTERM
-  } else {
-    process.exit(143);
-  }
+  abortExit(143).catch(() => process.exit(143)); // Standard exit code for SIGTERM
 });
 
 // Re-assert terminal state after process resume (Ctrl+Z then fg)
@@ -1738,20 +1741,12 @@ process.on('SIGCONT', () => {
 
 process.on('uncaughtException', (error) => {
   console.error('Uncaught exception:', error);
-  if (inkUIStarted) {
-    void cleanExit(1);
-  } else {
-    process.exit(1);
-  }
+  abortExit(1).catch(() => process.exit(1));
 });
 
 process.on('unhandledRejection', (reason) => {
   console.error('Unhandled rejection:', reason);
-  if (inkUIStarted) {
-    void cleanExit(1);
-  } else {
-    process.exit(1);
-  }
+  abortExit(1).catch(() => process.exit(1));
 });
 
 main();
