@@ -81,6 +81,9 @@ export class AgentPoolService implements IService {
   private nextAgentId: number = 0;
   // Track agents currently being acquired to prevent race conditions
   private acquiringAgents: Set<string> = new Set();
+  private readonly retirements = new Map<string, Promise<Error | undefined>>();
+  private clearing?: Promise<void>;
+  private shutdownRequested = false;
 
   /**
    * Create a new AgentPoolService
@@ -134,22 +137,8 @@ export class AgentPoolService implements IService {
    * Called automatically by ServiceRegistry during shutdown.
    */
   async cleanup(): Promise<void> {
-    logger.debug('[AGENT_POOL] Cleanup started');
-
-    // Cleanup all agents in the pool
-    const cleanupPromises: Promise<void>[] = [];
-    for (const [agentId, metadata] of this.pool.entries()) {
-      cleanupPromises.push(
-        metadata.agent.cleanup().catch(error => {
-          logger.error(`[AGENT_POOL] Error cleaning up agent ${agentId}:`, error);
-        })
-      );
-    }
-
-    await Promise.all(cleanupPromises);
-    this.pool.clear();
-
-    logger.debug('[AGENT_POOL] Cleanup completed');
+    this.shutdownRequested = true;
+    await this.clearPool();
   }
 
   /**
@@ -170,6 +159,11 @@ export class AgentPoolService implements IService {
    * @returns PooledAgent with release function
    */
   async acquire(agentConfig: AgentConfig, customToolManager?: ToolManager, customModelClient?: ModelClient): Promise<PooledAgent> {
+    this.assertAdmissionOpen();
+    if (this.retirements.size) {
+      await this.drainRetirements();
+      this.assertAdmissionOpen();
+    }
     // Compute early: agents with initial messages are "fresh" (one-off, not pooled for reuse)
     const shouldCreateFresh = agentConfig.initialMessages && agentConfig.initialMessages.length > 0;
 
@@ -253,6 +247,8 @@ export class AgentPoolService implements IService {
     // Check if pool is at capacity and evict LRU if needed
     if (this.pool.size >= this.config.maxPoolSize) {
       this.evictLRU();
+      await this.drainRetirements();
+      this.assertAdmissionOpen();
     }
 
     const agentId = this.generateAgentId();
@@ -443,10 +439,15 @@ export class AgentPoolService implements IService {
 
     this.pool.delete(agentId);
 
-    // Trigger cleanup but don't wait for it
-    metadata.agent.cleanup().catch(error => {
-      logger.error(`[AGENT_POOL] Error cleaning up evicted agent ${agentId}:`, error);
-    });
+    const retirement = Promise.resolve().then(() => metadata.agent.cleanup()).then(
+      () => { this.retirements.delete(agentId); return undefined; },
+      cause => {
+        const error = new Error(`Cleanup failed for pooled agent ${agentId}`, { cause });
+        logger.error(error.message, cause);
+        return error;
+      },
+    );
+    this.retirements.set(agentId, retirement);
   }
 
   /**
@@ -513,23 +514,23 @@ export class AgentPoolService implements IService {
    * Removes and cleans up all agents, including those in use.
    * Use with caution - may interrupt active operations.
    */
-  async clearPool(): Promise<void> {
-    logger.debug('[AGENT_POOL] Clearing pool');
+  clearPool(): Promise<void> {
+    this.clearing ??= Promise.resolve().then(async () => {
+      for (const agentId of this.pool.keys()) this.evictAgent(agentId);
+      await this.drainRetirements();
+      this.clearing = undefined;
+    });
+    return this.clearing;
+  }
 
-    const cleanupPromises: Promise<void>[] = [];
-    for (const [agentId, metadata] of this.pool.entries()) {
-      cleanupPromises.push(
-        metadata.agent.cleanup().catch(error => {
-          logger.error(`[AGENT_POOL] Error cleaning up agent ${agentId}:`, error);
-        })
-      );
-    }
+  private assertAdmissionOpen(): void {
+    if (this.shutdownRequested || this.clearing) throw new Error('Agent pool is clearing or shutting down');
+  }
 
-    await Promise.all(cleanupPromises);
-    this.pool.clear();
-    this.nextAgentId = 0;
-
-    logger.debug('[AGENT_POOL] Pool cleared');
+  private async drainRetirements(): Promise<void> {
+    const results = await Promise.all(this.retirements.values());
+    const failures = results.filter((error): error is Error => error !== undefined);
+    if (failures.length) throw new AggregateError(failures, 'Pooled agent cleanup failed');
   }
 
   /**

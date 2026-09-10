@@ -500,6 +500,36 @@ describe('AgentPoolService', () => {
   });
 
   describe('cleanup', () => {
+    it('preserves eviction cleanup failure and does not retry disposal or admit replacements', async () => {
+      const failingPool = new AgentPoolService(mockModelClient, mockToolManager, mockActivityStream);
+      const lease = await failingPool.acquire({ isSpecializedAgent: true });
+      const cause = new Error('disposal failed');
+      const disposal = vi.spyOn(lease.agent, 'cleanup').mockRejectedValue(cause);
+      lease.release();
+      await failingPool.removeAgent(lease.agentId);
+      await expect(failingPool.acquire({ isSpecializedAgent: true })).rejects.toThrow('Pooled agent cleanup failed');
+      await expect(failingPool.cleanup()).rejects.toThrow('Pooled agent cleanup failed');
+      await expect(failingPool.cleanup()).rejects.toThrow('Pooled agent cleanup failed');
+      expect(disposal).toHaveBeenCalledOnce();
+    });
+
+    it('awaits disposal of an agent already evicted from the reusable pool', async () => {
+      const lease = await pool.acquire({ isSpecializedAgent: true });
+      let finish!: () => void;
+      const disposal = vi.spyOn(lease.agent, 'cleanup').mockImplementation(() => new Promise<void>(resolve => { finish = resolve; }));
+      lease.release();
+      await pool.removeAgent(lease.agentId);
+      expect(pool.hasAgent(lease.agentId)).toBe(false);
+      let settled = false;
+      const closing = pool.cleanup().then(() => { settled = true; });
+      await Promise.resolve();
+      expect(settled).toBe(false);
+      await expect(pool.acquire({ isSpecializedAgent: true })).rejects.toThrow('shutting down');
+      finish();
+      await closing;
+      expect(disposal).toHaveBeenCalledOnce();
+    });
+
     it('should cleanup all agents in pool', async () => {
       const config: AgentConfig = { isSpecializedAgent: true };
 
@@ -583,7 +613,7 @@ describe('AgentPoolService', () => {
       expect(pool.getPoolStats().totalAgents).toBe(0);
     });
 
-    it('should reset agent ID counter', async () => {
+    it('does not reuse agent sequence identities after clearing', async () => {
       const config: AgentConfig = { isSpecializedAgent: true };
 
       const result1 = await pool.acquire(config);
@@ -591,9 +621,8 @@ describe('AgentPoolService', () => {
 
       const result2 = await pool.acquire(config);
 
-      // After clear, counter should reset
-      // Both should start with pool-agent-{timestamp}-0
-      expect(result2.agentId).toMatch(/-0$/);
+      expect(result2.agentId).toMatch(/-1$/);
+      expect(result2.agentId).not.toBe(result1.agentId);
 
       result2.release();
     });
