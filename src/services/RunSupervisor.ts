@@ -126,9 +126,19 @@ export class RunSupervisor {
     });
   }
 
-  getActiveRun(): RunSnapshot | undefined { return this.active?.state ? structuredClone(this.active.state.snapshot) : undefined; }
-  isRunning(): boolean { return !!this.active?.state && this.isStateRunning(this.active.state); }
-  getOutcome(): RunOutcome | undefined { return this.active?.state?.snapshot.outcome ? structuredClone(this.active.state.snapshot.outcome) : undefined; }
+  /**
+   * The run this process still speaks for.
+   *
+   * A retired run is kept only so its outstanding executions can finish and
+   * their lock be released. It is finished business, so reading its snapshot
+   * or its outcome as the current run would report a closed run's verdict as
+   * this run's own.
+   */
+  private get current(): OwnedRun | undefined { return this.active?.retired ? undefined : this.active; }
+
+  getActiveRun(): RunSnapshot | undefined { return this.current?.state ? structuredClone(this.current.state.snapshot) : undefined; }
+  isRunning(): boolean { return !!this.current?.state && this.isStateRunning(this.current.state); }
+  getOutcome(): RunOutcome | undefined { return this.current?.state?.snapshot.outcome ? structuredClone(this.current.state.snapshot.outcome) : undefined; }
 
   async startRun(objective: string, policy: RunPolicy): Promise<RunSnapshot> {
     return this.serialize(async () => {

@@ -315,6 +315,34 @@ describe('RunSupervisor', () => {
     expect(attempts.filter(result => result.status === 'rejected')).toHaveLength(1);
   });
 
+  it('stops reporting a retired run as the current one', async () => {
+    const supervisor = createSupervisor();
+    await supervisor.initialize();
+    await supervisor.startRun('finish and shut down', policy);
+    expect((await supervisor.claimComplete('verified')).accepted).toBe(true);
+    expect(supervisor.getOutcome()).toEqual({ kind: 'completed', summary: 'verified' });
+
+    await supervisor.interruptForShutdown('app closed');
+
+    expect(supervisor.getOutcome()).toBeUndefined();
+    expect(supervisor.getActiveRun()).toBeUndefined();
+    expect(supervisor.isRunning()).toBe(false);
+  });
+
+  it('keeps a retired run readable to its outstanding execution and no further', async () => {
+    const supervisor = createSupervisor();
+    await supervisor.initialize();
+    await supervisor.startRun('retire mid execution', policy);
+    const execution = supervisor.acquireExecution()!;
+
+    await supervisor.interruptForShutdown('app closed');
+
+    expect(supervisor.getActiveRun()).toBeUndefined();
+    expect(() => supervisor.acquireExecution()).toThrow(/no longer permits/);
+    await execution.release();
+    expect(supervisor.getOutcome()).toBeUndefined();
+  });
+
   it('serializes concurrent starts within one supervisor', async () => {
     const supervisor = createSupervisor();
     await supervisor.initialize();
