@@ -87,6 +87,17 @@ describe('SessionManager', () => {
   });
 
   describe('createSession', () => {
+    it('refuses duplicate creation without replacing history or changing the current session', async () => {
+      await sessionManager.createSession('original');
+      await sessionManager.saveSession('original', [{ role: 'user', content: 'retain history' }]);
+      await sessionManager.createSession('current');
+      const originalPath = join(tempDir, 'original.json');
+      const before = await fs.readFile(originalPath, 'utf8');
+      await expect(sessionManager.createSession('original')).rejects.toMatchObject({ code: 'EEXIST' });
+      expect(await fs.readFile(originalPath, 'utf8')).toBe(before);
+      expect(sessionManager.getCurrentSession()).toBe('current');
+    });
+
     it('should create a new session with auto-generated name', async () => {
       const sessionName = await sessionManager.createSession();
 

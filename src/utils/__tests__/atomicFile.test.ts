@@ -25,6 +25,19 @@ describe('atomicWriteFile', () => {
     expect(await fs.readFile(file, 'utf-8')).toBe('hello');
   });
 
+  it('publishes exactly one concurrent exclusive create without overwriting the winner', async () => {
+    const file = path.join(dir, 'exclusive.txt');
+    const contents = ['first', 'second', 'third'];
+    const results = await Promise.allSettled(contents.map(content => atomicWriteFile(file, content, { overwrite: false })));
+    expect(results.filter(result => result.status === 'fulfilled')).toHaveLength(1);
+    const winner = results.findIndex(result => result.status === 'fulfilled');
+    expect(await fs.readFile(file, 'utf8')).toBe(contents[winner]);
+    for (const result of results) {
+      if (result.status === 'rejected') expect(result.reason.code).toBe('EEXIST');
+    }
+    expect(await fs.readdir(dir)).toEqual(['exclusive.txt']);
+  });
+
   it('replaces existing content', async () => {
     const file = path.join(dir, 'existing.txt');
     await fs.writeFile(file, 'old', 'utf-8');

@@ -125,4 +125,20 @@ describe('SessionManager transcript segments', () => {
     expect(await fs.readFile(manifestPath, 'utf8')).toBe(before);
     expect(await fs.readFile(segmentPath, 'utf8')).toBe(damaged);
   });
+
+  it('permits concurrent identical segment publication without replacing content', async () => {
+    const first = new SessionManager({ sessionsDir: dir });
+    const second = new SessionManager({ sessionsDir: dir });
+    await first.initialize();
+    await first.createSession('shared-content');
+    const transcript: Message[] = Array.from({ length: 64 }, (_, index) => ({
+      id: `shared-${index}`, role: 'user', content: String(index),
+    }));
+    expect(await Promise.all([first, second].map(manager => manager.saveSession('shared-content', transcript)))).toEqual([true, true]);
+    const reloaded = new SessionManager({ sessionsDir: dir });
+    expect((await reloaded.loadSession('shared-content'))?.transcript).toEqual(transcript);
+    const files = await fs.readdir(join(dir, 'shared-content', 'transcript-segments'));
+    expect(files).toHaveLength(1);
+    expect(files[0]).not.toContain('.tmp.');
+  });
 });

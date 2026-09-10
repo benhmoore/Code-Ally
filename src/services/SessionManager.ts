@@ -290,8 +290,15 @@ export class SessionManager implements IService {
       if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
       const segmentDir = join(this.getSessionDirectory(sessionName), 'transcript-segments');
       await fs.mkdir(segmentDir, { recursive: true });
-      await atomicWriteFile(join(segmentDir, `${ref.hash}.json`),
-        JSON.stringify({ schema_version: 1, hash: ref.hash, messages: snapshot }));
+      try {
+        await atomicWriteFile(join(segmentDir, `${ref.hash}.json`),
+          JSON.stringify({ schema_version: 1, hash: ref.hash, messages: snapshot }), { overwrite: false });
+      } catch (publicationError) {
+        if ((publicationError as NodeJS.ErrnoException).code !== 'EEXIST') throw publicationError;
+        // Another creator may have published after our read. Reuse only after
+        // verifying its bytes; never overwrite a racing or damaged publication.
+        await this.readTranscriptSegment(sessionName, ref);
+      }
     }
     return ref;
   }
@@ -380,7 +387,7 @@ export class SessionManager implements IService {
       active_plugins: [], // Initialize with empty array
     };
 
-    await this.saveSessionData(name, session);
+    await this.enqueueSessionOperation(name, () => this.writeSessionFile(name, session, false));
 
     // Set as current session BEFORE cleanup to protect it from deletion
     // This prevents a race condition where cleanup could delete the newly created session
@@ -586,24 +593,6 @@ export class SessionManager implements IService {
     return found;
   }
 
-  /**
-   * Save session data to disk atomically with write serialization
-   *
-   * Uses atomic write (temp file + rename) and pure promise chaining to serialize writes.
-   * This approach is truly atomic because:
-   * 1. We capture the existing write promise synchronously (no race window)
-   * 2. We chain our write to complete AFTER the previous one
-   * 3. We update the queue with our promise before any async operations begin
-   *
-   * No locks or busy-wait loops needed - just pure promise chaining.
-   *
-   * @param sessionName - Name of the session
-   * @param session - Complete session object
-   */
-  private async saveSessionData(sessionName: string, session: Session): Promise<void> {
-    await this.enqueueSessionOperation(sessionName, () => this.writeSessionFile(sessionName, session));
-  }
-
   /** Serialize an entire read-modify-write operation for one session. */
   private async mutateSession(
     sessionName: string,
@@ -713,11 +702,11 @@ export class SessionManager implements IService {
     }
   }
 
-  private async writeSessionFile(sessionName: string, session: Session): Promise<void> {
+  private async writeSessionFile(sessionName: string, session: Session, overwrite = true): Promise<void> {
     const sessionPath = this.getSessionPath(sessionName);
     const manifest = await this.externalizeTranscript(sessionName, session);
     const versionedManifest = stampVersion(manifest, SESSION_SCHEMA);
-    await atomicWriteFile(sessionPath, JSON.stringify(versionedManifest, null, 2));
+    await atomicWriteFile(sessionPath, JSON.stringify(versionedManifest, null, 2), { overwrite });
     // Only collect old chunks after the new manifest is durable.
     try {
       await this.pruneTranscriptSegments(sessionName, manifest.transcript_segments ?? []);
