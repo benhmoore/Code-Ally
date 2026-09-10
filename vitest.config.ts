@@ -10,6 +10,11 @@ export default defineConfig({
     // this is explicit setup rather than an env-var check inside PathSecurity.
     setupFiles: ['./vitest.setup.ts'],
 
+    // Agent worktrees hold whole checkouts of this repo. Without this the
+    // runner collects their tests too and reports another branch's state as
+    // this one's.
+    exclude: ['**/node_modules/**', '**/dist/**', '.claude/worktrees/**'],
+
     // Prevent resource leaks
     pool: 'forks',
     poolOptions: {

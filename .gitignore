@@ -47,3 +47,6 @@ logs/
 
 # Project-specific files
 ALLY.md
+
+# Agent worktrees
+.claude/worktrees/
