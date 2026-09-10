@@ -39,10 +39,16 @@ export class RunPersistenceError extends Error {
   }
 }
 
+/** Stable identity for one owned journal, independent of conversation selection. */
+interface OwnedRun {
+  readonly runId: string;
+  state?: RunState;
+  ownership?: FileOwnership;
+}
+
 /** Exclusive owner of a journal-authoritative objective. Startup never executes work. */
 export class RunSupervisor {
-  private state?: RunState;
-  private ownership?: FileOwnership;
+  private active?: OwnedRun;
   private transitions: Promise<unknown> = Promise.resolve();
   private persistenceFailure?: Error;
 
@@ -106,22 +112,20 @@ export class RunSupervisor {
         catch (cause) { throw new Error(`Cannot resume run ${runId}: journal recovery failed`, { cause }); }
         if (state.snapshot.status !== 'interrupted') throw new Error(`Run ${runId} is ${state.snapshot.status}, not interrupted`);
         await this.journals.ensureDirectory(runId);
-        this.ownership = ownership;
-        this.state = state;
+        this.active = { runId, ownership, state };
         await this.commit('run_resumed', { previousStatus: state.snapshot.status });
         return this.getActiveRun()!;
       } catch (error) {
-        this.state = undefined;
-        this.ownership = undefined;
+        this.active = undefined;
         await ownership.release();
         throw error;
       }
     });
   }
 
-  getActiveRun(): RunSnapshot | undefined { return this.state ? structuredClone(this.state.snapshot) : undefined; }
-  isRunning(): boolean { return !!this.state && this.isStateRunning(this.state); }
-  getOutcome(): RunOutcome | undefined { return this.state?.snapshot.outcome ? structuredClone(this.state.snapshot.outcome) : undefined; }
+  getActiveRun(): RunSnapshot | undefined { return this.active?.state ? structuredClone(this.active.state.snapshot) : undefined; }
+  isRunning(): boolean { return !!this.active?.state && this.isStateRunning(this.active.state); }
+  getOutcome(): RunOutcome | undefined { return this.active?.state?.snapshot.outcome ? structuredClone(this.active.state.snapshot.outcome) : undefined; }
 
   async startRun(objective: string, policy: RunPolicy): Promise<RunSnapshot> {
     return this.serialize(async () => {
@@ -132,10 +136,9 @@ export class RunSupervisor {
       await this.journals.ensureDirectory(runId);
       const ownership = await FileOwnership.acquire(path.join(this.journals.directory(runId), 'owner.lock'));
       if (!ownership) throw new Error(`Run ${runId} is owned by another live supervisor`);
-      this.ownership = ownership;
-      this.state = undefined;
+      this.active = { runId, ownership };
       try {
-        await this.persistTransition({ runId, sequence: 1, timestamp: Date.now(), type: 'run_started', data: { objective, policy: { ...policy } } });
+        await this.persistTransition(this.active, { runId, sequence: 1, timestamp: Date.now(), type: 'run_started', data: { objective, policy: { ...policy } } });
         return this.getActiveRun()!;
       } catch (error) {
         await this.releaseOwnership();
@@ -149,7 +152,7 @@ export class RunSupervisor {
   }
   async rolloverEpoch(reason: string): Promise<void> {
     return this.serialize(async () => {
-      if (this.isRunning()) await this.commit('epoch_rolled_over', { reason, epoch: this.state!.snapshot.epoch + 1 });
+      if (this.isRunning()) await this.commit('epoch_rolled_over', { reason, epoch: this.active!.state!.snapshot.epoch + 1 });
     });
   }
   async recordProgress(summary: string): Promise<void> {
@@ -174,7 +177,7 @@ export class RunSupervisor {
   async reconcileToolEffect(callId: string, resolution: string, evidence: string): Promise<boolean> {
     return this.serialize(async () => {
       this.assertHealthy();
-      if (!this.state?.unknownEffects.has(callId)) return false;
+      if (!this.active?.state?.unknownEffects.has(callId)) return false;
       await this.commit('tool_reconciled', { callId, resolution: resolution.slice(0, 200), evidence: evidence.slice(0, 4000) });
       return true;
     });
@@ -193,7 +196,7 @@ export class RunSupervisor {
       if (runningTasks.length) blockers.push(`${runningTasks.length} background dependency/dependencies are still running`);
       const pendingResults = backgroundTasks.filter(task => task.blocksCompletion && task.resultPending);
       if (pendingResults.length) blockers.push(`${pendingResults.length} required background result(s) await delivery`);
-      const unsettled = new Set([...this.state!.unknownEffects, ...this.state!.runningEffects]);
+      const unsettled = new Set([...this.active!.state!.unknownEffects, ...this.active!.state!.runningEffects]);
       if (unsettled.size) blockers.push(`${unsettled.size} non-idempotent tool outcome(s) require reconciliation: ${[...unsettled].join(', ')}`);
       if (blockers.length) {
         await this.commit('completion_rejected', { blockers });
@@ -220,12 +223,13 @@ export class RunSupervisor {
 
   private async commit(type: string, data?: Record<string, unknown>): Promise<void> {
     this.assertHealthy();
-    if (!this.state) return;
-    if (!this.ownership) throw new Error('Cannot journal a run without exclusive ownership');
-    await this.persistTransition(this.event(this.state, type, data));
+    if (!this.active?.state) return;
+    await this.persistTransition(this.active, this.event(this.active.state, type, data));
   }
-  private async persistTransition(event: RunJournalEvent): Promise<void> {
-    const next = reduceRunEvent(this.state, event);
+  private async persistTransition(run: OwnedRun, event: RunJournalEvent): Promise<void> {
+    if (!run.ownership) throw new Error('Cannot journal a run without exclusive ownership');
+    if (event.runId !== run.runId) throw new Error('Run transition does not belong to its journal owner');
+    const next = reduceRunEvent(run.state, event);
     try { await this.journals.append(event); }
     catch (cause) {
       this.persistenceFailure = new RunPersistenceError(cause);
@@ -233,7 +237,7 @@ export class RunSupervisor {
     }
     // Journal sync is the commit point. Checkpoint failure cannot undo a
     // committed event, and recovery never interprets the cache as authority.
-    this.state = next;
+    run.state = next;
     await this.journals.checkpoint(next);
   }
   private event(state: RunState, type: string, data?: Record<string, unknown>): RunJournalEvent {
@@ -247,8 +251,8 @@ export class RunSupervisor {
     return result;
   }
   private async releaseOwnership(): Promise<void> {
-    const ownership = this.ownership;
-    this.ownership = undefined;
+    const ownership = this.active?.ownership;
+    if (this.active) this.active.ownership = undefined;
     await ownership?.release();
   }
 }
