@@ -139,6 +139,33 @@ describe('ToolOrchestrator Exploratory Tracking', () => {
   });
 
   describe('Streak tracking', () => {
+    it.each(['executeSequential', 'executeConcurrent'])(
+      '%s uses actual outcomes when updating exploration guidance', async (method) => {
+        const startingStreak = TOOL_GUIDANCE.EXPLORATORY_TOOL_THRESHOLD;
+        (orchestrator as any).currentExploratoryStreak = startingStreak;
+        vi.spyOn(orchestrator as any, 'executeSingleTool').mockImplementation(async (call: any) => (
+          call.function.name === 'write'
+            ? { success: false, error: 'Rejected before mutation' }
+            : { success: true, content: 'Observation' }
+        ));
+        vi.spyOn(orchestrator as any, 'processToolResult').mockResolvedValue(undefined);
+        await (orchestrator as any)[method]([
+          createToolCall('write', 'rejected-write'),
+          createToolCall('read', 'observation'),
+        ]);
+        expect((orchestrator as any).currentExploratoryStreak).toBe(startingStreak + 1);
+        expect((orchestrator as any).drainBatchReminders().length).toBeGreaterThan(0);
+      },
+    );
+
+    it('preserves exploration evidence when a state-changing tool fails', () => {
+      (orchestrator as any).currentExploratoryStreak = TOOL_GUIDANCE.EXPLORATORY_TOOL_THRESHOLD;
+      (orchestrator as any).maybeInjectExploratoryReminder(createToolCall('write'), {
+        success: false, error: 'Validation rejected the operation',
+      });
+      expect((orchestrator as any).currentExploratoryStreak).toBe(TOOL_GUIDANCE.EXPLORATORY_TOOL_THRESHOLD);
+    });
+
     it('should start with streak at zero', () => {
       expect((orchestrator as any).currentExploratoryStreak).toBe(0);
     });
@@ -147,7 +174,7 @@ describe('ToolOrchestrator Exploratory Tracking', () => {
       const toolCall = createToolCall('read');
       const result = { success: true, output: 'file contents' };
 
-      (orchestrator as any).maybeInjectExploratoryReminder(toolCall);
+      (orchestrator as any).maybeInjectExploratoryReminder(toolCall, { success: true });
 
       expect((orchestrator as any).currentExploratoryStreak).toBe(1);
     });
@@ -155,9 +182,9 @@ describe('ToolOrchestrator Exploratory Tracking', () => {
     it('should accumulate streak across consecutive exploratory calls', () => {
       const result = { success: true, output: 'result' };
 
-      (orchestrator as any).maybeInjectExploratoryReminder(createToolCall('read'));
-      (orchestrator as any).maybeInjectExploratoryReminder(createToolCall('grep'));
-      (orchestrator as any).maybeInjectExploratoryReminder(createToolCall('glob'));
+      (orchestrator as any).maybeInjectExploratoryReminder(createToolCall('read'), { success: true });
+      (orchestrator as any).maybeInjectExploratoryReminder(createToolCall('grep'), { success: true });
+      (orchestrator as any).maybeInjectExploratoryReminder(createToolCall('glob'), { success: true });
 
       expect((orchestrator as any).currentExploratoryStreak).toBe(3);
     });
@@ -166,12 +193,12 @@ describe('ToolOrchestrator Exploratory Tracking', () => {
       const result = { success: true, output: 'result' };
 
       // Build up a streak
-      (orchestrator as any).maybeInjectExploratoryReminder(createToolCall('read'));
-      (orchestrator as any).maybeInjectExploratoryReminder(createToolCall('grep'));
+      (orchestrator as any).maybeInjectExploratoryReminder(createToolCall('read'), { success: true });
+      (orchestrator as any).maybeInjectExploratoryReminder(createToolCall('grep'), { success: true });
       expect((orchestrator as any).currentExploratoryStreak).toBe(2);
 
       // Non-exploratory tool resets it
-      (orchestrator as any).maybeInjectExploratoryReminder(createToolCall('write'));
+      (orchestrator as any).maybeInjectExploratoryReminder(createToolCall('write'), { success: true });
       expect((orchestrator as any).currentExploratoryStreak).toBe(0);
     });
 
@@ -179,24 +206,24 @@ describe('ToolOrchestrator Exploratory Tracking', () => {
       const result = { success: true, output: 'result' };
 
       // Build up a streak
-      (orchestrator as any).maybeInjectExploratoryReminder(createToolCall('read'));
-      (orchestrator as any).maybeInjectExploratoryReminder(createToolCall('grep'));
+      (orchestrator as any).maybeInjectExploratoryReminder(createToolCall('read'), { success: true });
+      (orchestrator as any).maybeInjectExploratoryReminder(createToolCall('grep'), { success: true });
       expect((orchestrator as any).currentExploratoryStreak).toBe(2);
 
       // Tool with breaksExploratoryStreak: false should NOT reset streak
-      (orchestrator as any).maybeInjectExploratoryReminder(createToolCall('task'));
+      (orchestrator as any).maybeInjectExploratoryReminder(createToolCall('task'), { success: true });
       expect((orchestrator as any).currentExploratoryStreak).toBe(2);
 
       // Continue exploratory calls - streak continues from 2
-      (orchestrator as any).maybeInjectExploratoryReminder(createToolCall('glob'));
+      (orchestrator as any).maybeInjectExploratoryReminder(createToolCall('glob'), { success: true });
       expect((orchestrator as any).currentExploratoryStreak).toBe(3);
     });
 
     it('should reset streak via public method', () => {
       const result = { success: true, output: 'result' };
 
-      (orchestrator as any).maybeInjectExploratoryReminder(createToolCall('read'));
-      (orchestrator as any).maybeInjectExploratoryReminder(createToolCall('grep'));
+      (orchestrator as any).maybeInjectExploratoryReminder(createToolCall('read'), { success: true });
+      (orchestrator as any).maybeInjectExploratoryReminder(createToolCall('grep'), { success: true });
       expect((orchestrator as any).currentExploratoryStreak).toBe(2);
 
       orchestrator.resetExploratoryStreak();
@@ -208,7 +235,7 @@ describe('ToolOrchestrator Exploratory Tracking', () => {
     it('should not queue warning before threshold', () => {
       // Call up to threshold - 1
       for (let i = 0; i < TOOL_GUIDANCE.EXPLORATORY_TOOL_THRESHOLD - 1; i++) {
-        (orchestrator as any).maybeInjectExploratoryReminder(createToolCall('read'));
+        (orchestrator as any).maybeInjectExploratoryReminder(createToolCall('read'), { success: true });
       }
 
       expect((orchestrator as any).drainBatchReminders()).toEqual([]);
@@ -217,7 +244,7 @@ describe('ToolOrchestrator Exploratory Tracking', () => {
     it('should queue gentle warning at threshold', () => {
       // Call exactly to threshold
       for (let i = 0; i < TOOL_GUIDANCE.EXPLORATORY_TOOL_THRESHOLD; i++) {
-        (orchestrator as any).maybeInjectExploratoryReminder(createToolCall('read'));
+        (orchestrator as any).maybeInjectExploratoryReminder(createToolCall('read'), { success: true });
       }
 
       // Warning rides the next request's trailing reminder, not the tool result
@@ -231,7 +258,7 @@ describe('ToolOrchestrator Exploratory Tracking', () => {
     it('should queue stern warning at stern threshold', () => {
       // Call to stern threshold
       for (let i = 0; i < TOOL_GUIDANCE.EXPLORATORY_TOOL_STERN_THRESHOLD; i++) {
-        (orchestrator as any).maybeInjectExploratoryReminder(createToolCall('read'));
+        (orchestrator as any).maybeInjectExploratoryReminder(createToolCall('read'), { success: true });
       }
 
       // Stern warning should be more emphatic
@@ -397,7 +424,7 @@ describe('ToolOrchestrator Exploratory Tracking', () => {
 
       // Make many exploratory calls
       for (let i = 0; i < TOOL_GUIDANCE.EXPLORATORY_TOOL_STERN_THRESHOLD + 5; i++) {
-        (specializedOrchestrator as any).maybeInjectExploratoryReminder(createToolCall('read'));
+        (specializedOrchestrator as any).maybeInjectExploratoryReminder(createToolCall('read'), { success: true });
       }
 
       // Nothing queued (specialized agents are supposed to explore)

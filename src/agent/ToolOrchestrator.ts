@@ -213,9 +213,9 @@ export class ToolOrchestrator {
 
   /**
    * Maybe queue an exploratory tool reminder for the next request
-   * Tracks consecutive exploratory tools and suggests explore() when threshold is reached
+   * Counts exploration until a successful streak-breaking operation completes.
    */
-  private maybeInjectExploratoryReminder(toolCall: ToolCall): void {
+  private maybeInjectExploratoryReminder(toolCall: ToolCall, result: ToolResult): void {
     // Skip for specialized agents - they're supposed to explore
     if (this.config.isSpecializedAgent) {
       return;
@@ -238,8 +238,8 @@ export class ToolOrchestrator {
         logger.debug('[TOOL_ORCHESTRATOR_EXPLORATORY]', `Gentle reminder after ${this.currentExploratoryStreak} consecutive exploratory calls`);
       }
     } else {
-      // Non-exploratory tool - check if it breaks the streak
-      if (tool?.breaksExploratoryStreak !== false && this.currentExploratoryStreak > 0) {
+      // Failed attempts do not erase the preceding exploration evidence.
+      if (result.success === true && tool?.breaksExploratoryStreak !== false && this.currentExploratoryStreak > 0) {
         logger.debug('[TOOL_ORCHESTRATOR_EXPLORATORY]', `Streak reset after ${toolName}`);
         this.currentExploratoryStreak = 0;
       }
@@ -568,7 +568,7 @@ export class ToolOrchestrator {
         const result = successfulResults[i];
         if (toolCall && result) {
           // Queue exploratory tool guidance before processing result
-          this.maybeInjectExploratoryReminder(toolCall);
+          this.maybeInjectExploratoryReminder(toolCall, result);
 
           await this.processToolResult(toolCall, result, outputBudget);
         }
@@ -644,7 +644,7 @@ export class ToolOrchestrator {
       if (isFirstTool) this.injectRuntimeStatusReminder();
 
       // Queue exploratory tool guidance before processing result
-      this.maybeInjectExploratoryReminder(toolCall);
+      this.maybeInjectExploratoryReminder(toolCall, result);
 
       isFirstTool = false;
 
