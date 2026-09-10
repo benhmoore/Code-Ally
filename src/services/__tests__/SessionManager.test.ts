@@ -707,6 +707,32 @@ describe('SessionManager', () => {
     expect(saved?.additional_directories).toEqual(['/extra']);
   });
 
+  it('owns admitted autosave messages and metadata independently of caller mutation', async () => {
+    const name = await sessionManager.createSession('snapshot-ownership');
+    sessionManager.setCurrentSession(name);
+    const messages: Message[] = [{ role: 'user', content: 'admitted message', metadata: { label: 'original' } }];
+    const todos = [{ id: 't1', content: 'admitted todo', status: 'pending' as const }];
+    const idleMessages = ['admitted idle'];
+    const directories = ['/admitted'];
+    expect(await sessionManager.autoSave(messages, todos, idleMessages, undefined, directories)).toBe(true);
+    messages[0]!.content = 'later mutation';
+    messages[0]!.metadata!.label = 'later metadata';
+    todos[0]!.content = 'later todo';
+    idleMessages.push('later idle');
+    directories.push('/later');
+    await sessionManager.forceSave();
+    const saved = await sessionManager.loadSession(name);
+    expect(saved?.messages[0]?.content).toBe('admitted message');
+    expect(saved?.messages[0]?.metadata?.label).toBe('original');
+    expect(saved?.todos?.[0]?.content).toBe('admitted todo');
+    expect(saved?.idle_messages).toEqual(['admitted idle']);
+    expect(saved?.additional_directories).toEqual(['/admitted']);
+
+    await sessionManager.autoSave(messages, undefined, []);
+    await sessionManager.forceSave();
+    expect((await sessionManager.loadSession(name))?.idle_messages).toEqual([]);
+  });
+
   it('appends a bounded live tail to immutable transcript segments without duplication', async () => {
     const sessionName = await sessionManager.createSession('paged-transcript');
     const initial: Message[] = Array.from({ length: 150 }, (_, i) => ({

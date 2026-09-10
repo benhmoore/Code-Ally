@@ -1430,27 +1430,20 @@ export class SessionManager implements IService {
     }
 
     try {
-      // Session switches are rare, but a pending save for the previous session
-      // must be durable before the single debounce slot is reused.
-      if (this.pendingAutoSave && this.pendingAutoSave.sessionName !== name) {
-        await this.flushDebouncedSave();
-      }
-
       const updates: Partial<Session> = {
-        ...(this.pendingAutoSave?.sessionName === name ? this.pendingAutoSave.updates : {}),
         messages: filteredMessages,
         transcript: this.filterMessagesForPersistence(transcript),
       };
       if (checkpoint !== undefined) {
-        updates.conversation_checkpoint = structuredClone(checkpoint);
+        updates.conversation_checkpoint = checkpoint;
       }
       if (providerState !== undefined) {
-        updates.provider_state = structuredClone(providerState);
+        updates.provider_state = providerState;
       }
       if (todos !== undefined) {
         updates.todos = todos;
       }
-      if (idleMessages !== undefined && idleMessages.length > 0) {
+      if (idleMessages !== undefined) {
         logger.debug(`[SESSION] Saving ${idleMessages.length} idle messages: ${JSON.stringify(idleMessages.slice(0, 3))}...`);
         updates.idle_messages = idleMessages;
       }
@@ -1460,7 +1453,20 @@ export class SessionManager implements IService {
       if (additionalDirectories !== undefined) {
         updates.additional_directories = additionalDirectories;
       }
-      this.pendingAutoSave = { sessionName: name, updates };
+      // Capture caller-owned state before any await. The debounce slot owns a
+      // snapshot, not live message/metadata objects that can change afterward.
+      const snapshot = structuredClone(updates);
+      // A session switch must settle the previous slot before reusing it.
+      if (this.pendingAutoSave && this.pendingAutoSave.sessionName !== name) {
+        await this.flushDebouncedSave();
+      }
+      this.pendingAutoSave = {
+        sessionName: name,
+        updates: {
+          ...(this.pendingAutoSave?.sessionName === name ? this.pendingAutoSave.updates : {}),
+          ...snapshot,
+        },
+      };
 
       // Cancel existing timer
       if (this.debounceTimer) {
