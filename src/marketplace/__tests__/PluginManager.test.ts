@@ -210,6 +210,29 @@ describe('PluginManager', () => {
     });
   });
 
+  describe('getPluginHooksConfig', () => {
+    it('substitutes CLAUDE_PLUGIN_ROOT in every hook command', async () => {
+      const result = await pluginManager.install('test-mkt', 'test-plugin');
+      const hooksConfig = await pluginManager.getPluginHooksConfig(result.installPath);
+
+      expect(hooksConfig).not.toBeNull();
+      const hook = hooksConfig!.PreToolUse![0].hooks[0];
+      expect(hook.command).toBe(join(result.installPath, 'hooks', 'guard.sh'));
+      expect(hook.timeout).toBe(5);
+    });
+
+    it('returns null for a plugin without hooks/hooks.json', async () => {
+      const pluginDir = join(TEST_BASE, 'no-hooks');
+      await fs.mkdir(join(pluginDir, '.claude-plugin'), { recursive: true });
+      await fs.writeFile(
+        join(pluginDir, '.claude-plugin', 'plugin.json'),
+        JSON.stringify({ name: 'no-hooks', version: '1.0.0', description: 'No hooks' })
+      );
+
+      expect(await pluginManager.getPluginHooksConfig(pluginDir)).toBeNull();
+    });
+  });
+
   describe('persistence', () => {
     it('persists installed plugins across instances', async () => {
       await pluginManager.install('test-mkt', 'test-plugin');
@@ -267,6 +290,18 @@ describe('PluginManager', () => {
           args: ['${CLAUDE_PLUGIN_ROOT}/server/dist/index.js'],
           env: { TEST_TOKEN: '${TEST_TOKEN}' },
         },
+      })
+    );
+    await fs.mkdir(join(dir, 'hooks'), { recursive: true });
+    await fs.writeFile(
+      join(dir, 'hooks', 'hooks.json'),
+      JSON.stringify({
+        PreToolUse: [
+          {
+            matcher: 'Bash',
+            hooks: [{ type: 'command', command: '${CLAUDE_PLUGIN_ROOT}/hooks/guard.sh', timeout: 5 }],
+          },
+        ],
       })
     );
   }

@@ -46,6 +46,16 @@ const PLAIN_STDOUT_CONTEXT_EVENTS: ReadonlySet<HookEvent> = new Set([
   'UserPromptSubmit',
 ]);
 
+/** SIGKILL a hook's whole process group; a hook that already exited is a no-op. */
+function killGroup(pid: number | undefined): void {
+  if (pid === undefined) return;
+  try {
+    process.kill(-pid, 'SIGKILL');
+  } catch {
+    // ESRCH: the group is already gone, which is the outcome we wanted.
+  }
+}
+
 type HookOutcome =
   | { kind: 'proceed'; output?: HookOutput; plainStdout?: string }
   | { kind: 'block'; reason: string; source: string }
@@ -156,15 +166,20 @@ export class HookRunner {
     let timedOut = false;
 
     const exitCode = await new Promise<number | null>((resolve) => {
+      // Its own process group, so an expired hook takes its children with it.
       const child = spawn('/bin/sh', ['-c', hook.command], {
         cwd: this.env.cwd,
         env,
         stdio: ['pipe', 'pipe', 'pipe'],
+        detached: true,
       });
 
       const timer = setTimeout(() => {
         timedOut = true;
-        child.kill('SIGKILL');
+        killGroup(child.pid);
+        // A descendant can outlive the group signal and hold the pipes open,
+        // so the outcome is settled here rather than on 'close'.
+        resolve(null);
       }, timeoutMs);
 
       child.stdout.on('data', (chunk: Buffer) => {
