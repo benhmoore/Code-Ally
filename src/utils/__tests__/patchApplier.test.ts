@@ -122,22 +122,19 @@ describe('applyModelPatch', () => {
       expect(result.readRanges).toEqual([{ start: 3, end: 4 }]);
     });
 
-    it('reconciles a consistent indentation drift at a unique target', () => {
+    it('rejects a consistent indentation drift rather than translating additions', () => {
       const result = applyModelPatch(
         '@@ -40,1 +40,2 @@\n-            block = 11;\n+            block = 10;\n+            frozen = true;',
         'function generate() {\n             if (snowy) {\n             block = 11;\n}\n'
       );
 
-      expect(result.success).toBe(true);
-      expect(result.content).toBe(
-        'function generate() {\n             if (snowy) {\n             block = 10;\n             frozen = true;\n}\n'
-      );
-      expect(result.readRanges).toEqual([{ start: 3, end: 3 }]);
+      expect(result.success).toBe(false);
+      expect(result.content).toBeUndefined();
     });
 
     it('preserves authored indentation when whitespace is the intended change', () => {
       const result = applyModelPatch(
-        '@@ -2,1 +2,1 @@\n-      """doc"""\n+    """doc"""',
+        '@@ -2,1 +2,1 @@\n-     """doc"""\n+    """doc"""',
         'class Parser:\n     """doc"""\n'
       );
 
@@ -167,7 +164,7 @@ describe('applyModelPatch', () => {
       expect(result.readRanges).toEqual([{ start: 2, end: 6 }]);
     });
 
-    it('repairs omitted context markers when exact removals uniquely anchor the hunk', () => {
+    it('rejects inexact context even when removals match exactly', () => {
       const result = applyModelPatch(
         '@@ -182,2 +182,1 @@\n    const { signature: _sig, ...rest } = record;\n-    void _sig;\n    return canonicalStringify(rest);',
         [
@@ -180,15 +177,22 @@ describe('applyModelPatch', () => {
         ].join('\n')
       );
 
-      expect(result.success).toBe(true);
-      expect(result.content).toBe([
-        '  private signingPayload(record: LeaseRecord): string {',
-        '    const { signature: _sig, ...rest } = record;',
-        '    return canonicalStringify(rest);',
-        '  }',
-        '',
-      ].join('\n'));
-      expect(result.readRanges).toEqual([{ start: 2, end: 4 }]);
+      expect(result.success).toBe(false);
+      expect(result.content).toBeUndefined();
+    });
+
+    it.each([
+      ['  old', ' old'],
+      ['old  ', 'old '],
+      ['\told', ' old'],
+    ])('does not reinterpret literal whitespace in %j', (source, authored) => {
+      const result = applyModelPatch(
+        `@@ -2,1 +2,1 @@\n-${authored}\n+ new`,
+        `payload = """\n${source}\n"""\n`,
+      );
+      expect(result.success).toBe(false);
+      expect(result.content).toBeUndefined();
+      expect(result.readRanges).toBeUndefined();
     });
 
     it('rejects partially encoded quote escapes instead of guessing at source text', () => {

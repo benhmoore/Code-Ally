@@ -105,6 +105,21 @@ describe('ApplyPatchTool', () => {
     expect(result.error).toContain('unread lines 2-3');
   });
 
+  it('preserves file bytes and read evidence after rejecting inexact whitespace', async () => {
+    const original = 'payload = """\n  value\n"""\n';
+    const file = await fixture(original);
+    reads.trackRead(file, 1, 3);
+    const before = reads.getReadState(file);
+    const result = await tool.execute({
+      file_path: file,
+      patch: '@@ -2,1 +2,1 @@\n- value\n+ changed',
+    });
+    expect(result.success).toBe(false);
+    expect(result.error).toContain('no hunks were applied');
+    expect(await fs.readFile(file, 'utf8')).toBe(original);
+    expect(reads.getReadState(file)).toEqual(before);
+  });
+
   it('invalidates old reads and can deliberately track returned updated content', async () => {
     const file = await fixture();
     reads.trackRead(file, 1, 3, 'agent-a');

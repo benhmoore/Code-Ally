@@ -94,90 +94,6 @@ function createPatchError(message: string, operation: string): PatchResult {
   };
 }
 
-function leadingWhitespace(value: string): string {
-  return value.match(/^\s*/)?.[0] ?? '';
-}
-
-/**
- * Reconcile a hunk whose old-side text differs from the source only in its
- * outer whitespace. Model-authored diffs occasionally shift every line by one
- * indentation column even immediately after reading the target. Accept that
- * only when the target is unambiguous and every nonblank old line describes
- * the same indentation shift. We also accept the one structurally identifiable
- * mixed case produced by an omitted unified-diff context marker: removal lines
- * match exactly while every unchanged line is short by one leading space.
- * Context and removals are then anchored to the exact source text. Additions
- * inherit a uniform authored shift, but remain verbatim for a missing-marker
- * repair because their `+` markers were encoded correctly.
- */
-function alignHunkWhitespace(
-  hunk: StructuredPatch['hunks'][number],
-  sourceLines: string[],
-  actualStart: number
-): boolean {
-  let sourceOffset = 0;
-  const indentationDeltas = new Set<number>();
-  const lineDeltas: Array<{ kind: 'context' | 'removal'; delta: number }> = [];
-  const oldLogicalLines = hunk.lines
-    .filter(line => line.startsWith(' ') || line.startsWith('-'))
-    .map(line => line.slice(1).trim());
-  const newLogicalLines = hunk.lines
-    .filter(line => line.startsWith(' ') || line.startsWith('+'))
-    .map(line => line.slice(1).trim());
-  const changesOnlyOuterWhitespace = oldLogicalLines.length === newLogicalLines.length
-    && oldLogicalLines.every((line, index) => line === newLogicalLines[index]);
-
-  for (const line of hunk.lines) {
-    if (!line.startsWith(' ') && !line.startsWith('-')) continue;
-    const authored = line.slice(1);
-    const source = sourceLines[actualStart + sourceOffset]!;
-    if (authored.trim().length > 0) {
-      const delta = leadingWhitespace(source).length - leadingWhitespace(authored).length;
-      indentationDeltas.add(delta);
-      lineDeltas.push({
-        kind: line.startsWith('-') ? 'removal' : 'context',
-        delta,
-      });
-    }
-    sourceOffset++;
-  }
-
-  const missingContextMarkers = indentationDeltas.size === 2
-    && indentationDeltas.has(0)
-    && indentationDeltas.has(1)
-    && lineDeltas.some(line => line.kind === 'context')
-    && lineDeltas.some(line => line.kind === 'removal')
-    && lineDeltas.every(line => line.delta === (line.kind === 'context' ? 1 : 0));
-  if (indentationDeltas.size > 1 && !missingContextMarkers) return false;
-  const indentationDelta = missingContextMarkers
-    ? 0
-    : indentationDeltas.values().next().value ?? 0;
-  sourceOffset = 0;
-  hunk.lines = hunk.lines.map(line => {
-    if (line.startsWith(' ') || line.startsWith('-')) {
-      return line[0] + sourceLines[actualStart + sourceOffset++]!;
-    }
-    if (
-      !line.startsWith('+')
-      || line.slice(1).trim().length === 0
-      || indentationDelta === 0
-      // When the hunk's actual purpose is indentation, its added whitespace is
-      // the desired result. Translating it by the old-side anchor drift would
-      // silently undo or overshoot that repair.
-      || changesOnlyOuterWhitespace
-    ) {
-      return line;
-    }
-
-    const body = line.slice(1);
-    if (indentationDelta > 0) return `+${' '.repeat(indentationDelta)}${body}`;
-    const indent = leadingWhitespace(body);
-    if (indent.length < -indentationDelta) return line;
-    return `+${body.slice(-indentationDelta)}`;
-  });
-  return true;
-}
-
 /**
  * Apply a unified diff to content
  *
@@ -236,7 +152,8 @@ export function applyUnifiedDiff(
  *
  * Hunk headers may be provided without file headers. Every hunk that targets a
  * non-empty file must carry old-side context or removals. We locate that exact
- * text before applying so callers can enforce read-before-write against the
+ * text, including whitespace, before applying. Added text is never reindented
+ * or otherwise inferred from the source. Callers can enforce read-before-write against the
  * lines the patch actually targets, even when a hunk's line-number hint drifted.
  */
 function applyModelPatchExact(
@@ -308,31 +225,11 @@ function applyModelPatchExact(
     }
 
     const declaredStart = Math.max(0, hunk.oldStart - 1);
-    let actualStart = candidates.includes(declaredStart)
+    const actualStart = candidates.includes(declaredStart)
       ? declaredStart
       : candidates.length === 1
         ? candidates[0]!
         : null;
-
-    if (actualStart === null && candidates.length === 0) {
-      const whitespaceCandidates: number[] = [];
-      for (let start = 0; start + oldLines.length <= sourceLines.length; start++) {
-        if (oldLines.every((line, offset) => sourceLines[start + offset]!.trim() === line.trim())) {
-          whitespaceCandidates.push(start);
-        }
-      }
-      const whitespaceStart = whitespaceCandidates.includes(declaredStart)
-        ? declaredStart
-        : whitespaceCandidates.length === 1
-          ? whitespaceCandidates[0]!
-          : null;
-      if (
-        whitespaceStart !== null
-        && alignHunkWhitespace(hunk, sourceLines, whitespaceStart)
-      ) {
-        actualStart = whitespaceStart;
-      }
-    }
 
     if (actualStart === null) {
       const reason = candidates.length === 0
