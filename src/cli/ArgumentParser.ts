@@ -5,7 +5,25 @@
  * matching the functionality of the Python version.
  */
 
-import { Command } from 'commander';
+import { Command, InvalidArgumentError } from 'commander';
+
+export const OUTPUT_FORMATS = ['text', 'json', 'stream-json'] as const;
+export type OutputFormat = (typeof OUTPUT_FORMATS)[number];
+export const INPUT_FORMATS = ['text', 'stream-json'] as const;
+export type InputFormat = (typeof INPUT_FORMATS)[number];
+
+function oneOf<T extends readonly string[]>(allowed: T) {
+  return (value: string): T[number] => {
+    if (!(allowed as readonly string[]).includes(value)) {
+      throw new InvalidArgumentError(`Expected one of: ${allowed.join(', ')}`);
+    }
+    return value;
+  };
+}
+
+function commaList(value: string): string[] {
+  return value.split(',').map((v) => v.trim()).filter(Boolean);
+}
 
 /**
  * CLI options interface - matches all Python argparse flags
@@ -40,6 +58,17 @@ export interface CLIOptions {
   resume?: string | boolean;
   scheduledTask?: string;
   readyFile?: string;
+  sessionId?: string;
+
+  // Headless protocol
+  outputFormat?: OutputFormat;
+  inputFormat?: InputFormat;
+  jsonSchema?: string;
+
+  // Hooks and run authorization
+  settings?: string;
+  allowedTools?: string[];
+  disallowedTools?: string[];
 
   // Advanced settings
   autoConfirm?: boolean;
@@ -156,7 +185,20 @@ Use '/help' for complete interactive command reference.
         'Resume a conversation from a session. If session ID provided, resume that session. If no ID provided, show interactive selection menu.'
       )
       .option('--scheduled-task <id>', 'Internal: run once under a scheduled task permission policy')
-      .option('--ready-file <path>', 'Write a readiness marker when interactive input can accept messages');
+      .option('--ready-file <path>', 'Write a readiness marker when interactive input can accept messages')
+      .option('--session-id <id>', 'Create the session for this run under a caller-chosen id');
+
+    // Headless protocol
+    this.program
+      .option('--output-format <format>', 'Headless output: text, json, or stream-json', oneOf(OUTPUT_FORMATS))
+      .option('--input-format <format>', 'Headless input: text, or stream-json on stdin', oneOf(INPUT_FORMATS))
+      .option('--json-schema <schema>', 'JSON Schema the final answer must satisfy; inline JSON or @file');
+
+    // Hooks and run authorization
+    this.program
+      .option('--settings <file>', 'JSON file whose hooks key is merged for this run')
+      .option('--allowed-tools <list>', 'Comma-separated tool name globs approved without prompting', commaList)
+      .option('--disallowed-tools <list>', 'Comma-separated tool name globs the model can never call', commaList);
 
     // Advanced Settings
     this.program
@@ -219,6 +261,17 @@ Use '/help' for complete interactive command reference.
       resume: opts.resume,
       scheduledTask: opts.scheduledTask,
       readyFile: opts.readyFile,
+      sessionId: opts.sessionId,
+
+      // Headless protocol
+      outputFormat: opts.outputFormat,
+      inputFormat: opts.inputFormat,
+      jsonSchema: opts.jsonSchema,
+
+      // Hooks and run authorization
+      settings: opts.settings,
+      allowedTools: opts.allowedTools,
+      disallowedTools: opts.disallowedTools,
 
       // Advanced
       autoConfirm: opts.autoConfirm,

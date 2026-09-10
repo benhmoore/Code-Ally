@@ -59,6 +59,7 @@ import type { ScheduledTaskManager } from './ScheduledTaskManager.js';
 import type { SessionManager } from './SessionManager.js';
 import type { SessionTitleGenerator } from './SessionTitleGenerator.js';
 import type { SkillManager } from './SkillManager.js';
+import type { SessionContext } from './SessionContext.js';
 import type { ToolCallHistory } from './ToolCallHistory.js';
 import type { ToolResultPersistence } from './ToolResultPersistence.js';
 import type { TodoManager } from './TodoManager.js';
@@ -136,6 +137,10 @@ export interface ServiceMap {
   mcp_server_manager: MCPServerManager;
   skill_manager: SkillManager;
   prompt_library_manager: PromptLibraryManager;
+
+  // --- Hooks ---
+  /** Context contributed by SessionStart hooks, rendered into the system prompt. */
+  session_context: SessionContext;
 }
 
 /** Every valid registry key. */
