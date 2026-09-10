@@ -118,6 +118,23 @@ describe('selectExposedTools', () => {
     expect(exposedNames).toContain('read');
   });
 
+  it('never defers a pinned tool, however tight the budget', () => {
+    const definitions = [
+      ...coreDefs,
+      ...mcpDefs,
+      definition('structured-output', 400),
+      definition(TOOL_SEARCH_TOOL_NAME),
+    ];
+
+    const result = selectExposedTools({
+      definitions, schemaBudget: 200, estimateTokens: estimate,
+      pinned: ['structured-output'],
+    });
+
+    expect(result.exposed.map(d => d.function.name)).toContain('structured-output');
+    expect(result.deferred.map(t => t.name)).not.toContain('structured-output');
+  });
+
   it('keeps disallowed tools out of the deferred catalogue too', () => {
     const definitions = [...coreDefs, ...mcpDefs, definition(TOOL_SEARCH_TOOL_NAME)];
 

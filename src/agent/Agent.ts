@@ -70,6 +70,7 @@ import {
   createActiveObjectiveReminder,
 } from '../utils/messageUtils.js';
 import { CONTEXT_THRESHOLDS, TOOL_NAMES } from '../config/toolDefaults.js';
+import { STRUCTURED_OUTPUT_TOOL } from '../tools/StructuredOutputTool.js';
 import { TurnController, type TurnSnapshot } from './TurnController.js';
 
 /**
@@ -1576,6 +1577,9 @@ export class Agent {
       activated: runtimeRegistry.get('tool_activation_registry')?.get(this.instanceId),
       requested: runtimeRegistry.get('tool_activation_registry')?.getRequested(this.instanceId),
       disallowed: runtimeRegistry.get('trust_manager')?.getDisallowedToolPatterns(),
+      // A run with a structured output schema cannot end without that tool, so
+      // its schema stays on the wire however tight the window is.
+      pinned: runtimeRegistry.get('structured_output_sink') ? [STRUCTURED_OUTPUT_TOOL] : undefined,
       estimateTokens: text => this.tokenManager.estimateTokens(text),
     });
     const functions = exposure.exposed;

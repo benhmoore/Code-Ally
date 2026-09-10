@@ -55,6 +55,12 @@ export interface ToolExposureInput {
   /** Most recent batch explicitly requested through tool-search. */
   requested?: readonly string[];
   /**
+   * Tool names this run cannot end without, beyond the core loop. They are
+   * exposed unconditionally: a tool the requirement loop demands must never be
+   * deferred, or the model is reminded to call a schema it cannot see.
+   */
+  pinned?: readonly string[];
+  /**
    * Tool name globs the run authorization policy forbids. These are dropped
    * from the surface entirely, catalogue included, so the model never sees a
    * tool whose call would only be refused.
@@ -116,7 +122,7 @@ export function selectExposedTools(input: ToolExposureInput): ToolExposureResult
   // Core first, unconditionally: a budget too small for the core loop is a
   // configuration problem, and silently dropping `read` would be worse than
   // overrunning the schema share.
-  for (const name of CORE_TOOL_NAMES) {
+  for (const name of [...CORE_TOOL_NAMES, ...(input.pinned ?? [])]) {
     const definition = byName.get(name);
     if (definition) include(definition);
   }
