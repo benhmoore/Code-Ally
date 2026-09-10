@@ -27,6 +27,7 @@ import type { MarketplaceManager } from '../marketplace/MarketplaceManager.js';
 import type { PluginManager } from '../marketplace/PluginManager.js';
 import type { MCPServerManager } from '../mcp/MCPServerManager.js';
 import type { PermissionManager } from '../security/PermissionManager.js';
+import type { StructuredOutputSink } from '../tools/StructuredOutputTool.js';
 import type { ToolManager } from '../tools/ToolManager.js';
 import type { ActivityStream } from './ActivityStream.js';
 import type { AdditionalDirectoriesManager } from './AdditionalDirectoriesManager.js';
@@ -100,6 +101,8 @@ export interface ServiceMap {
   form_manager: FormManager;
   run_policy_manager: RunPolicyManager;
   run_supervisor: RunSupervisor;
+  /** Registered only when --json-schema is given; receives the validated payload. */
+  structured_output_sink: StructuredOutputSink;
 
   // --- Workspace state ---
   path_resolver: PathResolver;
