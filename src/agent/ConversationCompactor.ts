@@ -1,4 +1,5 @@
 import type { ModelClient } from '../llm/ModelClient.js';
+import { isOutputLimited } from '../llm/responseCompletion.js';
 import { isDeepStrictEqual } from 'node:util';
 import type { ConversationManager } from './ConversationManager.js';
 import type { TokenManager } from './TokenManager.js';
@@ -964,6 +965,9 @@ export class ConversationCompactor {
         throw new Error(
           `Structured checkpoint reducer request exceeded its ${STRUCTURED_REDUCTION_REQUEST_TIMEOUT_MS}ms deadline`
         );
+      }
+      if (isOutputLimited(response)) {
+        throw new Error(`Structured checkpoint response reached its ${reducerOutputTokens}-token output limit (finishReason=${response.finishReason})`);
       }
       if (response.error || !response.content?.trim()) {
         throw new Error(response.error_message || 'Structured checkpoint reducer returned no content');

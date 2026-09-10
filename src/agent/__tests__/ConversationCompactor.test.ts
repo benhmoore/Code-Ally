@@ -729,6 +729,21 @@ describe('ConversationCompactor', () => {
     expect(reducerOptions.responseSchema.schema.$defs.fact.properties.text.maxLength).toBe(800);
   });
 
+  it.each(['length', 'max_tokens', 'max_output_tokens'])('falls back on an incomplete structured response (%s) even when JSON parses', async finishReason => {
+    const manager = new ConversationManager({ initialMessages: history() });
+    const client = structuredClient();
+    client.send.mockResolvedValue({ role: 'assistant', content: JSON.stringify(emptySemanticCheckpoint()), finishReason });
+    const compactor = new ConversationCompactor(
+      client, manager, new TokenManager(16_384), new ActivityStream(), vi.fn().mockResolvedValue(true),
+    );
+    const result = await compactor.compactAndApply(context());
+    expect(result.checkpoint.strategy).toBe('local-extractive');
+    expect(result.checkpoint.degradedReason).toContain('output limit');
+    expect(result.checkpoint.degradedReason).toContain(finishReason);
+    expect(result.checkpoint.semanticState.objective).not.toBeNull();
+    expect(client.send).toHaveBeenCalledTimes(1);
+  });
+
   it('uses the reducer request headroom for accumulated structured output', async () => {
     const manager = new ConversationManager({ initialMessages: history() });
     const client = structuredClient();

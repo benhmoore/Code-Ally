@@ -13,6 +13,7 @@
  */
 
 import { LLMResponse } from '../llm/ModelClient.js';
+import { isOutputLimited } from '../llm/responseCompletion.js';
 import { ActivityStream } from '../services/ActivityStream.js';
 import { MessageValidator } from './MessageValidator.js';
 import { RequiredToolTracker } from './RequiredToolTracker.js';
@@ -32,20 +33,6 @@ import {
   createOutputTruncatedReminder,
   createRequirementsNotMetReminder,
 } from '../utils/messageUtils.js';
-
-/**
- * Whether the model stopped because it exhausted the output token budget
- * (Ollama reports done_reason 'length'; OpenAI-style backends report
- * 'max_tokens'/'max_output_tokens'). A response cut off this way may have
- * lost a tool call that was still being generated - backends discard the
- * incomplete call, so the response arrives looking like a deliberate
- * text-only answer.
- */
-function isOutputLimited(response: LLMResponse): boolean {
-  return response.finishReason === 'length'
-    || response.finishReason === 'max_tokens'
-    || response.finishReason === 'max_output_tokens';
-}
 
 /**
  * Context for response processing containing all necessary callbacks and dependencies.
