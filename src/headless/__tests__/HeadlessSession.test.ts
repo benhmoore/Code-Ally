@@ -14,7 +14,7 @@ import type { ParameterSchema } from '@shared/index.js';
 import { HeadlessSession, assertSafeSessionId, openHeadlessSession } from '../HeadlessSession.js';
 import type { WireEvent } from '../wire.js';
 
-/** The verdict-shaped schema a triage caller asks for. */
+/** A verdict-shaped schema, the common case for an automatic caller. */
 const VERDICT_SCHEMA: ParameterSchema = {
   type: 'object',
   required: ['results'],
@@ -358,7 +358,7 @@ describe('HeadlessSession', () => {
       const out = collector();
       replies = [async () => structuredCall(VERDICT), 'Recorded.'];
 
-      const headless = sinkFor(await session({ once: 'triage', outputFormat: 'json' }, { stdout: out.stream }));
+      const headless = sinkFor(await session({ once: 'review the findings', outputFormat: 'json' }, { stdout: out.stream }));
       await headless.run();
 
       expect(out.events()[0]).toMatchObject({
@@ -372,7 +372,7 @@ describe('HeadlessSession', () => {
       const out = collector();
       replies = ['Nothing to report.', async () => structuredCall(VERDICT), 'Recorded.'];
 
-      const headless = sinkFor(await session({ once: 'triage', outputFormat: 'json' }, { stdout: out.stream }));
+      const headless = sinkFor(await session({ once: 'review the findings', outputFormat: 'json' }, { stdout: out.stream }));
       await headless.run();
 
       const sent = vi.mocked(modelClient.send).mock.calls;
@@ -430,6 +430,28 @@ describe('HeadlessSession', () => {
       (event): event is Extract<WireEvent, { type: 'result' }> => event.type === 'result');
     expect(results[0]).toMatchObject({ structured_output: { verdict: 'first' } });
     expect(results[1]).not.toHaveProperty('structured_output');
+  });
+
+  it('reports a refused prompt as blocked rather than as the previous outcome', async () => {
+    const out = collector();
+    vi.spyOn(agent, 'sendMessage').mockResolvedValue('Refused: writes are frozen.');
+    vi.spyOn(agent, 'takePromptBlockReason').mockReturnValueOnce('Refused: writes are frozen.');
+
+    const headless = await session(
+      { once: 'change the config', outputFormat: 'stream-json' },
+      // A completed neighbouring run is exactly what a blocked turn must not
+      // report as its own.
+      { stdout: out.stream, getOutcome: () => COMPLETED },
+    );
+    await headless.run();
+
+    const [result] = out.events().filter(
+      (event): event is Extract<WireEvent, { type: 'result' }> => event.type === 'result');
+    expect(result).toMatchObject({
+      subtype: 'error',
+      is_error: true,
+      outcome: { kind: 'blocked', reason: 'Refused: writes are frozen.' },
+    });
   });
 
   it('keeps stdout free of everything but wire events', async () => {

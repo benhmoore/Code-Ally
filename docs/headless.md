@@ -63,7 +63,7 @@ Validation is exact: `enum`, nested objects with `required`, array `items`,
 returns a `validation_error` naming the JSON path, and the model retries.
 
 ```bash
-ally --once "triage the open findings" --output-format json --json-schema @verdict.json
+ally --once "review the open findings" --output-format json --json-schema @verdict.json
 ```
 
 ## Stdin protocol

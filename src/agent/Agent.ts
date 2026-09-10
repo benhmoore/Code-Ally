@@ -257,6 +257,8 @@ export class Agent {
   private activeExecutionContext: AgentExecutionContext = {};
   /** Synchronous, whole-turn admission guard; broader than an in-flight model request. */
   private turnAdmissionActive = false;
+  /** Set when a hook refuses a prompt before its turn begins. */
+  private promptBlockReason: string | undefined;
   private turnCompletion: Promise<void> = Promise.resolve();
   private readonly conversationOperations = new ConversationOperationQueue();
   private closing = false;
@@ -965,6 +967,17 @@ export class Agent {
    * @param executionContext - Optional execution context for this invocation
    * @returns Promise resolving to the assistant's final response
    */
+  /**
+   * Why the last turn was refused before it began, consumed by the caller
+   * that reports the turn's outcome. Reading it clears it, so one block is
+   * reported once.
+   */
+  takePromptBlockReason(): string | undefined {
+    const reason = this.promptBlockReason;
+    this.promptBlockReason = undefined;
+    return reason;
+  }
+
   async sendMessage(
     message: string,
     executionContext?: AgentExecutionContext,
@@ -989,7 +1002,13 @@ export class Agent {
       const hookRunner = ServiceRegistry.getInstance().get('hook_runner');
       if (!this.config.isSpecializedAgent && hookRunner?.hasHooks('UserPromptSubmit')) {
         const verdict = await hookRunner.run('UserPromptSubmit', { prompt: message });
-        if (verdict.kind === 'block') return verdict.reason;
+        if (verdict.kind === 'block') {
+          // No run starts, so the supervisor has no outcome to report for this
+          // turn. Record the block so an automatic caller reports why the turn
+          // produced nothing instead of reading a neighbouring run's outcome.
+          this.promptBlockReason = verdict.reason;
+          return verdict.reason;
+        }
         if (verdict.additionalContext.length > 0) {
           message = [message, ...verdict.additionalContext].join('\n\n');
         }

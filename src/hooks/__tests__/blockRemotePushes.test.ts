@@ -1,8 +1,8 @@
 /**
  * Compatibility with a hook written for Claude Code, as a test rather than a
- * claim. fixtures/block-remote-writes.sh is an unmodified copy of the BCoE
- * Sentinel's PreToolUse guard: it reads tool_input.command from the payload on
- * stdin and exits 2 with a reason on stderr.
+ * claim. The fixture is a guard of the shape those hooks take: it reads
+ * tool_input.command from the payload on stdin and exits 2 with a reason on
+ * stderr.
  */
 
 import { describe, expect, it } from 'vitest';
@@ -10,7 +10,7 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { HookRunner } from '../HookRunner.js';
 
-const fixture = join(dirname(fileURLToPath(import.meta.url)), 'fixtures', 'block-remote-writes.sh');
+const fixture = join(dirname(fileURLToPath(import.meta.url)), 'fixtures', 'block-remote-pushes.sh');
 
 function runner(): HookRunner {
   return new HookRunner(
@@ -23,7 +23,7 @@ function runner(): HookRunner {
         },
       ],
     },
-    { sessionId: () => 'triage-1', cwd: process.cwd(), projectDir: process.cwd() },
+    { sessionId: () => 'session-1', cwd: process.cwd(), projectDir: process.cwd() },
   );
 }
 
@@ -31,12 +31,11 @@ function runCommand(command: string) {
   return runner().run('PreToolUse', { tool_name: 'bash', tool_input: { command } }, 'bash');
 }
 
-describe('block-remote-writes.sh through the runner', () => {
+describe('a Claude Code style guard hook through the runner', () => {
   it('blocks git push origin main with the script reason', async () => {
     expect(await runCommand('git push origin main')).toEqual({
       kind: 'block',
-      reason:
-        'sentinel: remote-publishing commands are blocked in triage sessions; fix branches stay local',
+      reason: 'remote-publishing commands are blocked in this session; branches stay local',
       source: 'settings',
     });
   });

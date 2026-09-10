@@ -217,7 +217,10 @@ export class HeadlessSession {
       response = await this.deps.agent.sendMessage(message);
       if (!this.writer) console.log(response);
       await this.persistSession();
-      outcome = this.readOutcome();
+      // A refused prompt runs no turn, so the supervisor holds no outcome for
+      // it. Report the refusal rather than a neighbouring run's result.
+      const blocked = this.deps.agent.takePromptBlockReason();
+      outcome = blocked ? { kind: 'blocked', reason: blocked } : this.readOutcome();
     } catch (error) {
       console.error('Error:', error);
       outcome = { kind: 'failed', error: formatError(error) };

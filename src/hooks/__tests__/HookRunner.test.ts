@@ -162,11 +162,11 @@ describe('HookRunner payload and environment', () => {
       'env.sh',
       `printf '%s|%s|%s' "$CLAUDE_PROJECT_DIR" "$ALLY_PROJECT_DIR" "$CLAUDE_PLUGIN_ROOT" > ${out}`,
     );
-    await runner([group(path, { source: 'plugin:sentinel', pluginRoot: '/plugins/sentinel' })]).run(
+    await runner([group(path, { source: 'plugin:guardrails', pluginRoot: '/plugins/guardrails' })]).run(
       'PreToolUse',
       { tool_name: 'bash', tool_input: {} },
     );
-    expect(await fs.readFile(out, 'utf-8')).toBe('/project/root|/project/root|/plugins/sentinel');
+    expect(await fs.readFile(out, 'utf-8')).toBe('/project/root|/project/root|/plugins/guardrails');
   });
 
   it('leaves CLAUDE_PLUGIN_ROOT unset for hooks that did not come from a plugin', async () => {

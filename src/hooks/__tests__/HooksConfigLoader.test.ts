@@ -44,7 +44,7 @@ describe('loadHooksConfig', () => {
     const config = await loadHooksConfig({
       configManager: fakeConfigManager(commandGroup('from-profile')),
       pluginManager: fakePluginManager([
-        { pluginName: 'sentinel', installPath: '/plugins/sentinel', hooks: commandGroup('from-plugin') },
+        { pluginName: 'guardrails', installPath: '/plugins/guardrails', hooks: commandGroup('from-plugin') },
       ]),
       settingsFile,
     });
@@ -56,7 +56,7 @@ describe('loadHooksConfig', () => {
     ]);
     expect(config.PreToolUse?.map(group => group.source)).toEqual([
       'profile',
-      'plugin:sentinel',
+      'plugin:guardrails',
       'settings',
     ]);
   });
@@ -64,10 +64,10 @@ describe('loadHooksConfig', () => {
   it('carries the plugin install path so the runner can export CLAUDE_PLUGIN_ROOT', async () => {
     const config = await loadHooksConfig({
       pluginManager: fakePluginManager([
-        { pluginName: 'sentinel', installPath: '/plugins/sentinel', hooks: commandGroup('guard') },
+        { pluginName: 'guardrails', installPath: '/plugins/guardrails', hooks: commandGroup('guard') },
       ]),
     });
-    expect(config.PreToolUse?.[0]?.pluginRoot).toBe('/plugins/sentinel');
+    expect(config.PreToolUse?.[0]?.pluginRoot).toBe('/plugins/guardrails');
   });
 
   it('returns an empty config when no source declares a hook', async () => {
