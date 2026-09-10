@@ -11,6 +11,7 @@ import { readFileSync } from 'node:fs';
 import { formatError } from '../utils/errorUtils.js';
 import type { CLIOptions } from '../cli/ArgumentParser.js';
 import type { ParameterSchema } from '../types/index.js';
+import { isHeadlessRun } from './HeadlessSession.js';
 
 /** Read the flag's value, either inline JSON or `@path`. */
 export function parseJsonSchemaOption(value: string): ParameterSchema {
@@ -40,6 +41,12 @@ export function resolveStructuredOutputSchema(options: CLIOptions): ParameterSch
 
   if (options.outputFormat !== 'json' && options.outputFormat !== 'stream-json') {
     throw new Error('--json-schema requires --output-format json or stream-json');
+  }
+  // The sink that receives the payload belongs to the headless session. An
+  // interactive run would require the tool with nothing behind it, so every
+  // call would fail and the turn could never end.
+  if (!isHeadlessRun(options)) {
+    throw new Error('--json-schema requires --once or --input-format stream-json');
   }
   return parseJsonSchemaOption(options.jsonSchema);
 }

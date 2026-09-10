@@ -55,10 +55,27 @@ describe('jsonSchemaOption', () => {
       .toThrow('--json-schema requires --output-format json or stream-json');
   });
 
+  it('rejects a schema outside a headless run', () => {
+    const options = { outputFormat: 'json', jsonSchema: JSON.stringify(SCHEMA) } as CLIOptions;
+
+    expect(() => resolveStructuredOutputSchema(options))
+      .toThrow('--json-schema requires --once or --input-format stream-json');
+  });
+
   it('resolves under json and stream-json output', () => {
     for (const outputFormat of ['json', 'stream-json'] as const) {
       const options = { once: 'go', outputFormat, jsonSchema: JSON.stringify(SCHEMA) } as CLIOptions;
       expect(resolveStructuredOutputSchema(options)).toEqual(SCHEMA);
     }
+  });
+
+  it('resolves for a stream-json input run without --once', () => {
+    const options = {
+      inputFormat: 'stream-json',
+      outputFormat: 'stream-json',
+      jsonSchema: JSON.stringify(SCHEMA),
+    } as CLIOptions;
+
+    expect(resolveStructuredOutputSchema(options)).toEqual(SCHEMA);
   });
 });
