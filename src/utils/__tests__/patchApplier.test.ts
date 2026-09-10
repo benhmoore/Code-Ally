@@ -30,7 +30,7 @@ describe('applyModelPatch', () => {
 
     expect(result.success).toBe(false);
     expect(result.error).toContain('current file lines 1, 3');
-    expect(result.error).toContain('retry only this hunk');
+    expect(result.error).toContain('before resubmitting the patch');
   });
 
     it('applies headerless unified hunks and reports their actual source ranges', () => {

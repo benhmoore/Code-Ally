@@ -351,7 +351,7 @@ function applyModelPatchExact(
         ? ` Exact unique context from this hunk exists near current file line${anchors.length === 1 ? '' : 's'} ${anchors.join(', ')}.`
         : '';
       return createPatchError(
-        `Cannot apply hunk ${index + 1}: ${reason}.${anchorHint} Re-read that narrow region and retry only this hunk with current surrounding context`,
+        `Cannot apply hunk ${index + 1}: ${reason}.${anchorHint} Re-read that narrow region and correct this hunk before resubmitting the patch.`,
         'applyModelPatch'
       );
     }

@@ -65,6 +65,20 @@ describe('ApplyPatchTool', () => {
     expect(await fs.readFile(file, 'utf-8')).toBe('alpha\nbeta\ngamma\n');
   });
 
+  it('reports that no earlier hunks were applied when a later hunk fails', async () => {
+    const original = 'alpha\nbeta\ngamma\n';
+    const file = await fixture(original);
+    reads.trackRead(file, 1, 3);
+    const result = await tool.execute({
+      file_path: file,
+      patch: '@@ -1,1 +1,1 @@\n-alpha\n+ALPHA\n@@ -3,1 +3,1 @@\n-missing\n+GAMMA',
+    });
+    expect(result.success).toBe(false);
+    expect(result.error).toContain('no hunks were applied');
+    expect(result.error).not.toContain('retry only this hunk');
+    expect(await fs.readFile(file, 'utf8')).toBe(original);
+  });
+
   it('validates the actual context location rather than trusting a stale line hint', async () => {
     const file = await fixture('prefix\ntarget\nold\n');
     reads.trackRead(file, 1, 1);

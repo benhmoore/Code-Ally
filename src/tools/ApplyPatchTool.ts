@@ -216,7 +216,7 @@ export class ApplyPatchTool extends BaseTool {
       ? error
       : new PatchInputError(formatError(error));
     return this.formatErrorResponse(
-      inputError.message,
+      `Patch rejected before writing; no hunks were applied. ${inputError.message}`,
       'validation_error',
       inputError.suggestion
     );
