@@ -589,7 +589,8 @@ export class ConversationCompactor {
     replacement[checkpointIndex] = checkpointMessage;
     const checkpoint: ConversationCheckpointV1 = {
       ...candidate.checkpoint,
-      semanticState,
+      // Fitting changes the model view, not the knowledge carried to the next
+      // checkpoint generation.
       replacementMessages: replacement.filter(message => message.role !== 'system'),
     };
     return { ...candidate, checkpoint, replacement };
@@ -722,7 +723,8 @@ export class ConversationCompactor {
     // freely grows until it owns the whole domain, which is how the retained
     // tail silently becomes empty on every generation.
     const retainedTokens = this.tokenManager.estimateMessagesTokens(retained);
-    semanticState = fitSemanticCheckpointToTokenBudget(
+    // Keep the durable semantic state independent of this window's allowance.
+    const modelSemanticState = fitSemanticCheckpointToTokenBudget(
       semanticState,
       Math.max(budget.checkpointBudget, budget.domainBudget - retainedTokens),
       text => this.tokenManager.estimateTokens(text),
@@ -731,7 +733,7 @@ export class ConversationCompactor {
     const checkpointMessage: Message = {
       id: `checkpoint-message-${this.generation + 1}`,
       role: 'user',
-      content: renderCheckpointForModel(semanticState),
+      content: renderCheckpointForModel(modelSemanticState),
       timestamp: Date.now(),
       metadata: { isConversationCheckpoint: true },
     };

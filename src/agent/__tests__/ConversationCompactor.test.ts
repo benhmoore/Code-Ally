@@ -491,6 +491,27 @@ describe('ConversationCompactor', () => {
     expect(result.checkpoint.semanticState.currentRequest?.text).toBe(messages[10]!.content.trim());
   });
 
+  it('fits the model view without deleting durable checkpoint requirements', async () => {
+    const manager = new ConversationManager({ initialMessages: history() });
+    const compactor = new ConversationCompactor(
+      structuredClient(), manager, new TokenManager(16_384), new ActivityStream(), vi.fn().mockResolvedValue(true),
+    );
+    const result = await compactor.compactAndApply(context(), { forceNoRetainedTail: true });
+    const checkpoint = structuredClone(result.checkpoint);
+    checkpoint.semanticState.userConstraints = Array.from({ length: 8 }, (_, index) => ({
+      text: `Requirement ${index}: ${'retain this acceptance criterion '.repeat(40)}`,
+      sourceMessageIds: ['m-0'],
+    }));
+    const expected = structuredClone(checkpoint.semanticState);
+    const replacement = [...manager.getMessages()];
+    const fitted = (compactor as any).fitCandidateCheckpoint(
+      { checkpoint, replacement, sourceMessages: replacement }, context(), 128,
+    );
+    expect(fitted.checkpoint.semanticState).toEqual(expected);
+    expect(JSON.stringify(fitted.replacement)).not.toContain(expected.userConstraints[0]!.text);
+    expect(checkpoint.semanticState).toEqual(expected);
+  });
+
   it('retries a transient durable commit without rebuilding or mutating early', async () => {
     const manager = new ConversationManager({ initialMessages: history() });
     const commit = vi.fn()
