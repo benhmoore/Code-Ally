@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { promises as fs } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -76,5 +76,38 @@ describe('explicit session snapshot ownership', () => {
     const restored = await new SessionManager({ sessionsDir: dir }).loadSession('owned');
     expect(restored?.metadata).toMatchObject({ title: 'existing title', tags: ['submitted'] });
     expect(restored?.messages[0]?.content).toBe('pending message');
+  });
+
+  it('retains every admitted snapshot across overlapping session switches', async () => {
+    await manager.createSession('second');
+    await manager.createSession('third');
+    manager.setCurrentSession('owned');
+    await manager.autoSave([{ role: 'user', content: 'first snapshot' }]);
+    const original = (manager as any).mutateSessionIncremental.bind(manager);
+    let release!: () => void;
+    let entered!: () => void;
+    const ready = new Promise<void>(resolve => { entered = resolve; });
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    vi.spyOn(manager as any, 'mutateSessionIncremental').mockImplementation(async (...args) => {
+      if (args[0] === 'owned') {
+        entered();
+        await gate;
+      }
+      return original(...args);
+    });
+    manager.setCurrentSession('second');
+    const second = manager.autoSave([{ role: 'user', content: 'second snapshot' }]);
+    try {
+      await ready;
+      manager.setCurrentSession('third');
+      expect(await manager.autoSave([{ role: 'user', content: 'third snapshot' }])).toBe(true);
+      release();
+      expect(await second).toBe(true);
+      await manager.forceSave();
+      const reader = new SessionManager({ sessionsDir: dir });
+      for (const [name, content] of [['owned', 'first snapshot'], ['second', 'second snapshot'], ['third', 'third snapshot']] as const) {
+        expect((await reader.loadSession(name))?.messages[0]?.content).toBe(content);
+      }
+    } finally { release(); }
   });
 });

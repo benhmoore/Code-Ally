@@ -215,7 +215,7 @@ export class SessionManager implements IService {
     this.isShuttingDown = true;
 
     // Flush any pending debounced save before cleanup
-    await this.flushDebouncedSave();
+    await this.flushPendingAutoSave();
   }
 
   /**
@@ -1199,23 +1199,15 @@ export class SessionManager implements IService {
     }
   }
 
-  /**
-   * Flush any pending debounced save immediately
-   * Used on cleanup to ensure no data loss
-   */
-  private async flushDebouncedSave(): Promise<void> {
-    if (this.debounceTimer) {
-      clearTimeout(this.debounceTimer);
-      this.debounceTimer = null;
-    }
-    await this.flushPendingAutoSave();
-  }
-
-  /** Flush the pending message snapshot, optionally only for one session. */
-  private async flushPendingAutoSave(sessionName?: string): Promise<void> {
+  /** Transfer the debounce slot to an owned write without yielding admission. */
+  private startPendingAutoSave(sessionName?: string): void {
     const pending = this.pendingAutoSave;
     if (pending && (!sessionName || pending.sessionName === sessionName)) {
       this.pendingAutoSave = null;
+      if (this.debounceTimer) {
+        clearTimeout(this.debounceTimer);
+        this.debounceTimer = null;
+      }
       logger.debug('[SESSION] Flushing pending debounced save');
       // Install ownership before entering the asynchronous storage operation.
       const operation = Promise.resolve().then(async () => {
@@ -1231,6 +1223,11 @@ export class SessionManager implements IService {
       // must not report success merely because a timer already logged failure.
       void operation.then(() => this.autoSaveOperations.delete(operation), () => {});
     }
+  }
+
+  /** Flush the pending message snapshot and await every owned write in scope. */
+  private async flushPendingAutoSave(sessionName?: string): Promise<void> {
+    this.startPendingAutoSave(sessionName);
     const operations = [...this.autoSaveOperations]
       .filter(([, name]) => !sessionName || name === sessionName)
       .map(([operation]) => operation);
@@ -1246,7 +1243,7 @@ export class SessionManager implements IService {
    * @returns True if saved successfully
    */
   async forceSave(): Promise<boolean> {
-    await this.flushDebouncedSave();
+    await this.flushPendingAutoSave();
     return true;
   }
 
@@ -1369,9 +1366,10 @@ export class SessionManager implements IService {
       // Capture caller-owned state before any await. The debounce slot owns a
       // snapshot, not live message/metadata objects that can change afterward.
       const snapshot = structuredClone(updates);
-      // A session switch must settle the previous slot before reusing it.
+      // Transfer the previous slot synchronously. Waiting here would allow a
+      // concurrent admission to occupy the slot and then be overwritten below.
       if (this.pendingAutoSave && this.pendingAutoSave.sessionName !== name) {
-        await this.flushDebouncedSave();
+        this.startPendingAutoSave();
       }
       this.pendingAutoSave = {
         sessionName: name,

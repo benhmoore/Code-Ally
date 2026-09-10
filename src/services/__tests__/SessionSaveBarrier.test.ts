@@ -42,4 +42,19 @@ describe('session autosave barriers', () => {
     await expect(manager.cleanup()).rejects.toThrow('Session autosave persistence failed');
     expect(write).toHaveBeenCalledOnce();
   });
+
+  it('retains failures from writes transferred during a session switch', async () => {
+    const manager = new SessionManager();
+    const writes = vi.spyOn(manager as any, 'mutateSessionIncremental').mockImplementation(async name => {
+      if (name === 'first') throw new Error('first session storage failed');
+      return true;
+    });
+    manager.setCurrentSession('first');
+    expect(await manager.autoSave([{ role: 'user', content: 'first snapshot' }])).toBe(true);
+    manager.setCurrentSession('second');
+    expect(await manager.autoSave([{ role: 'user', content: 'second snapshot' }])).toBe(true);
+    await expect(manager.forceSave()).rejects.toThrow('Session autosave persistence failed');
+    await expect(manager.cleanup()).rejects.toThrow('Session autosave persistence failed');
+    expect(writes.mock.calls.map(args => args[0])).toEqual(['first', 'second']);
+  });
 });
