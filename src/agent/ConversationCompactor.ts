@@ -890,7 +890,13 @@ export class ConversationCompactor {
         {
           role: 'user',
           content: JSON.stringify({
-            previousState: state,
+            previousState: state ? fitSemanticCheckpointToTokenBudget(
+              // These fields are restored verbatim by the harness, never
+              // authored by the reducer. Avoid duplicating their full text in
+              // both the transcript and auxiliary previous-state input.
+              { ...state, objective: null, currentRequest: null },
+              maxTokens, text => this.tokenManager.estimateTokens(text),
+            ) : null,
             transcriptJsonLines: transcript,
             ...(focus ? { focus } : {}),
           }),
@@ -900,6 +906,16 @@ export class ConversationCompactor {
       this.debugState.reducerChunk = chunkIndex + 1;
       this.debugState.reducerChunks = chunks.length;
       this.debugState.reducerInputTokens = this.tokenManager.estimateMessagesTokens(request);
+      if (this.debugState.reducerInputTokens + MIN_REDUCER_OUTPUT_TOKENS + REDUCER_OUTPUT_SAFETY_TOKENS
+        > this.tokenManager.getContextSize()) {
+        if (currentChunk.length > 1) {
+          const midpoint = Math.ceil(currentChunk.length / 2);
+          chunks.splice(chunkIndex, 1, currentChunk.slice(0, midpoint), currentChunk.slice(midpoint));
+          chunkIndex -= 1;
+          continue;
+        }
+        throw new Error('Checkpoint reducer request exceeds the available context budget');
+      }
       const reducerOutputTokens = Math.max(
         MIN_REDUCER_OUTPUT_TOKENS,
         Math.min(

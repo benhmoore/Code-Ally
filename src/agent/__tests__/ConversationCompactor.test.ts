@@ -10,8 +10,23 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { SessionManager } from '../../services/SessionManager.js';
 import { createSystemReminder } from '../../utils/messageUtils.js';
+import { emptySemanticCheckpoint } from '../compaction/types.js';
 
 const signal = new AbortController().signal;
+
+it('does not send a reducer request when authoritative input cannot fit', async () => {
+  const client = chatClient();
+  const compactor = new ConversationCompactor(
+    client, new ConversationManager(), new TokenManager(4096), new ActivityStream(), vi.fn(),
+  );
+  const previous = emptySemanticCheckpoint();
+  previous.objective = { text: 'Complete the objective.', sourceMessageIds: ['user'] };
+  await expect((compactor as any).reduceStructured(
+    [{ id: 'next', role: 'user', content: 'Continue.' }], previous, ['user', 'next'],
+    'mandatory focus instruction '.repeat(4000), signal,
+  )).rejects.toThrow('exceeds the available context budget');
+  expect(client.send).not.toHaveBeenCalled();
+});
 
 function history(): Message[] {
   return Array.from({ length: 12 }, (_, index) => ({
@@ -648,6 +663,10 @@ describe('ConversationCompactor', () => {
     // The complete-domain rebuild may itself be chunked; critically, every
     // reduction remains structured instead of switching to extraction.
     expect(client.send.mock.calls.length).toBeGreaterThan(1);
+    for (const [request, options] of client.send.mock.calls) {
+      expect(new TokenManager(4096).estimateMessagesTokens(request) + options.dynamicMaxTokens)
+        .toBeLessThanOrEqual(4096 - 512);
+    }
     expect(result.checkpoint.portability).toBe('model-validated');
     expect(result.checkpoint.strategy).toBe('local-structured');
     expect(result.checkpoint.retainedMessageIds).toEqual([]);

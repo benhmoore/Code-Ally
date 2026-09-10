@@ -278,7 +278,7 @@ export function extractSemanticCheckpoint(
   for (const key of STATE_ARRAY_KEYS) {
     // Completed work and durable facts are now short summaries; keeping a deeper
     // history of them is what keeps a task lucid across many generations.
-    const limit = key === 'completedWork' || key === 'durableFacts' ? 12 : 6;
+    const limit = key === 'userConstraints' ? Infinity : key === 'completedWork' || key === 'durableFacts' ? 12 : 6;
     state[key] = uniqueFacts(state[key] as any, limit) as any;
   }
   // The authoritative fields already retain the first and latest user
@@ -312,7 +312,10 @@ export function mergeSemanticCheckpoint(
   merged.currentRequest = proposed.currentRequest ?? previous.currentRequest;
   const durableKeys = ['userConstraints', 'decisions', 'completedWork', 'durableFacts'] as const;
   for (const key of durableKeys) {
-    merged[key] = uniqueFacts([...(previous[key] as any), ...(proposed[key] as any)], 25) as any;
+    merged[key] = uniqueFacts(
+      [...(previous[key] as any), ...(proposed[key] as any)],
+      key === 'userConstraints' ? Infinity : 25,
+    ) as any;
   }
 
   // A checkpoint created while the agent is continuing must retain some

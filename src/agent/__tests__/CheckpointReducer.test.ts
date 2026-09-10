@@ -328,6 +328,22 @@ describe('parseSemanticCheckpoint', () => {
 });
 
 describe('mergeSemanticCheckpoint', () => {
+  it('retains accumulated constraints through repeated extraction and merging', () => {
+    let state = emptySemanticCheckpoint();
+    const expected = Array.from({ length: 40 }, (_, index) => ({
+      text: `Preserve acceptance requirement ${index}.`, sourceMessageIds: [`user-${index}`],
+    }));
+    for (const requirement of expected) {
+      const proposed = emptySemanticCheckpoint();
+      proposed.userConstraints = [requirement];
+      state = mergeSemanticCheckpoint(extractSemanticCheckpoint([], state), proposed);
+    }
+    expect(state.userConstraints).toEqual(expected);
+    const view = fitSemanticCheckpointToTokenBudget(state, 150, text => Math.ceil(text.length / 4));
+    expect(view.userConstraints.length).toBeLessThan(expected.length);
+    expect(state.userConstraints).toEqual(expected);
+  });
+
   it('preserves deterministic request identity when a reducer omits it', () => {
     const previous = emptySemanticCheckpoint();
     previous.objective = { text: 'Build the complete system.', sourceMessageIds: ['u1'] };
