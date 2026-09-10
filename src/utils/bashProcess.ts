@@ -17,6 +17,22 @@ export function spawnBashCommand(command: string, options: SpawnOptions): ChildP
   });
 }
 
+/** Hand off ownership only after spawn succeeds; failed spawn settles on close. */
+export function waitForBashSpawn(child: ChildProcess): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const onSpawn = () => {
+      child.removeListener('error', onError);
+      resolve();
+    };
+    const onError = (error: Error) => {
+      child.removeListener('spawn', onSpawn);
+      child.once('close', () => reject(error));
+    };
+    child.once('spawn', onSpawn);
+    child.once('error', onError);
+  });
+}
+
 /** Signal a detached Unix process group, or the direct child on other platforms. */
 export function signalBashProcess(child: ChildProcess, signal: NodeJS.Signals): boolean {
   if (process.platform !== 'win32' && child.pid && child.pid > 0) {

@@ -13,7 +13,7 @@ import { TIMEOUT_LIMITS, TOOL_OUTPUT_ESTIMATES } from '../config/toolDefaults.js
 import { formatError } from '../utils/errorUtils.js';
 import { ServiceRegistry } from '../services/ServiceRegistry.js';
 import { CircularBuffer } from '../services/BashProcessManager.js';
-import { spawnBashCommand, waitForBashClose } from '../utils/bashProcess.js';
+import { spawnBashCommand, waitForBashClose, waitForBashSpawn } from '../utils/bashProcess.js';
 
 /**
  * Whitelist of safe environment variables to pass to spawned processes.
@@ -462,14 +462,6 @@ export class BashTool extends BaseTool {
       env: this.getSafeEnvironment(),
     });
 
-    if (!child.pid) {
-      return this.formatErrorResponse(
-        'Failed to spawn background process',
-        'system_error',
-        'Process did not receive a PID'
-      );
-    }
-
     // Pipe stdout to circular buffer
     if (child.stdout) {
       child.stdout.on('data', (data: Buffer) => {
@@ -484,10 +476,16 @@ export class BashTool extends BaseTool {
       });
     }
 
-    // Register process with manager
+    try {
+      await waitForBashSpawn(child);
+    } catch (error) {
+      return this.formatErrorResponse(`Failed to spawn background process: ${formatError(error)}`, 'system_error');
+    }
+
+    // Register only a successfully spawned process with the manager.
     const processInfo = {
       id: shellId,
-      pid: child.pid,
+      pid: child.pid!,
       command,
       process: child,
       outputBuffer,
