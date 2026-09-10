@@ -56,6 +56,8 @@ export class SessionManager implements IService {
   // Debouncing for auto-save - reduces I/O by batching rapid saves
   private debounceTimer: NodeJS.Timeout | null = null;
   private pendingAutoSave: { sessionName: string; updates: Partial<Session> } | null = null;
+  /** Owned writes outlive the debounce slot; failed writes remain visible to barriers. */
+  private autoSaveOperations = new Map<Promise<void>, string>();
   private readonly DEBOUNCE_DELAY_MS = 2000; // 2 seconds
   private isShuttingDown: boolean = false;
 
@@ -1298,17 +1300,30 @@ export class SessionManager implements IService {
   /** Flush the pending message snapshot, optionally only for one session. */
   private async flushPendingAutoSave(sessionName?: string): Promise<void> {
     const pending = this.pendingAutoSave;
-    if (!pending || (sessionName && pending.sessionName !== sessionName)) return;
-
-    this.pendingAutoSave = null;
-    logger.debug('[SESSION] Flushing pending debounced save');
-    const transcript = pending.updates.transcript ?? pending.updates.messages ?? [];
-    await this.mutateSessionIncremental(
-      pending.sessionName,
-      true,
-      { ...pending.updates, active_plugins: pending.updates.active_plugins ?? [] },
-      transcript,
-    );
+    if (pending && (!sessionName || pending.sessionName === sessionName)) {
+      this.pendingAutoSave = null;
+      logger.debug('[SESSION] Flushing pending debounced save');
+      // Install ownership before entering the asynchronous storage operation.
+      const operation = Promise.resolve().then(async () => {
+        const transcript = pending.updates.transcript ?? pending.updates.messages ?? [];
+        await this.mutateSessionIncremental(
+          pending.sessionName,
+          true,
+          { ...pending.updates, active_plugins: pending.updates.active_plugins ?? [] },
+          transcript,
+        );
+      });
+      this.autoSaveOperations.set(operation, pending.sessionName);
+      // Observe rejection but retain its authoritative promise. A later barrier
+      // must not report success merely because a timer already logged failure.
+      void operation.then(() => this.autoSaveOperations.delete(operation), () => {});
+    }
+    const operations = [...this.autoSaveOperations]
+      .filter(([, name]) => !sessionName || name === sessionName)
+      .map(([operation]) => operation);
+    const settled = await Promise.allSettled(operations);
+    const failures = settled.filter(result => result.status === 'rejected').map(result => result.reason);
+    if (failures.length) throw new AggregateError(failures, 'Session autosave persistence failed');
   }
 
   /**
