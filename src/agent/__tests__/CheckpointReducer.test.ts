@@ -328,6 +328,35 @@ describe('parseSemanticCheckpoint', () => {
 });
 
 describe('mergeSemanticCheckpoint', () => {
+  it('still deduplicates repeated literal constraints without mutating its inputs', () => {
+    const previous = emptySemanticCheckpoint();
+    previous.userConstraints = [{ text: 'Keep the public API stable.', sourceMessageIds: ['u1'] }];
+    const proposed = structuredClone(previous);
+    const before = structuredClone({ previous, proposed });
+    const merged = mergeSemanticCheckpoint(previous, proposed);
+    expect(merged.userConstraints).toEqual(previous.userConstraints);
+    expect({ previous, proposed }).toEqual(before);
+  });
+
+  it.each(['userConstraints', 'decisions', 'completedWork', 'durableFacts'] as const)(
+    'preserves case-sensitive %s through repeated checkpoint generations',
+    key => {
+      const expected = ['Preserve identifier Foo.', 'Preserve identifier foo.'].map((text, index) => ({
+        text, sourceMessageIds: [`source-${index}`],
+      }));
+      let state = emptySemanticCheckpoint();
+      for (const entry of expected) {
+        const proposed = emptySemanticCheckpoint();
+        proposed[key] = [entry];
+        state = mergeSemanticCheckpoint(extractSemanticCheckpoint([], state), proposed);
+      }
+      for (let generation = 0; generation < 3; generation++) {
+        state = mergeSemanticCheckpoint(extractSemanticCheckpoint([], state), emptySemanticCheckpoint());
+      }
+      expect(state[key]).toEqual(expected);
+    },
+  );
+
   it('retains accumulated constraints through repeated extraction and merging', () => {
     let state = emptySemanticCheckpoint();
     const expected = Array.from({ length: 40 }, (_, index) => ({

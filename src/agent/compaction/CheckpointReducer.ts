@@ -33,7 +33,9 @@ function uniqueFacts<T extends SemanticFact>(facts: readonly T[], limit: number 
   const seen = new Set<string>();
   const result: T[] = [];
   for (const item of facts) {
-    const key = item.text.trim().toLowerCase();
+    // Facts can contain case-sensitive identifiers and values. Deduplicate
+    // literal text, not a normalized approximation of its meaning.
+    const key = item.text.trim();
     if (!key || seen.has(key)) continue;
     seen.add(key);
     result.push(item);
