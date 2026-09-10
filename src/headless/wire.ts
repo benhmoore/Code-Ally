@@ -6,6 +6,7 @@
  */
 
 import { ActivityEventType, type ActivityEvent } from '../types/index.js';
+import { matchesAnyToolGlob } from '../tools/toolNameAliases.js';
 import type { RunOutcome } from '../services/RunSupervisor.js';
 
 export interface WireSystemInit {
@@ -111,6 +112,20 @@ export const WIRE_EVENT_MAP: Partial<Record<ActivityEventType, WireMapper>> = {
     };
   },
 };
+
+/**
+ * Tool names the init event advertises.
+ *
+ * A run authorization policy withholds the disallowed tools from the model, so
+ * listing them here would promise the consumer a call the run refuses.
+ */
+export function advertisedToolNames(
+  names: readonly string[],
+  disallowed: readonly string[],
+): string[] {
+  if (disallowed.length === 0) return [...names];
+  return names.filter(name => !matchesAnyToolGlob(name, disallowed));
+}
 
 /** Map one activity event to its wire event, or null when it is not on the wire. */
 export function mapActivityEvent(event: ActivityEvent, sessionId: string): WireEvent | null {
