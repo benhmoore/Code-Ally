@@ -165,7 +165,7 @@ describe('ConversationCompactor', () => {
     const reloadedSessions = new SessionManager({ sessionsDir: directory });
     try {
       await sessions.initialize();
-      sessions.setCurrentSession('provenance');
+      await sessions.createSession('provenance');
       const manager = new ConversationManager({ initialMessages: [
         { id: 'prompt', role: 'system', content: 'Regenerated system prompt' },
         history()[0]!,

@@ -192,16 +192,16 @@ describe('SessionManager', () => {
       expect(session?.messages).toEqual(messages);
     });
 
-    it('should create session if it does not exist', async () => {
+    it('requires explicit creation instead of recreating a missing session during save', async () => {
       const messages: Message[] = [
         { role: 'user', content: 'Hello' },
       ];
 
       const result = await sessionManager.saveSession('new-save-test', messages);
-      expect(result).toBe(true);
+      expect(result).toBe(false);
 
       const session = await sessionManager.loadSession('new-save-test');
-      expect(session?.messages).toEqual(messages);
+      expect(session).toBeNull();
     });
 
     it('should update timestamps', async () => {

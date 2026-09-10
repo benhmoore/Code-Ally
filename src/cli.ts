@@ -496,6 +496,9 @@ async function handleOnceMode(
   // Only use sessions if explicitly requested via --session
   if (options.session && !options.noSession) {
     sessionName = options.session;
+    if (!await sessionManager.sessionExists(sessionName)) {
+      await sessionManager.createSession(sessionName);
+    }
     sessionManager.setCurrentSession(sessionName);
 
     // Notify PatchManager about the session change

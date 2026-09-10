@@ -242,21 +242,6 @@ export class SessionManager implements IService {
     return join(this.sessionsDir, sessionName);
   }
 
-  private createEmptySession(sessionName: string): Session {
-    const now = new Date().toISOString();
-    return {
-      id: sessionName,
-      name: sessionName,
-      created_at: now,
-      updated_at: now,
-      working_dir: process.cwd(),
-      messages: [],
-      transcript: [],
-      metadata: {},
-      active_plugins: [],
-    };
-  }
-
   private transcriptHash(messages: readonly Message[]): string {
     return createHash('sha256').update(JSON.stringify(messages)).digest('hex');
   }
@@ -596,14 +581,12 @@ export class SessionManager implements IService {
   /** Serialize an entire read-modify-write operation for one session. */
   private async mutateSession(
     sessionName: string,
-    createIfMissing: boolean,
     update: (session: Session) => void
   ): Promise<boolean> {
     return this.enqueueSessionOperation(sessionName, async () => {
       const manifest = await this.loadSessionManifest(sessionName);
-      const session = manifest ? await this.hydrateTranscript(sessionName, manifest)
-        : (createIfMissing ? this.createEmptySession(sessionName) : null);
-      if (!session) return false;
+      if (!manifest) throw new Error(`Session ${sessionName} does not exist`);
+      const session = await this.hydrateTranscript(sessionName, manifest);
 
       update(session);
       session.updated_at = new Date().toISOString();
@@ -615,14 +598,12 @@ export class SessionManager implements IService {
   /** Update a manifest and append a bounded live tail without hydrating history. */
   private async mutateSessionIncremental(
     sessionName: string,
-    createIfMissing: boolean,
     updates: Partial<Session>,
     transcriptTail: readonly Message[],
   ): Promise<boolean> {
     return this.enqueueSessionOperation(sessionName, async () => {
-      let manifest = await this.loadSessionManifest(sessionName) ??
-        (createIfMissing ? this.createEmptySession(sessionName) : null);
-      if (!manifest) return false;
+      let manifest = await this.loadSessionManifest(sessionName);
+      if (!manifest) throw new Error(`Session ${sessionName} does not exist`);
       if (manifest.transcript && !manifest.transcript_segments) {
         manifest = await this.externalizeTranscript(sessionName, manifest);
       }
@@ -742,7 +723,7 @@ export class SessionManager implements IService {
   ): Promise<boolean> {
     try {
       await this.flushPendingAutoSave(sessionName);
-      await this.mutateSession(sessionName, true, (session) => {
+      await this.mutateSession(sessionName, (session) => {
         session.messages = this.filterMessagesForPersistence(messages);
         session.transcript = this.filterMessagesForPersistence(transcript);
         if (checkpoint) session.conversation_checkpoint = structuredClone(checkpoint);
@@ -799,6 +780,12 @@ export class SessionManager implements IService {
    * @returns True if deleted successfully
    */
   async deleteSession(sessionName: string): Promise<boolean> {
+    this.getSessionDirectory(sessionName);
+    await this.flushPendingAutoSave(sessionName);
+    return this.enqueueSessionOperation(sessionName, () => this.deleteSessionFiles(sessionName));
+  }
+
+  private async deleteSessionFiles(sessionName: string): Promise<boolean> {
     const sessionPath = this.getSessionPath(sessionName);
     const sessionDir = this.getSessionDirectory(sessionName);
 
@@ -1110,7 +1097,7 @@ export class SessionManager implements IService {
   ): Promise<boolean> {
     try {
       await this.flushPendingAutoSave(sessionName);
-      return await this.mutateSession(sessionName, false, (session) => {
+      return await this.mutateSession(sessionName, (session) => {
         session.metadata = { ...session.metadata, ...metadata };
       });
     } catch (error) {
@@ -1135,7 +1122,7 @@ export class SessionManager implements IService {
   ): Promise<boolean> {
     try {
       await this.flushPendingAutoSave(sessionName);
-      return await this.mutateSession(sessionName, false, (session) => {
+      return await this.mutateSession(sessionName, (session) => {
         Object.assign(session, updates);
       });
     } catch (error) {
@@ -1204,7 +1191,7 @@ export class SessionManager implements IService {
 
     try {
       await this.flushPendingAutoSave(name);
-      return await this.mutateSession(name, true, (session) => {
+      return await this.mutateSession(name, (session) => {
         session.todos = todos;
       });
     } catch (error) {
@@ -1236,7 +1223,6 @@ export class SessionManager implements IService {
         const transcript = pending.updates.transcript ?? pending.updates.messages ?? [];
         await this.mutateSessionIncremental(
           pending.sessionName,
-          true,
           { ...pending.updates, active_plugins: pending.updates.active_plugins ?? [] },
           transcript,
         );
@@ -1283,7 +1269,7 @@ export class SessionManager implements IService {
 
     try {
       await this.flushPendingAutoSave(name);
-      return await this.mutateSession(name, false, (session) => {
+      return await this.mutateSession(name, (session) => {
         session.messages = this.filterMessagesForPersistence(messages);
         session.transcript = this.filterMessagesForPersistence(transcript);
         session.provider_state = structuredClone(providerState);
@@ -1311,7 +1297,7 @@ export class SessionManager implements IService {
 
     try {
       await this.flushPendingAutoSave(name);
-      return await this.mutateSessionIncremental(name, true, {
+      return await this.mutateSessionIncremental(name, {
         messages: this.filterMessagesForPersistence(messages),
         conversation_checkpoint: structuredClone(checkpoint),
         provider_state: structuredClone(checkpoint.providerState),
