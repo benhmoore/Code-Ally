@@ -51,11 +51,29 @@ describe('RunSupervisor', () => {
     const reopened = createSupervisor();
     await reopened.initialize();
     expect(reopened.getActiveRun()).toBeUndefined();
-    expect((await reopened.listInterruptedRuns())[0]?.runId).toBe(run.runId);
+    expect((await reopened.listResumableRuns())[0]?.runId).toBe(run.runId);
     const resumed = await reopened.resumeRun(run.runId);
     expect(resumed.status).toBe('running');
     const journal = await fs.readFile(join(dir, run.runId, 'journal.jsonl'), 'utf8');
     expect(journal).toContain('run_resumed');
+  });
+
+  it('explicitly resumes blocked work with the original objective and policy after reopening', async () => {
+    const first = createSupervisor();
+    await first.initialize();
+    const run = await first.startRun('finish the complete migration', policy);
+    await first.recordProgress('schema validated');
+    await first.block('Need additional guidance');
+    await first.interruptForShutdown('app closed');
+    const reopened = createSupervisor();
+    await reopened.initialize();
+    expect(reopened.getActiveRun()).toBeUndefined();
+    expect((await reopened.listResumableRuns())[0]).toMatchObject({ runId: run.runId, status: 'blocked' });
+    const resumed = await reopened.resumeRun(run.runId);
+    expect(resumed).toMatchObject({ runId: run.runId, objective: run.objective, policy, status: 'running' });
+    const journal = await fs.readFile(join(dir, run.runId, 'journal.jsonl'), 'utf8');
+    expect(journal).toContain('schema validated');
+    expect(journal).toContain('"previousStatus":"blocked"');
   });
 
   it('refuses completion while a non-idempotent effect is unknown', async () => {
@@ -258,7 +276,7 @@ describe('RunSupervisor', () => {
       [run] = await once(child, 'message', { signal: AbortSignal.timeout(10000) });
       const observer = createSupervisor();
       await observer.initialize();
-      expect(await observer.listInterruptedRuns()).toEqual([]);
+      expect(await observer.listResumableRuns()).toEqual([]);
       await expect(observer.resumeRun(run.runId)).rejects.toThrow(/owned/);
     } finally {
       if (child.exitCode === null && child.signalCode === null) {
@@ -270,7 +288,7 @@ describe('RunSupervisor', () => {
     const reopened = createSupervisor();
     await reopened.initialize();
     expect(reopened.getActiveRun()).toBeUndefined();
-    expect((await reopened.listInterruptedRuns())[0]?.runId).toBe(run.runId);
+    expect((await reopened.listResumableRuns())[0]?.runId).toBe(run.runId);
     await reopened.resumeRun(run.runId);
     const completion = await reopened.claimComplete('done');
     expect(completion.accepted).toBe(false);
@@ -315,10 +333,10 @@ describe('RunSupervisor', () => {
     const reopened = createSupervisor();
     await reopened.initialize();
     expect(JSON.parse(await fs.readFile(statePath, 'utf8')).status).toBe('running');
-    expect((await reopened.listInterruptedRuns())[0]?.runId).toBe(run.runId);
+    expect((await reopened.listResumableRuns())[0]?.runId).toBe(run.runId);
     write.mockRestore();
     await reopened.initialize();
-    expect((await reopened.listInterruptedRuns())[0]?.runId).toBe(run.runId);
+    expect((await reopened.listResumableRuns())[0]?.runId).toBe(run.runId);
   });
 
   it('does not publish completion before journal sync finishes', async () => {
@@ -361,7 +379,7 @@ describe('RunSupervisor', () => {
     const reopened = createSupervisor();
     await reopened.initialize();
     expect(JSON.parse(await fs.readFile(statePath, 'utf8')).status).toBe('completed');
-    expect(await reopened.listInterruptedRuns()).toEqual([]);
+    expect(await reopened.listResumableRuns()).toEqual([]);
     await expect(reopened.resumeRun(run.runId)).rejects.toThrow(/completed/);
   });
 

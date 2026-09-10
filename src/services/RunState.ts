@@ -1,4 +1,8 @@
-import type { RunSnapshot } from './RunSupervisor.js';
+import type { RunSnapshot, RunStatus } from './RunSupervisor.js';
+
+export function isResumableRunStatus(status: RunStatus): boolean {
+  return status === 'interrupted' || status === 'blocked';
+}
 import type { RunPolicy } from './RunPolicyManager.js';
 import { validateRunJournalEvent, type RunJournalEvent } from './RunJournal.js';
 
@@ -42,7 +46,7 @@ export function reduceRunEvent(previous: RunState | undefined, event: RunJournal
   const requireRunning = () => { if (!running) throw new Error(`Run is ${snapshot.status}`); };
   switch (event.type) {
     case 'run_resumed':
-      if (snapshot.status !== 'interrupted') throw new Error(`Run is ${snapshot.status}, not interrupted`);
+      if (!isResumableRunStatus(snapshot.status)) throw new Error(`Run is ${snapshot.status}, not resumable`);
       snapshot.status = 'running';
       snapshot.outcome = undefined;
       break;

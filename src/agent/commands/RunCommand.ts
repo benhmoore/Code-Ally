@@ -11,8 +11,8 @@ export class RunCommand extends Command {
     description: 'Inspect or explicitly resume durable objectives',
     helpCategory: 'Tasks',
     subcommands: [
-      { name: 'list', description: 'List interrupted durable objectives' },
-      { name: 'resume', args: '<run-id>', description: 'Explicitly resume an interrupted objective' },
+      { name: 'list', description: 'List interrupted or blocked durable objectives' },
+      { name: 'resume', args: '<run-id>', description: 'Explicitly resume an interrupted or blocked objective' },
     ],
   };
   static { CommandRegistry.register(RunCommand.metadata); }
@@ -24,10 +24,10 @@ export class RunCommand extends Command {
     if (!supervisor) return this.createError('Durable run supervisor is unavailable');
     const action = args[0]?.toLowerCase() ?? 'list';
     if (action === 'list') {
-      const runs = await supervisor.listInterruptedRuns();
-      if (!runs.length) return this.createResponse('No interrupted durable objectives.');
+      const runs = await supervisor.listResumableRuns();
+      if (!runs.length) return this.createResponse('No resumable durable objectives.');
       return this.createResponse(runs.map((run) =>
-        `\`${run.runId}\` — ${run.objective.slice(0, 160)} (${new Date(run.updatedAt).toLocaleString()})`
+        `\`${run.runId}\` — ${run.objective.slice(0, 160)} [${run.status}] (${new Date(run.updatedAt).toLocaleString()})`
       ).join('\n'));
     }
     if (action === 'resume' && args[1]) {

@@ -8,7 +8,7 @@ import { FileOwnership } from '../utils/FileOwnership.js';
 import { InvalidRunJournalError, type RunJournalEvent } from './RunJournal.js';
 import { RunJournalStore } from './RunJournalStore.js';
 import { RunExecution } from './RunExecution.js';
-import { reduceRunEvent, type RunState } from './RunState.js';
+import { isResumableRunStatus, reduceRunEvent, type RunState } from './RunState.js';
 import { logger } from './Logger.js';
 export type { RunJournalEvent } from './RunJournal.js';
 
@@ -86,14 +86,14 @@ export class RunSupervisor {
     }
   }
 
-  async listInterruptedRuns(limit = 20): Promise<RunSnapshot[]> {
+  async listResumableRuns(limit = 20): Promise<RunSnapshot[]> {
     await fs.mkdir(this.runsDir, { recursive: true });
     const snapshots: RunSnapshot[] = [];
     for (const entry of await fs.readdir(this.runsDir, { withFileTypes: true })) {
       if (!entry.isDirectory()) continue;
       try {
         const state = await this.journals.replay(entry.name);
-        if (state.snapshot.status === 'interrupted') snapshots.push(state.snapshot);
+        if (isResumableRunStatus(state.snapshot.status)) snapshots.push(state.snapshot);
       } catch (error) {
         if (!(error instanceof InvalidRunJournalError) && (error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
         logger.warn('Run journal could not be listed:', entry.name, error);
@@ -113,7 +113,7 @@ export class RunSupervisor {
         let state: RunState;
         try { state = await this.journals.replay(runId); }
         catch (cause) { throw new Error(`Cannot resume run ${runId}: journal recovery failed`, { cause }); }
-        if (state.snapshot.status !== 'interrupted') throw new Error(`Run ${runId} is ${state.snapshot.status}, not interrupted`);
+        if (!isResumableRunStatus(state.snapshot.status)) throw new Error(`Run ${runId} is ${state.snapshot.status}, not resumable`);
         await this.journals.ensureDirectory(runId);
         this.active = { runId, ownership, state, executions: 0, retired: false };
         await this.commit('run_resumed', { previousStatus: state.snapshot.status });
