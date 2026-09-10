@@ -589,9 +589,16 @@ export class SessionManager implements IService {
     return this.enqueueSessionOperation(sessionName, async () => {
       const manifest = await this.loadSessionManifest(sessionName);
       if (!manifest) throw new Error(`Session ${sessionName} does not exist`);
-      const session = await this.hydrateTranscript(sessionName, manifest);
+      const session = { ...manifest };
 
       update(session, snapshot);
+      // Replacing history must not silently overwrite a damaged archive. Pure
+      // manifest updates leave that archive untouched and need no segment reads.
+      if (session.transcript !== undefined) {
+        for (const ref of manifest.transcript_segments ?? []) {
+          await this.readTranscriptSegment(sessionName, ref);
+        }
+      }
       session.updated_at = new Date().toISOString();
       await this.writeSessionFile(sessionName, session);
       return true;
@@ -688,27 +695,36 @@ export class SessionManager implements IService {
 
   private async writeSessionFile(sessionName: string, session: Session, overwrite = true): Promise<void> {
     const sessionPath = this.getSessionPath(sessionName);
-    const manifest = await this.externalizeTranscript(sessionName, session);
+    // A supplied transcript replaces history. A manifest-only mutation retains
+    // immutable archive references without loading or re-encoding their contents.
+    const replacesHistory = session.transcript !== undefined || session.transcript_segments === undefined;
+    const manifest = replacesHistory ? await this.externalizeTranscript(sessionName, session) : session;
     const versionedManifest = stampVersion(manifest, SESSION_SCHEMA);
     await atomicWriteFile(sessionPath, JSON.stringify(versionedManifest, null, 2), { overwrite });
     // Only collect old chunks after the new manifest is durable.
-    try {
-      await this.pruneTranscriptSegments(sessionName, manifest.transcript_segments ?? []);
-    } catch (error) {
-      // Garbage collection is never part of the commit's success condition.
-      logger.warn(`[SESSION] Could not prune old transcript segments for ${sessionName}:`, error);
+    if (replacesHistory) {
+      try {
+        await this.pruneTranscriptSegments(sessionName, manifest.transcript_segments ?? []);
+      } catch (error) {
+        // Garbage collection is never part of the commit's success condition.
+        logger.warn(`[SESSION] Could not prune old transcript segments for ${sessionName}:`, error);
+      }
     }
     // Callers always see the hydrated shape, regardless of cache vs disk path.
-    const versioned = stampVersion({
-      ...manifest,
-      transcript: structuredClone(session.transcript ?? session.messages),
-    }, SESSION_SCHEMA);
-    this.sessionCache.set(sessionName, {
-      session: structuredClone(versioned),
-      loadedAt: Date.now(),
-    });
-    this.evictOldestCacheEntryIfNeeded();
-    logger.debug(`[SESSION] Saved session ${sessionName} atomically and updated cache`);
+    if (replacesHistory) {
+      const versioned = stampVersion({
+        ...manifest,
+        transcript: structuredClone(session.transcript ?? session.messages),
+      }, SESSION_SCHEMA);
+      this.sessionCache.set(sessionName, {
+        session: structuredClone(versioned),
+        loadedAt: Date.now(),
+      });
+      this.evictOldestCacheEntryIfNeeded();
+    } else {
+      this.sessionCache.delete(sessionName);
+    }
+    logger.debug(`[SESSION] Saved session ${sessionName} atomically`);
   }
 
   /**

@@ -23,6 +23,33 @@ describe('explicit session snapshot ownership', () => {
     await fs.rm(dir, { recursive: true, force: true });
   });
 
+  it.each(['metadata', 'todos', 'fields'] as const)('updates %s without reading or rewriting archived history', async mode => {
+    const transcript: Message[] = Array.from({ length: 300 }, (_, index) => ({
+      id: `history-${index}`, role: 'user', content: `message ${index}`,
+    }));
+    const messages = transcript.slice(-2);
+    expect(await manager.saveSession('owned', messages, transcript)).toBe(true);
+    const readSegment = vi.spyOn(manager as any, 'readTranscriptSegment');
+    const storeSegment = vi.spyOn(manager as any, 'storeTranscriptSegment');
+    const todos: TodoItem[] = [{ id: 'next', task: 'continue', status: 'pending' }];
+    const updated = mode === 'metadata'
+      ? await manager.updateMetadata('owned', { title: 'updated' })
+      : mode === 'todos'
+        ? await manager.setTodos(todos)
+        : await manager.updateSession('owned', { todos });
+    expect(updated).toBe(true);
+    expect(readSegment).not.toHaveBeenCalled();
+    expect(storeSegment).not.toHaveBeenCalled();
+    // Both the existing manager and a new reader must expose complete history.
+    for (const reader of [manager, new SessionManager({ sessionsDir: dir })]) {
+      const restored = await reader.loadSession('owned');
+      expect(restored?.transcript).toEqual(transcript);
+      expect(restored?.messages).toEqual(messages);
+      if (mode === 'metadata') expect(restored?.metadata.title).toBe('updated');
+      else expect(restored?.todos).toEqual(todos);
+    }
+  });
+
   it.each(['save', 'replace', 'checkpoint'] as const)('owns messages and related state at %s admission', async mode => {
     const messages: Message[] = [{ id: 'm1', role: 'user', content: 'submitted' }];
     const transcript = structuredClone(messages);
