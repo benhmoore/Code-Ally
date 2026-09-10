@@ -11,10 +11,9 @@ import { ActivityStream } from '../services/ActivityStream.js';
 import { ChildProcess } from 'child_process';
 import { TIMEOUT_LIMITS, TOOL_OUTPUT_ESTIMATES } from '../config/toolDefaults.js';
 import { formatError } from '../utils/errorUtils.js';
-import { logger } from '../services/Logger.js';
 import { ServiceRegistry } from '../services/ServiceRegistry.js';
 import { CircularBuffer } from '../services/BashProcessManager.js';
-import { spawnBashCommand } from '../utils/bashProcess.js';
+import { spawnBashCommand, waitForBashClose } from '../utils/bashProcess.js';
 
 /**
  * Whitelist of safe environment variables to pass to spawned processes.
@@ -367,28 +366,6 @@ export class BashTool extends BaseTool {
   }
 
   /**
-   * Kill a process and its entire process group
-   *
-   * On Unix systems, uses negative PID to kill the entire process group.
-   * On Windows, kills only the main process.
-   */
-  private killProcessGroup(child: ChildProcess, signal: NodeJS.Signals): void {
-    if (!child.pid) return;
-
-    try {
-      if (process.platform !== 'win32' && child.pid) {
-        // On Unix, kill the entire process group (negative PID)
-        process.kill(-child.pid, signal);
-      } else {
-        // On Windows, just kill the process
-        child.kill(signal);
-      }
-    } catch (error) {
-      logger.debug('[BashTool] Error killing process:', error);
-    }
-  }
-
-  /**
    * Validate timeout parameter
    */
   private validateTimeout(timeout: any): number {
@@ -526,8 +503,18 @@ export class BashTool extends BaseTool {
     try {
       processManager.addProcess(processInfo);
     } catch (error) {
-      // Failed to add (probably hit limit) - kill the process
-      this.killProcessGroup(child, 'SIGTERM');
+      // Rejected admission does not transfer ownership. Reap the child before
+      // returning the failure; do not leave untracked work executing.
+      const cancellation = new AbortController();
+      cancellation.abort();
+      try {
+        await waitForBashClose(child, cancellation.signal, TIMEOUT_LIMITS.GRACEFUL_SHUTDOWN_DELAY);
+      } catch (cleanupError) {
+        return this.formatErrorResponse(
+          `${formatError(error)}; process cleanup failed: ${formatError(cleanupError)}`,
+          'system_error',
+        );
+      }
       return this.formatErrorResponse(
         formatError(error),
         'system_error'
@@ -626,40 +613,8 @@ export class BashTool extends BaseTool {
         env: this.getSafeEnvironment(),
       });
 
-      // Set up abort handler
-      let abortTimeoutHandle: NodeJS.Timeout | null = null;
-      const abortHandler = () => {
-        this.killProcessGroup(child, 'SIGTERM');
-        setTimeout(() => {
-          if (child.exitCode === null) {
-            this.killProcessGroup(child, 'SIGKILL');
-          }
-        }, TIMEOUT_LIMITS.GRACEFUL_SHUTDOWN_DELAY);
-
-        // Hard timeout: force resolve after 2 seconds if process still hasn't closed
-        // This prevents limbo state where tool call disappears but never completes
-        abortTimeoutHandle = setTimeout(() => {
-          if (child.exitCode === null) {
-            logger.warn('[BashTool] Process did not respond to SIGKILL after abort, forcing completion');
-            const stdout = stdoutBuffer.toString();
-            const stderr = stderrBuffer.toString();
-            // Force resolve the promise even if process hasn't closed
-            resolve(
-              this.formatErrorResponse(
-                'Command interrupted by user (forced completion)',
-                'interrupted',
-                undefined,
-                {
-                  content: stdout,
-                  stderr,
-                  display_content: combineOutputStreams(stdout, stderr),
-                  return_code: child.exitCode,
-                },
-              )
-            );
-          }
-        }, 2000); // 2 seconds: 500ms grace + 1500ms for SIGKILL to take effect
-      };
+      const cancellation = new AbortController();
+      const abortHandler = () => cancellation.abort();
 
       if (abortSignal) {
         if (abortSignal.aborted) {
@@ -676,10 +631,7 @@ export class BashTool extends BaseTool {
       const timeoutHandle: NodeJS.Timeout | null = Number.isFinite(timeout)
         ? setTimeout(() => {
             timedOut = true;
-            this.killProcessGroup(child, 'SIGTERM');
-            setTimeout(() => {
-              if (child.exitCode === null) this.killProcessGroup(child, 'SIGKILL');
-            }, TIMEOUT_LIMITS.GRACEFUL_SHUTDOWN_DELAY);
+            cancellation.abort();
           }, timeout)
         : null;
 
@@ -706,16 +658,12 @@ export class BashTool extends BaseTool {
       }
 
       // Handle process exit
-      child.on('close', (code: number | null) => {
+      const cleanup = () => {
         if (timeoutHandle) clearTimeout(timeoutHandle);
-        if (abortTimeoutHandle) {
-          clearTimeout(abortTimeoutHandle);
-        }
-
-        // Clean up abort listener
-        if (abortSignal) {
-          abortSignal.removeEventListener('abort', abortHandler);
-        }
+        abortSignal?.removeEventListener('abort', abortHandler);
+      };
+      void waitForBashClose(child, cancellation.signal, TIMEOUT_LIMITS.GRACEFUL_SHUTDOWN_DELAY).then((code) => {
+        cleanup();
 
         returnCode = code;
 
@@ -760,13 +708,16 @@ export class BashTool extends BaseTool {
         const stdout = stdoutBuffer.toString();
         const stderr = stderrBuffer.toString();
 
-        // Non-zero exit code = failure (except for special cases)
-        if (returnCode !== 0 && returnCode !== null) {
+        // Only an observed zero exit code establishes success.
+        if (returnCode !== 0) {
+          const reason = returnCode === null
+            ? `Command terminated ${child.signalCode ? `by signal ${child.signalCode}` : 'without an exit code'}`
+            : `Command exited with code ${returnCode}`;
           resolve(
             this.formatErrorResponse(
-              `Command exited with code ${returnCode}`,
+              reason,
               'command_failed',
-              `Command exited with code ${returnCode}; inspect content and stderr for command diagnostics`,
+              `${reason}; inspect content and stderr for command diagnostics`,
               {
                 content: stdout,
                 stderr,
@@ -795,13 +746,8 @@ export class BashTool extends BaseTool {
             })
           );
         }
-      });
-
-      // Handle process error
-      child.on('error', (error: Error) => {
-        if (timeoutHandle) clearTimeout(timeoutHandle);
-        if (abortTimeoutHandle) clearTimeout(abortTimeoutHandle);
-        if (abortSignal) abortSignal.removeEventListener('abort', abortHandler);
+      }, (error: Error) => {
+        cleanup();
         resolve(
           this.formatErrorResponse(
             `Failed to execute command: ${error.message}`,
