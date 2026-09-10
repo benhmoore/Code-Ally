@@ -262,14 +262,17 @@ describe('RunSupervisor', () => {
   });
 
   it('reconciles a crash-left running state without auto-resuming it', async () => {
-    const child = spawn(process.execPath, ['--import', 'tsx', '--input-type=module', '-e', `
+    const child = spawn(process.execPath, ['--expose-gc', '--import', 'tsx', '--input-type=module', '-e', `
       import { RunSupervisor } from ${JSON.stringify(new URL('../RunSupervisor.ts', import.meta.url).href)};
       const supervisor = new RunSupervisor(${JSON.stringify(dir)});
       await supervisor.initialize();
       const run = await supervisor.startRun('safe publish', ${JSON.stringify(policy)});
       await supervisor.record('tool_running', { callId: 'call-crash', tool: 'bash', effect: 'non_idempotent' });
+      // Retain the owner for the child lifetime, just as an active application
+      // does. Merely keeping the event loop alive does not retain its lease.
+      process.on('message', () => process.send(supervisor.getActiveRun()));
+      global.gc();
       process.send(run);
-      setInterval(() => {}, 1000);
     `], { stdio: ['ignore', 'ignore', 'inherit', 'ipc'] });
     let run: { runId: string };
     try {
