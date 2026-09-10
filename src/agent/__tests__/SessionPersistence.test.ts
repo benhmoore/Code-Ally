@@ -1,6 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { SessionPersistence } from '../SessionPersistence.js';
 import { ServiceRegistry } from '../../services/ServiceRegistry.js';
+import { ConversationManager } from '../ConversationManager.js';
+import { emptySemanticCheckpoint, type ConversationCheckpointV1 } from '../compaction/types.js';
+import type { Message } from '../../types/index.js';
 
 describe('SessionPersistence.replaceConversation', () => {
   let registry: ServiceRegistry;
@@ -58,6 +61,37 @@ describe('SessionPersistence.replaceConversation', () => {
     const { owner, forceSave } = turnPersistence(vi.fn().mockResolvedValue(true));
     forceSave.mockResolvedValue(false);
     await expect(owner.commitTurnStart()).rejects.toThrow('Session turn boundary was not persisted');
+  });
+
+  it('owns the checkpoint handoff before awaiting autosave admission', async () => {
+    const messages: Message[] = [{ id: 'm1', role: 'user', content: 'submitted' }];
+    const conversation = new ConversationManager({ initialMessages: messages });
+    const checkpoint: ConversationCheckpointV1 = {
+      schemaVersion: 1, id: 'checkpoint', generation: 1, createdAt: new Date().toISOString(),
+      trigger: 'manual', phase: 'manual', strategy: 'local-structured', portability: 'model-validated',
+      provider: 'ollama', model: 'test',
+      source: { firstMessageId: 'm1', lastMessageId: 'm1', messageIds: ['m1'], digest: 'digest' },
+      retainedMessageIds: ['m1'], semanticState: emptySemanticCheckpoint(),
+      providerState: { kind: 'chat' }, replacementMessages: messages,
+      budget: { contextWindow: 32768, estimatedBefore: 100, triggerBudget: 200, targetBudget: 100,
+        outputReserve: 20, safetyReserve: 20, after: 80 },
+    };
+    let admit!: (value: boolean) => void;
+    const autoSave = vi.fn(() => new Promise<boolean>(resolve => { admit = resolve; }));
+    const commitConversationCheckpoint = vi.fn(async () => true);
+    registry.registerInstance('session_manager', {
+      getCurrentSession: () => 'session-1', autoSave, commitConversationCheckpoint,
+    } as never);
+    const owner = new SessionPersistence(conversation, 'test-agent');
+    const expected = structuredClone([messages, conversation.getTranscript(), checkpoint]);
+    const saving = owner.commitCheckpoint(messages, checkpoint);
+    messages[0]!.content = 'later mutation';
+    checkpoint.retainedMessageIds.push('later');
+    conversation.addMessage({ role: 'user', content: 'later input' });
+    expect(commitConversationCheckpoint).not.toHaveBeenCalled();
+    admit(true);
+    expect(await saving).toBe(true);
+    expect(commitConversationCheckpoint).toHaveBeenCalledWith(...expected);
   });
 
   it('allows an in-memory rewind when session persistence is disabled', async () => {

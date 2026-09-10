@@ -167,15 +167,21 @@ export class SessionPersistence {
     checkpoint: ConversationCheckpointV1,
   ): Promise<boolean> {
     if (this.agentDepth > 0) return true;
+    // Keep the handoff internally consistent while earlier saves are admitted.
+    const snapshot = structuredClone({
+      messages,
+      transcript: this.conversationManager.getTranscript(),
+      checkpoint,
+    });
     await this.queueSave();
     const sessionManager = ServiceRegistry.getInstance().get('session_manager');
     if (!sessionManager || typeof (sessionManager as any).commitConversationCheckpoint !== 'function') {
       return false;
     }
     return (sessionManager as any).commitConversationCheckpoint(
-      messages,
-      this.conversationManager.getTranscript(),
-      checkpoint,
+      snapshot.messages,
+      snapshot.transcript,
+      snapshot.checkpoint,
     );
   }
 }
