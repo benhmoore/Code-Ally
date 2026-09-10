@@ -403,6 +403,107 @@ Reconfigure: `/plugin configure my-plugin`
 
 ---
 
+## Hooks
+
+A hook is an external command Ally runs at a fixed point in a session. It is
+policy, not consent: a block is decided before any permission prompt and never
+asks the user. The wire format matches Claude Code, so a hook script written
+for either host runs unmodified under the other.
+
+### Events
+
+| Event | Fires | Payload fields | Effect of a block |
+|---|---|---|---|
+| `SessionStart` | after plugins, skills and MCP servers load, before the first turn | `source` | logged only |
+| `UserPromptSubmit` | root agent, before the model sees the message | `prompt` | the reason is the answer, no model call |
+| `PreToolUse` | every tool call, before the form and permission steps | `tool_name`, `tool_input` | tool never runs, reason returned to the model |
+| `PostToolUse` | after the tool returns | `tool_name`, `tool_input`, `tool_response` | cannot undo the call; the reason is appended to the result |
+| `Stop` | root agent, at the end of a turn | `stop_hook_active` | logged only |
+| `SessionEnd` | at exit, with a two second budget | `reason` | ignored |
+
+Sub-agents fire no session-level events. Their tool calls go through the same
+orchestrator, so `PreToolUse` and `PostToolUse` cover them.
+
+### Config sources
+
+Merged per event in this order, with nothing overriding anything. A block from
+any source blocks.
+
+1. The `hooks` key of the profile `config.json`.
+2. `hooks/hooks.json` in each enabled plugin.
+3. The `hooks` key of the file passed to `--settings <file>`.
+
+A malformed group is dropped with a warning. A `--settings` file that is
+missing or invalid fails the run, since the caller asked for that policy by
+name.
+
+### `hooks/hooks.json`
+
+```json
+{
+  "PreToolUse": [
+    {
+      "matcher": "bash",
+      "hooks": [
+        {
+          "type": "command",
+          "command": "${CLAUDE_PLUGIN_ROOT}/hooks/block-remote-writes.sh",
+          "timeout": 5
+        }
+      ]
+    }
+  ]
+}
+```
+
+`matcher` is a case-insensitive regex over the tool name, which is normalized
+first, so `Bash` and `bash` both match `bash` and `Edit` matches `apply-patch`.
+A missing matcher, or `*`, matches every call. `timeout` is in seconds and
+defaults to 60; an overrunning hook is killed with its process group and
+treated as a non-blocking failure. `${CLAUDE_PLUGIN_ROOT}` and `${ENV_VAR}` are
+substituted in every command.
+
+### Payload and exit codes
+
+The payload is one JSON object on the hook's stdin: `session_id`, `cwd`,
+`hook_event_name`, and the per-event fields above. The environment adds
+`CLAUDE_PROJECT_DIR` and `ALLY_PROJECT_DIR`, plus `CLAUDE_PLUGIN_ROOT` for a
+plugin hook.
+
+| Exit code | Meaning |
+|---|---|
+| 0 | proceed; stdout is parsed as JSON when it is JSON |
+| 2 | block; stderr is the reason |
+| other | non-blocking failure, logged and ignored |
+
+Hooks within one event run concurrently and any block wins. On exit 0 the
+recognized stdout keys are:
+
+```json
+{
+  "systemMessage": "shown to the user",
+  "continue": false,
+  "stopReason": "why the run stopped",
+  "decision": "block",
+  "reason": "why",
+  "hookSpecificOutput": {
+    "hookEventName": "PreToolUse",
+    "additionalContext": "added to the prompt or the tool result",
+    "permissionDecision": "deny",
+    "permissionDecisionReason": "why",
+    "updatedInput": { "command": "git status" }
+  }
+}
+```
+
+`permissionDecision: "deny"`, `decision: "block"` and `continue: false` all
+block. `updatedInput` replaces the tool arguments before execution. For
+`SessionStart` and `UserPromptSubmit`, plain non-JSON stdout is taken as
+`additionalContext`; `SessionStart` context is rendered into the system prompt
+as one **Session context:** block.
+
+---
+
 ## Testing & Debugging
 
 ### Manual Testing
