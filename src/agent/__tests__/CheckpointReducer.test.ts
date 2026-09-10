@@ -3,12 +3,13 @@ import {
   extractSemanticCheckpoint,
   fitSemanticCheckpointToTokenBudget,
   mergeSemanticCheckpoint,
-  parseSemanticCheckpoint,
+  parseCheckpointProposal,
   renderCheckpointForModel,
   restoreCheckpointDiagnostics,
 } from '../compaction/CheckpointReducer.js';
 import { emptySemanticCheckpoint, type SemanticCheckpointStateV1 } from '../compaction/types.js';
 import type { Message } from '../../types/index.js';
+import { proposalFromState } from './checkpointFixtures.js';
 
 function toolResult(overrides: Partial<Message> & { id: string; content: string }): Message {
   return {
@@ -55,7 +56,7 @@ describe('checkpoint diagnostic provenance', () => {
   it('excludes model-authored exact diagnostic fields from reducer output', () => {
     const proposed = emptySemanticCheckpoint();
     proposed.blockers = [{ text: 'Failure', sourceMessageIds: ['tool-1'], exactError: 'invented' }];
-    expect(parseSemanticCheckpoint(JSON.stringify(proposed), ['tool-1']).blockers).toEqual([]);
+    expect(parseCheckpointProposal(JSON.stringify(proposalFromState(proposed)), ['tool-1']).blockers).toEqual([]);
   });
 });
 
@@ -367,9 +368,39 @@ describe('extractSemanticCheckpoint', () => {
   });
 });
 
-describe('parseSemanticCheckpoint', () => {
+describe('parseCheckpointProposal', () => {
+  it('rejects persisted checkpoint shapes and authoritative request fields', () => {
+    expect(() => parseCheckpointProposal(JSON.stringify(emptySemanticCheckpoint()), [])).toThrow('unknown fields');
+    const proposal = proposalFromState(emptySemanticCheckpoint());
+    expect(() => parseCheckpointProposal(JSON.stringify({ ...proposal, objective: null }), [])).toThrow('unknown fields');
+    expect(() => parseCheckpointProposal(JSON.stringify({
+      ...proposal, additions: { ...proposal.additions, currentRequest: null },
+    }), [])).toThrow('Invalid checkpoint proposal sections');
+  });
+
+  it('merges a small evidence proposal without regenerating accumulated requirements', () => {
+    const previous = emptySemanticCheckpoint();
+    previous.objective = { text: 'Finish every requirement.', sourceMessageIds: ['request'] };
+    previous.currentRequest = { text: 'Continue.', sourceMessageIds: ['latest'] };
+    previous.userConstraints = Array.from({ length: 100 }, (_, index) => ({
+      text: `Requirement ${index}`, sourceMessageIds: [`r${index}`],
+    }));
+    previous.activeWork = [{ text: 'Old task', sourceMessageIds: ['old'] }];
+    const delta = emptySemanticCheckpoint();
+    delta.userConstraints = [{ text: 'New requirement', sourceMessageIds: ['new'] }];
+    delta.nextActions = [{ text: 'Verify implementation', sourceMessageIds: ['new'] }];
+    const proposal = parseCheckpointProposal(JSON.stringify(proposalFromState(delta)), ['new']);
+    const merged = mergeSemanticCheckpoint(previous, proposal);
+    expect(merged.objective).toEqual(previous.objective);
+    expect(merged.currentRequest).toEqual(previous.currentRequest);
+    expect(merged.userConstraints).toEqual([...previous.userConstraints, ...delta.userConstraints]);
+    expect(merged.activeWork).toEqual([]);
+    expect(merged.nextActions).toEqual(delta.nextActions);
+    expect(previous.userConstraints).toHaveLength(100);
+  });
+
   it('salvages valid evidence when an independent array bucket is malformed', () => {
-    const raw = JSON.stringify({
+    const raw = JSON.stringify(proposalFromState({
       schemaVersion: 1,
       objective: { text: 'Build the project.', sourceMessageIds: ['u1'] },
       currentRequest: { text: 'Continue implementation.', sourceMessageIds: ['u1'] },
@@ -385,9 +416,9 @@ describe('parseSemanticCheckpoint', () => {
         { path: 'relative/file.js', reason: 'invalid', operation: 'created', sourceMessageIds: ['t1'] },
         { path: '/repo/file.js', reason: 'write tool', operation: 'created', sourceMessageIds: ['t1'] },
       ],
-    });
+    }));
 
-    const state = parseSemanticCheckpoint(raw, ['u1', 't1', 'a1']);
+    const state = parseCheckpointProposal(raw, ['u1', 't1', 'a1']);
 
     expect(state.decisions).toEqual([]);
     expect(state.completedWork[0]?.text).toBe('Scaffolding created.');

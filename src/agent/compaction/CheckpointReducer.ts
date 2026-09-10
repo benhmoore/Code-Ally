@@ -387,7 +387,7 @@ function isFact(
     && candidate.sourceMessageIds.every(id => typeof id === 'string' && validIds.has(id));
 }
 
-export function parseSemanticCheckpoint(
+export function parseCheckpointProposal(
   raw: string,
   validSourceIds: readonly string[],
 ): SemanticCheckpointStateV1 {
@@ -395,18 +395,20 @@ export function parseSemanticCheckpoint(
     .replace(/^```(?:json)?\s*/i, '')
     .replace(/\s*```$/, '');
   if (withoutFence.length > 64_000) throw new Error('Checkpoint JSON exceeds size limit');
-  const value = JSON.parse(withoutFence) as Record<string, unknown>;
+  const proposal = JSON.parse(withoutFence) as Record<string, unknown>;
   const validIds = new Set(validSourceIds);
-  if (!value || typeof value !== 'object'
-    || !hasOnlyKeys(value, ['schemaVersion', 'objective', 'currentRequest', ...STATE_ARRAY_KEYS, 'artifacts'])) {
-    throw new Error('Checkpoint contains unknown fields');
+  if (!proposal || typeof proposal !== 'object' || !hasOnlyKeys(proposal, ['additions', 'frontier'])) {
+    throw new Error('Checkpoint proposal contains unknown fields');
   }
-  if (value.schemaVersion !== 1) throw new Error('Checkpoint schemaVersion must be 1');
-  if (value.objective !== null && !isFact(value.objective, validIds)) throw new Error('Invalid checkpoint objective');
-  if (value.currentRequest !== null && !isFact(value.currentRequest, validIds)) throw new Error('Invalid checkpoint currentRequest');
+  const { additions, frontier } = proposal;
+  if (!additions || typeof additions !== 'object' || Array.isArray(additions)
+    || !hasOnlyKeys(additions as Record<string, unknown>, ['userConstraints', 'decisions', 'completedWork', 'durableFacts', 'artifacts'])
+    || !frontier || typeof frontier !== 'object' || Array.isArray(frontier)
+    || !hasOnlyKeys(frontier as Record<string, unknown>, ['activeWork', 'blockers', 'nextActions', 'unresolvedQuestions'])) {
+    throw new Error('Invalid checkpoint proposal sections');
+  }
+  const value = { ...additions, ...frontier } as Record<string, unknown>;
   const normalized = emptySemanticCheckpoint();
-  normalized.objective = value.objective as SemanticCheckpointStateV1['objective'];
-  normalized.currentRequest = value.currentRequest as SemanticCheckpointStateV1['currentRequest'];
   for (const key of STATE_ARRAY_KEYS) {
     const entries = value[key];
     const extras = key === 'decisions' ? ['rationale'] : [];
@@ -591,23 +593,34 @@ export function fitSemanticCheckpointToTokenBudget(
   return fitted;
 }
 
-export const CHECKPOINT_JSON_SCHEMA = {
+export const CHECKPOINT_PROPOSAL_SCHEMA = {
   type: 'object',
   additionalProperties: false,
-  required: ['schemaVersion', 'objective', 'currentRequest', ...STATE_ARRAY_KEYS, 'artifacts'],
+  required: ['additions', 'frontier'],
   properties: {
-    schemaVersion: { const: 1 },
-    objective: { anyOf: [{ type: 'null' }, { $ref: '#/$defs/fact' }] },
-    currentRequest: { anyOf: [{ type: 'null' }, { $ref: '#/$defs/fact' }] },
-    userConstraints: { type: 'array', maxItems: 8, items: { $ref: '#/$defs/fact' } },
-    decisions: { type: 'array', maxItems: 8, items: { $ref: '#/$defs/decision' } },
-    completedWork: { type: 'array', maxItems: 12, items: { $ref: '#/$defs/fact' } },
-    activeWork: { type: 'array', maxItems: 4, items: { $ref: '#/$defs/fact' } },
-    blockers: { type: 'array', maxItems: 6, items: { $ref: '#/$defs/blocker' } },
-    nextActions: { type: 'array', maxItems: 6, items: { $ref: '#/$defs/fact' } },
-    unresolvedQuestions: { type: 'array', maxItems: 6, items: { $ref: '#/$defs/fact' } },
-    durableFacts: { type: 'array', maxItems: 12, items: { $ref: '#/$defs/fact' } },
-    artifacts: { type: 'array', maxItems: 32, items: { $ref: '#/$defs/artifact' } },
+    additions: {
+      type: 'object', additionalProperties: false,
+      description: 'Only new or revised durable evidence. Existing checkpoint records are retained by the harness; do not repeat them.',
+      required: ['userConstraints', 'decisions', 'completedWork', 'durableFacts', 'artifacts'],
+      properties: {
+        userConstraints: { type: 'array', maxItems: 8, items: { $ref: '#/$defs/fact' } },
+        decisions: { type: 'array', maxItems: 8, items: { $ref: '#/$defs/decision' } },
+        completedWork: { type: 'array', maxItems: 12, items: { $ref: '#/$defs/fact' } },
+        durableFacts: { type: 'array', maxItems: 12, items: { $ref: '#/$defs/fact' } },
+        artifacts: { type: 'array', maxItems: 32, items: { $ref: '#/$defs/artifact' } },
+      },
+    },
+    frontier: {
+      type: 'object', additionalProperties: false,
+      description: 'The complete current operational frontier, replacing the previous frontier.',
+      required: ['activeWork', 'blockers', 'nextActions', 'unresolvedQuestions'],
+      properties: {
+        activeWork: { type: 'array', maxItems: 4, items: { $ref: '#/$defs/fact' } },
+        blockers: { type: 'array', maxItems: 6, items: { $ref: '#/$defs/blocker' } },
+        nextActions: { type: 'array', maxItems: 6, items: { $ref: '#/$defs/fact' } },
+        unresolvedQuestions: { type: 'array', maxItems: 6, items: { $ref: '#/$defs/fact' } },
+      },
+    },
   },
   $defs: {
     fact: {

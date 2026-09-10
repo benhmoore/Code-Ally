@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import { proposalFromState } from './checkpointFixtures.js';
 import { ConversationCompactor } from '../ConversationCompactor.js';
 import { ConversationManager } from '../ConversationManager.js';
 import { TokenManager } from '../TokenManager.js';
@@ -24,7 +25,7 @@ it('grounds reducer diagnostics in source evidence across successive reductions'
   state.blockers = [{ text: 'Observed failure', sourceMessageIds: ['failure'], exactError }];
   const proposed = emptySemanticCheckpoint();
   proposed.blockers = [{ text: 'Check the source mismatch', sourceMessageIds: ['failure'] }];
-  client.send.mockResolvedValue({ role: 'assistant', content: JSON.stringify(proposed) });
+  client.send.mockResolvedValue({ role: 'assistant', content: JSON.stringify(proposalFromState(proposed)) });
   for (let generation = 0; generation < 2; generation++) {
     state = await (compactor as any).reduceStructured(
       [{ id: 'next', role: 'user', content: 'Continue.' }],
@@ -34,7 +35,7 @@ it('grounds reducer diagnostics in source evidence across successive reductions'
   }
   proposed.blockers = [];
   proposed.nextActions = [{ text: 'Run verification', sourceMessageIds: ['next'] }];
-  client.send.mockResolvedValue({ role: 'assistant', content: JSON.stringify(proposed) });
+  client.send.mockResolvedValue({ role: 'assistant', content: JSON.stringify(proposalFromState(proposed)) });
   state = await (compactor as any).reduceStructured(
     [{ id: 'next', role: 'user', content: 'Continue.' }],
     state, ['failure', 'next'], undefined, signal,
@@ -104,7 +105,7 @@ function structuredClient() {
       const lastId = transcript.at(-1).id;
       return {
         role: 'assistant',
-        content: JSON.stringify({
+        content: JSON.stringify(proposalFromState({
           schemaVersion: 1,
           objective: { text: 'Complete the durable objective.', sourceMessageIds: [firstId] },
           currentRequest: { text: 'Continue from the latest evidence.', sourceMessageIds: [lastId] },
@@ -117,7 +118,7 @@ function structuredClient() {
           unresolvedQuestions: [],
           durableFacts: [],
           artifacts: [],
-        }),
+        })),
       };
     }),
   } as any;
@@ -502,13 +503,13 @@ describe('ConversationCompactor', () => {
       expect(transcript.length).toBeGreaterThan(0);
       return {
         role: 'assistant',
-        content: JSON.stringify({
+        content: JSON.stringify(proposalFromState({
           schemaVersion: 1,
           objective: null,
           currentRequest: null,
           userConstraints: [], decisions: [], completedWork: [], activeWork: [], blockers: [],
           nextActions: [], unresolvedQuestions: [], durableFacts: [], artifacts: [],
-        }),
+        })),
       };
     });
     const compactor = new ConversationCompactor(
@@ -722,17 +723,20 @@ describe('ConversationCompactor', () => {
     expect(reducerMessages[0]!.content).toContain(
       'Reconcile plans against the newest successful tool evidence'
     );
-    expect(reducerMessages[0]!.content).toContain('return only new or revised evidence');
-    expect(reducerMessages[0]!.content).toContain('complete current operational frontier');
+    expect(reducerMessages[0]!.content).toContain('Existing records are retained without being regenerated');
+    expect(reducerMessages[0]!.content).toContain('those sections replace their prior values');
     const reducerOptions = client.send.mock.calls[0]![1];
-    expect(reducerOptions.responseSchema.schema.properties.artifacts.maxItems).toBe(32);
+    expect(reducerOptions.responseSchema.schema.required).toEqual(['additions', 'frontier']);
+    expect(reducerOptions.responseSchema.schema.properties).not.toHaveProperty('objective');
+    expect(reducerOptions.responseSchema.schema.properties).not.toHaveProperty('currentRequest');
+    expect(reducerOptions.responseSchema.schema.properties.additions.properties.artifacts.maxItems).toBe(32);
     expect(reducerOptions.responseSchema.schema.$defs.fact.properties.text.maxLength).toBe(800);
   });
 
   it.each(['length', 'max_tokens', 'max_output_tokens'])('falls back on an incomplete structured response (%s) even when JSON parses', async finishReason => {
     const manager = new ConversationManager({ initialMessages: history() });
     const client = structuredClient();
-    client.send.mockResolvedValue({ role: 'assistant', content: JSON.stringify(emptySemanticCheckpoint()), finishReason });
+    client.send.mockResolvedValue({ role: 'assistant', content: JSON.stringify(proposalFromState(emptySemanticCheckpoint())), finishReason });
     const compactor = new ConversationCompactor(
       client, manager, new TokenManager(16_384), new ActivityStream(), vi.fn().mockResolvedValue(true),
     );
