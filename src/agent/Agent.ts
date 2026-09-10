@@ -2482,12 +2482,12 @@ export class Agent {
    * Used by manual /compact so it shares the same mutation path as auto-compaction.
    */
   async compactCurrentConversation(options: CompactionOptions = {}): Promise<AppliedCompactionResult> {
-    const result = await this.agentCompactor.compactAndApply({
+    const result = await this.runCompactionTransaction(signal => this.agentCompactor.compactAndApply({
       instanceId: this.instanceId,
       isSpecializedAgent: this.config.isSpecializedAgent || false,
       generateId: () => this.generateId(),
       parentCallId: this.activeExecutionContext.parentCallId,
-      signal: this.interruptionManager.beginRequest(),
+      signal,
       functions: this.lastRequestFunctions,
       modelMaxOutput: this.appConfig.max_tokens,
       phase: options.phase ?? 'manual',
@@ -2495,7 +2495,7 @@ export class Agent {
       trigger: 'manual',
       phase: 'manual',
       ...options,
-    });
+    }));
 
     await this.autoSaveSession();
     return result;
@@ -2604,14 +2604,46 @@ export class Agent {
     functions?: readonly FunctionDefinition[],
     dynamicContext?: string
   ): Promise<void> {
-    let compacted = false;
+    const compacted = await this.runCompactionTransaction(async (signal, checkpointRequired) => {
+      const lastRole = this.conversationManager.getLastMessage()?.role;
+      const phase = lastRole === 'user' ? 'pre-turn' : 'mid-turn';
+      this.publishContextBudget(functions, dynamicContext);
+      const context = {
+        instanceId: this.instanceId,
+        isSpecializedAgent: this.config.isSpecializedAgent || false,
+        generateId: () => this.generateId(),
+        parentCallId: this.activeExecutionContext.parentCallId,
+        signal,
+        functions,
+        dynamicContext,
+        modelMaxOutput: this.appConfig.max_tokens,
+        phase,
+      } as const;
+      if (checkpointRequired) {
+        await this.agentCompactor.compactAndApply(context, { trigger: 'automatic', phase });
+        return true;
+      }
+      return this.agentCompactor.checkAndPerformAutoCompaction(context);
+    });
+
+    if (compacted) {
+      // Reclaim changed the conversation; tools must see the post-reclaim budget.
+      this.publishContextBudget(functions, dynamicContext);
+      await this.autoSaveSession();
+    }
+  }
+
+  /** Shared interruption and watchdog policy for every compaction entry point. */
+  private async runCompactionTransaction<T>(
+    attempt: (signal: AbortSignal, checkpointRequired: boolean) => Promise<T>,
+  ): Promise<T> {
     let checkpointRequired = false;
     // Semantic reduction is its own model request with an independent deadline
     // and the owner's abort signal. The foreground no-progress watchdog cannot
     // observe its non-streaming output; leaving it armed would abort healthy
     // reducers at the foreground timeout before their own bound expires.
     const watchdogWasActive = this.activityMonitor.isActive();
-    let checkCompleted = false;
+    let completed = false;
     if (watchdogWasActive) this.pauseActivityMonitoring();
 
     try {
@@ -2624,33 +2656,13 @@ export class Agent {
       // preliminary eviction may move the next budget estimate just below the
       // trigger, but that must not turn an interrupted checkpoint into a no-op.
       while (true) {
-        const lastRole = this.conversationManager.getLastMessage()?.role;
-        const phase = lastRole === 'user' ? 'pre-turn' : 'mid-turn';
-        this.publishContextBudget(functions, dynamicContext);
-        const context = {
-          instanceId: this.instanceId,
-          isSpecializedAgent: this.config.isSpecializedAgent || false,
-          generateId: () => this.generateId(),
-          parentCallId: this.activeExecutionContext.parentCallId,
-          signal: this.interruptionManager.beginRequest(),
-          functions,
-          dynamicContext,
-          modelMaxOutput: this.appConfig.max_tokens,
-          phase,
-        } as const;
+        const signal = this.interruptionManager.beginRequest();
         try {
-          if (checkpointRequired) {
-            await this.agentCompactor.compactAndApply(context, {
-              trigger: 'automatic',
-              phase,
-            });
-            compacted = true;
-          } else {
-            compacted = await this.agentCompactor.checkAndPerformAutoCompaction(context);
-          }
-          break;
+          const result = await attempt(signal, checkpointRequired);
+          completed = true;
+          return result;
         } catch (error) {
-          if (this.interruptionManager.getCause()?.kind !== 'user_interjection') throw error;
+          if (!signal.aborted || this.interruptionManager.getCause()?.kind !== 'user_interjection') throw error;
           logger.debug(
             '[AGENT_COMPACTION]',
             this.instanceId,
@@ -2660,17 +2672,8 @@ export class Agent {
           this.interruptionManager.reset();
         }
       }
-
-      if (compacted) {
-        // Reclaim changed the conversation; republish so tools sizing their
-        // output this turn see the post-reclaim budget rather than the one that
-        // triggered it.
-        this.publishContextBudget(functions, dynamicContext);
-        await this.autoSaveSession();
-      }
-      checkCompleted = true;
     } finally {
-      if (watchdogWasActive) this.resumeActivityMonitoring(checkCompleted);
+      if (watchdogWasActive) this.resumeActivityMonitoring(completed);
     }
   }
 

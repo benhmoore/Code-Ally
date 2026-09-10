@@ -340,6 +340,71 @@ describe('Agent - Interruption Handling', () => {
       monitor.stop();
     });
 
+    it.each(['manual', 'automatic'] as const)('retries %s compaction after interjections with a fresh signal', async mode => {
+      const compactor = (agent as any).agentCompactor;
+      const interruptions = (agent as any).interruptionManager;
+      const signals: AbortSignal[] = [];
+      const attempt = vi.fn(async (context: { signal: AbortSignal }) => {
+        signals.push(context.signal);
+        expect(context.signal.aborted).toBe(false);
+        if (signals.length < 3) {
+          agent.addUserInterjection(`Requirement ${signals.length}`);
+          interruptions.interrupt({ kind: 'user_interjection' });
+          throw new Error('reduction interrupted');
+        }
+        return true;
+      });
+      compactor.checkAndPerformAutoCompaction = vi.fn(attempt);
+      compactor.compactAndApply = attempt;
+      const monitor = (agent as any).activityMonitor;
+      monitor.start();
+      try {
+        if (mode === 'manual') await agent.compactCurrentConversation();
+        else await (agent as any).checkAutoCompaction();
+        expect(attempt).toHaveBeenCalledTimes(3);
+        expect(compactor.checkAndPerformAutoCompaction).toHaveBeenCalledTimes(mode === 'automatic' ? 1 : 0);
+        expect(new Set(signals).size).toBe(3);
+        expect(signals.map(signal => signal.aborted)).toEqual([true, true, false]);
+        expect(interruptions.getCause()).toBeNull();
+        expect(monitor.isActive()).toBe(true);
+      } finally { monitor.stop(); }
+    });
+
+    it.each(['manual', 'automatic'] as const)('does not retry %s compaction after explicit cancellation', async mode => {
+      const compactor = (agent as any).agentCompactor;
+      const attempt = vi.fn(async () => {
+        expect((agent as any).activityMonitor.isActive()).toBe(false);
+        (agent as any).interruptionManager.interrupt({ kind: 'user_cancel' });
+        throw new Error('cancelled reduction');
+      });
+      compactor.checkAndPerformAutoCompaction = attempt;
+      compactor.compactAndApply = attempt;
+      const monitor = (agent as any).activityMonitor;
+      monitor.start();
+      try {
+        const compaction = mode === 'manual'
+          ? agent.compactCurrentConversation()
+          : (agent as any).checkAutoCompaction();
+        await expect(compaction).rejects.toThrow('cancelled reduction');
+        expect(attempt).toHaveBeenCalledOnce();
+        expect((agent as any).interruptionManager.getCause()).toEqual({ kind: 'user_cancel' });
+      } finally { monitor.stop(); }
+    });
+
+    it.each(['manual', 'automatic'] as const)('propagates %s compaction failures without retrying', async mode => {
+      const compactor = (agent as any).agentCompactor;
+      const failure = new Error('checkpoint storage failed');
+      const attempt = vi.fn().mockRejectedValue(failure);
+      compactor.checkAndPerformAutoCompaction = attempt;
+      compactor.compactAndApply = attempt;
+      const compaction = mode === 'manual'
+        ? agent.compactCurrentConversation()
+        : (agent as any).checkAutoCompaction();
+      await expect(compaction).rejects.toBe(failure);
+      expect(attempt).toHaveBeenCalledOnce();
+      expect((agent as any).activityMonitor.isActive()).toBe(false);
+    });
+
     it('replenishes internal recovery only after sustained successful tool batches', () => {
       const context = (agent as any).buildResponseContext({});
       const call = {
