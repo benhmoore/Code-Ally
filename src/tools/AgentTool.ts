@@ -1106,28 +1106,20 @@ Only set run_in_background=false when your very next step depends on the result.
       await this.releaseAgent({ pooledAgent, subAgent, callId });
     };
 
-    let outcome;
-    try {
-      outcome = await runFleetDelegation({
-        manager,
-        activityStream: this.activityStream,
-        agentType,
-        taskPrompt,
-        description,
-        callId,
-        subAgent,
-        pooledAgent: pooledAgent ?? null,
-        runInBackground: runInBackground ?? false,
-        run: () => this.executeAgent({ agent: subAgent, agentType, taskPrompt, callId, maxDuration, thoroughness, images: processedImages }),
-        cleanup,
-        // Supply the tool-use count for the detached/background AGENT_END summary.
-        buildEndData: () => ({ toolUseCount: subAgent.getToolUseCount() }),
-      });
-    } catch (error) {
-      // addTask cap overflow (background): release and surface the error.
-      await cleanup();
-      throw error;
-    }
+    const outcome = await runFleetDelegation({
+      manager,
+      activityStream: this.activityStream,
+      agentType,
+      taskPrompt,
+      description,
+      callId,
+      subAgent,
+      pooledAgent: pooledAgent ?? null,
+      runInBackground: runInBackground ?? false,
+      run: () => this.executeAgent({ agent: subAgent, agentType, taskPrompt, callId, maxDuration, thoroughness, images: processedImages }),
+      cleanup,
+      buildEndData: () => ({ toolUseCount: subAgent.getToolUseCount() }),
+    });
 
     if (outcome.backgrounded) {
       // Auto-wake on completion when the user backgrounded it via Ctrl+B (they

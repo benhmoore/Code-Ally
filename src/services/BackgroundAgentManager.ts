@@ -77,6 +77,7 @@ export interface BackgroundAgentTask {
 export class BackgroundAgentManager {
   private readonly tasks: Map<string, BackgroundAgentTask> = new Map();
   private readonly maxConcurrent: number;
+  private shutdownPromise?: Promise<void>;
 
   constructor(maxConcurrent: number = BACKGROUND_AGENT.MAX_CONCURRENT) {
     this.maxConcurrent = maxConcurrent;
@@ -113,6 +114,7 @@ export class BackgroundAgentManager {
     pooledAgent: PooledAgent | null;
     callId: string;
   }): BackgroundAgentTask {
+    this.assertAdmissionOpen();
     let detachResolve: () => void = () => {};
     const detachPromise = new Promise<void>((resolve) => { detachResolve = resolve; });
 
@@ -145,6 +147,7 @@ export class BackgroundAgentManager {
   }
 
   addTask(task: BackgroundAgentTask): void {
+    this.assertAdmissionOpen();
     // Only background runs count against the concurrency cap; foreground runs
     // are transient (awaited by their tool) and block the main loop anyway.
     if (task.mode === 'background' && this.getBackgroundRunningCount() >= this.maxConcurrent) {
@@ -305,29 +308,29 @@ export class BackgroundAgentManager {
   /**
    * Shutdown all running background agents — interrupt and release each.
    */
-  async shutdown(): Promise<void> {
-    const running = Array.from(this.tasks.values()).filter(t => t.status === 'running');
-    if (running.length === 0) {
-      logger.debug('[BackgroundAgentManager] No running background agents to shutdown');
-      return;
-    }
+  shutdown(): Promise<void> {
+    this.shutdownPromise ??= Promise.resolve().then(() => this.drainTasks());
+    return this.shutdownPromise;
+  }
 
+  private assertAdmissionOpen(): void {
+    if (this.shutdownPromise) throw new Error('Background agent manager is shutting down');
+  }
+
+  private async drainTasks(): Promise<void> {
+    const running = Array.from(this.tasks.values()).filter(t => t.status === 'running');
+    const failures: unknown[] = [];
     logger.info(`[BackgroundAgentManager] Shutting down ${running.length} background agent(s)...`);
     for (const task of running) {
       try {
         task.subAgent.interrupt({ kind: 'user_cancel' });
       } catch (error) {
-        logger.warn(`[BackgroundAgentManager] Failed to interrupt ${task.id} on shutdown:`, error);
+        failures.push(new Error(`Failed to interrupt ${task.id} on shutdown`, { cause: error }));
       }
     }
-    await Promise.race([
-      Promise.allSettled(running.map((task) => task.promise)),
-      new Promise<void>((resolve) => setTimeout(resolve, 5000)),
-    ]);
-    for (const task of running) {
-      if (task.status === 'running') task.status = 'cancelled';
-      task.endTime ??= Date.now();
-    }
+    const settled = await Promise.allSettled(Array.from(this.tasks.values(), task => task.promise));
+    failures.push(...settled.filter(result => result.status === 'rejected').map(result => result.reason));
+    if (failures.length) throw new AggregateError(failures, 'Background agent shutdown failed');
     this.tasks.clear();
     logger.info('[BackgroundAgentManager] Shutdown complete');
   }

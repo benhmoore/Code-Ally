@@ -359,25 +359,19 @@ export abstract class BaseDelegationTool extends BaseTool {
       }
 
       // Register in the fleet (foreground): visible, enterable, Ctrl+B-able.
-      let outcome;
-      try {
-        outcome = await runFleetDelegation({
-          manager,
-          activityStream: this.activityStream,
-          agentType: config.agentType,
-          taskPrompt,
-          callId,
-          subAgent: delegationAgent,
-          pooledAgent,
-          runInBackground: false,
-          run,
-          cleanup,
-          buildEndData: () => ({ contextUsage: capturedContextUsage, toolUseCount: capturedToolUseCount }),
-        });
-      } catch (error) {
-        await cleanup();
-        throw error;
-      }
+      const outcome = await runFleetDelegation({
+        manager,
+        activityStream: this.activityStream,
+        agentType: config.agentType,
+        taskPrompt,
+        callId,
+        subAgent: delegationAgent,
+        pooledAgent,
+        runInBackground: false,
+        run,
+        cleanup,
+        buildEndData: () => ({ contextUsage: capturedContextUsage, toolUseCount: capturedToolUseCount }),
+      });
 
       if (outcome.backgrounded) {
         return this.formatSuccessResponse(buildSuccess(
