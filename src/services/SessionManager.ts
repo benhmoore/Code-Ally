@@ -269,6 +269,25 @@ export class SessionManager implements IService {
     return parsed.messages;
   }
 
+  /** Reuse only verified content; unrelated I/O failures never authorize replacement. */
+  private async storeTranscriptSegment(
+    sessionName: string,
+    messages: readonly Message[],
+  ): Promise<{ hash: string; message_count: number }> {
+    const snapshot = structuredClone(messages);
+    const ref = { hash: this.transcriptHash(snapshot), message_count: snapshot.length };
+    try {
+      await this.readTranscriptSegment(sessionName, ref);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+      const segmentDir = join(this.sessionsDir, sessionName, 'transcript-segments');
+      await fs.mkdir(segmentDir, { recursive: true });
+      await atomicWriteFile(join(segmentDir, `${ref.hash}.json`),
+        JSON.stringify({ schema_version: 1, hash: ref.hash, messages: snapshot }));
+    }
+    return ref;
+  }
+
   private async hydrateTranscript(sessionName: string, session: Session): Promise<Session> {
     const refs = session.transcript_segments ?? [];
     if (refs.length === 0) {
@@ -292,19 +311,9 @@ export class SessionManager implements IService {
     const chunkSize = SessionManager.TRANSCRIPT_SEGMENT_MESSAGES;
     const fullChunkCount = Math.floor(transcript.length / chunkSize);
     const refs: NonNullable<Session['transcript_segments']> = [];
-    const segmentDir = join(this.sessionsDir, sessionName, 'transcript-segments');
-
-    if (fullChunkCount > 0) await fs.mkdir(segmentDir, { recursive: true });
     for (let index = 0; index < fullChunkCount; index++) {
       const messages = transcript.slice(index * chunkSize, (index + 1) * chunkSize);
-      const hash = this.transcriptHash(messages);
-      const segmentPath = join(segmentDir, `${hash}.json`);
-      refs.push({ hash, message_count: messages.length });
-      try {
-        await fs.access(segmentPath);
-      } catch {
-        await atomicWriteFile(segmentPath, JSON.stringify({ schema_version: 1, hash, messages }));
-      }
+      refs.push(await this.storeTranscriptSegment(sessionName, messages));
     }
 
     const { transcript: _transcript, ...manifest } = session;
@@ -642,15 +651,9 @@ export class SessionManager implements IService {
       }
       const combinedTail = [...existingTail, ...incoming.slice(overlap + 1)];
       const chunkSize = SessionManager.TRANSCRIPT_SEGMENT_MESSAGES;
-      const segmentDir = join(this.sessionsDir, sessionName, 'transcript-segments');
       while (combinedTail.length >= chunkSize) {
         const messages = combinedTail.splice(0, chunkSize);
-        const hash = this.transcriptHash(messages);
-        await fs.mkdir(segmentDir, { recursive: true });
-        const segmentPath = join(segmentDir, `${hash}.json`);
-        try { await fs.access(segmentPath); }
-        catch { await atomicWriteFile(segmentPath, JSON.stringify({ schema_version: 1, hash, messages })); }
-        refs.push({ hash, message_count: messages.length });
+        refs.push(await this.storeTranscriptSegment(sessionName, messages));
       }
 
       const { transcript: _legacy, ...withoutTranscript } = manifest;

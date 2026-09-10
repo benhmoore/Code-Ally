@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { promises as fs } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
+import { createHash } from 'node:crypto';
 import { SessionManager } from '../SessionManager.js';
 import type { Message } from '../../types/index.js';
 
@@ -97,5 +98,31 @@ describe('SessionManager transcript segments', () => {
     expect(data.transcript).toHaveLength(500);
     expect(data.transcript.some(message => message.id === 'message-10')).toBe(false);
     expect(data.canonicalMessages).toEqual([transcript[10]]);
+  });
+
+  it.each(['full', 'incremental'])('refuses corrupt existing content before a %s write references it', async mode => {
+    const manager = new SessionManager({ sessionsDir: dir });
+    await manager.initialize();
+    await manager.createSession('reuse');
+    manager.setCurrentSession('reuse');
+    const transcript: Message[] = Array.from({ length: 64 }, (_, index) => ({
+      id: `m-${index}`, role: 'user', content: String(index), timestamp: index,
+    }));
+    const hash = createHash('sha256').update(JSON.stringify(transcript)).digest('hex');
+    const segmentDir = join(dir, 'reuse', 'transcript-segments');
+    await fs.mkdir(segmentDir, { recursive: true });
+    const segmentPath = join(segmentDir, `${hash}.json`);
+    const damaged = JSON.stringify({ schema_version: 1, hash, messages: [] });
+    await fs.writeFile(segmentPath, damaged);
+    const manifestPath = join(dir, 'reuse.json');
+    const before = await fs.readFile(manifestPath, 'utf8');
+    if (mode === 'full') {
+      expect(await manager.saveSession('reuse', transcript, transcript)).toBe(false);
+    } else {
+      await manager.autoSave(transcript);
+      await expect(manager.forceSave()).rejects.toThrow('Session autosave persistence failed');
+    }
+    expect(await fs.readFile(manifestPath, 'utf8')).toBe(before);
+    expect(await fs.readFile(segmentPath, 'utf8')).toBe(damaged);
   });
 });
