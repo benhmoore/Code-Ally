@@ -525,6 +525,12 @@ block. `updatedInput` replaces the tool arguments before execution. For
 `additionalContext`; `SessionStart` context is rendered into the system prompt
 as one **Session context:** block.
 
+A `SessionStart` hook runs before the terminal UI exists, so its
+`systemMessage` is held and shown once the UI accepts input. A run that opens
+the setup wizard, the model selector or the session picker never reaches that
+point and shows no startup message. In a headless run it goes to stderr, which
+keeps stdout carrying only wire events.
+
 ---
 
 ## Testing & Debugging
