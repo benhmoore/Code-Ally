@@ -1128,6 +1128,8 @@ async function main() {
     if (options.scheduledTask && !scheduledTaskForRun) {
       throw new Error(`Scheduled task not found in this project: ${options.scheduledTask}`);
     }
+    const { policyFromFlags } = await import('./security/RunAuthorizationPolicy.js');
+    const runAuthorizationPolicy = policyFromFlags(options);
 
     // Create todo manager
     const todoManager = new TodoManager(activityStream);
@@ -1388,6 +1390,10 @@ async function main() {
       // Grants are re-derived from current code on every run, so a hand-edited
       // store or a record written by an older build cannot broaden them.
       trustManager.setScheduledPermissionPolicy(presetPolicy(scheduledTaskForRun.policy_preset));
+    } else if (runAuthorizationPolicy) {
+      // Non-strict: named tools are pre-approved, denied tools are refused,
+      // and everything else still goes through the ordinary trust checks.
+      trustManager.setRunAuthorizationPolicy(runAuthorizationPolicy);
     }
     registry.registerInstance('trust_manager', trustManager);
 
