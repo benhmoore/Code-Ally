@@ -403,6 +403,24 @@ Reconfigure: `/plugin configure my-plugin`
 
 ---
 
+## Skills
+
+A skill is a folder of instructions loaded on demand. Put each one at
+`skills/<name>/SKILL.md` in the plugin.
+
+```markdown
+---
+description: What this skill is for, and when to load it
+---
+
+The instructions the model follows once loaded.
+```
+
+`description` is required; the model reads it to decide whether to load the
+skill. `name` is optional and defaults to the directory name, so a skill is
+addressed as `<name>` regardless. Give `name` only to override the directory,
+and keep it kebab-case.
+
 ## Hooks
 
 A hook is an external command Ally runs at a fixed point in a session. It is

@@ -22,7 +22,7 @@
  */
 
 import { readdir, readFile, access, stat } from 'fs/promises';
-import { join } from 'path';
+import { basename, join } from 'path';
 import { constants } from 'fs';
 import { logger } from './Logger.js';
 import { formatError } from '../utils/errorUtils.js';
@@ -286,11 +286,10 @@ export class SkillManager implements IService {
     const { frontmatter, body } = extracted;
     const metadata = parseFrontmatterYAML(frontmatter);
 
-    // Validate required fields
-    if (!metadata.name) {
-      logger.warn(`[SkillManager] Missing 'name' in ${skillDir}/SKILL.md`);
-      return null;
-    }
+    // A skill is addressed by its directory name, so frontmatter may omit
+    // `name` and most skills written for Claude Code do. Only a name that
+    // disagrees with the directory needs stating.
+    const name = metadata.name ? String(metadata.name) : basename(skillDir);
 
     if (!metadata.description) {
       logger.warn(`[SkillManager] Missing 'description' in ${skillDir}/SKILL.md`);
@@ -298,7 +297,7 @@ export class SkillManager implements IService {
     }
 
     // Validate name format
-    const nameValidation = validateSkillName(metadata.name);
+    const nameValidation = validateSkillName(name);
     if (!nameValidation.valid) {
       logger.warn(`[SkillManager] ${nameValidation.error} in ${skillDir}/SKILL.md`);
       return null;
@@ -320,7 +319,7 @@ export class SkillManager implements IService {
     }
 
     return {
-      name: metadata.name,
+      name,
       description,
       instructions,
       directory: skillDir,
