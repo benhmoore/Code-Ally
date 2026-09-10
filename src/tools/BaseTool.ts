@@ -17,6 +17,7 @@ import { logger } from '../services/Logger.js';
 import { FormManager, FormCancelledError } from '../services/FormManager.js';
 import { createUnifiedDiff } from '../utils/diffUtils.js';
 import { toModelToolResult } from '../utils/toolResultContent.js';
+import { tokenCounter } from '../services/TokenCounter.js';
 import { ReadStateManager } from '../services/ReadStateManager.js';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { atomicWriteFile } from '../utils/atomicFile.js';
@@ -535,6 +536,12 @@ export abstract class BaseTool {
       ? context?.outputBudget?.maxResultTokensByCallId.get(this.currentCallId)
       : undefined;
     return Math.min(published?.maxToolResultTokens ?? fallback, assigned ?? Infinity);
+  }
+
+  /** Grant complete-result retention only after the model-facing payload fits. */
+  protected admitCompleteResult<T extends ToolResult>(result: T, maxTokens: number): T | null {
+    if (tokenCounter.count(JSON.stringify(toModelToolResult(result))) > maxTokens) return null;
+    return { ...result, _non_truncatable: true };
   }
 
   /**

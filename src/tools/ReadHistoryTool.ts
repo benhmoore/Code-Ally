@@ -1,6 +1,5 @@
 import { BaseTool } from './BaseTool.js';
 import { ToolCapability } from './ToolCapability.js';
-import { tokenCounter } from '../services/TokenCounter.js';
 import type { FunctionDefinition, ToolExecutionContext, ToolResult } from '../types/index.js';
 
 interface HistoryArgs {
@@ -60,9 +59,8 @@ export class ReadHistoryTool extends BaseTool {
     if (index < 0) {
       if (offset > 0) return this.formatErrorResponse('The history message changed. Restart retrieval.', 'validation_error');
       const result = this.formatSuccessResponse({ session_id: sessionId, content: '', next_before: page.nextCursor, next_offset: null });
-      return tokenCounter.count(JSON.stringify(result)) <= budget
-        ? { ...result, _non_truncatable: true }
-        : this.formatErrorResponse('Insufficient output budget for a history cursor.', 'validation_error');
+      return this.admitCompleteResult(result, budget)
+        ?? this.formatErrorResponse('Insufficient output budget for a history cursor.', 'validation_error');
     }
     const message = page.messages[index]!;
     if (args.message_id && args.message_id !== message.id) {
@@ -81,7 +79,8 @@ export class ReadHistoryTool extends BaseTool {
         next_before: partial ? start + index + 1 : (start + index || null),
         next_offset: partial ? end : null,
       });
-      if (tokenCounter.count(JSON.stringify(result)) <= budget) return { ...result, _non_truncatable: true };
+      const admitted = this.admitCompleteResult(result, budget);
+      if (admitted) return admitted;
       if (count <= 1) return this.formatErrorResponse('Insufficient output budget for a history page.', 'validation_error', 'Read history separately from other tool calls.');
       count = Math.floor(count / 2);
     }

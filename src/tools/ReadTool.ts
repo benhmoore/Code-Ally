@@ -313,7 +313,7 @@ For multi-file exploration, prefer explore() to preserve context. Parallelize on
       );
     }
 
-    const result = this.formatSuccessResponse({
+    const response = this.formatSuccessResponse({
       content: read.content,
       files_read: 1,
       files_failed: 0,
@@ -324,17 +324,16 @@ For multi-file exploration, prefer explore() to preserve context. Parallelize on
     const batchLimit = this.currentCallId
       ? executionContext?.outputBudget?.maxResultTokensByCallId.get(this.currentCallId)
       : undefined;
-    if (batchLimit !== undefined && tokenCounter.count(JSON.stringify(result)) > batchLimit) {
+    const allowance = Math.min(maxTokens, batchLimit ?? Infinity);
+    const result = this.admitCompleteResult(response, allowance);
+    if (!result) {
       return this.formatErrorResponse(
-        `Formatted read output exceeds this call's ${batchLimit}-token batch allowance.`,
+        `Formatted read output exceeds this call's ${allowance}-token output allowance.`,
         'validation_error',
         'Read a smaller range or issue fewer reads in this tool batch.'
       );
     }
     read.accept?.();
-
-    // Mark result as non-truncatable - read results must never be truncated
-    (result as any)._non_truncatable = true;
 
     // Mark result as ephemeral if requested
     if (ephemeral) {

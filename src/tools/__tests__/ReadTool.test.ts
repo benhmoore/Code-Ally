@@ -58,6 +58,26 @@ describe('ReadTool', () => {
   });
 
   describe('execute', () => {
+    it('checks formatted output against the conversation allowance without a batch', async () => {
+      const { ContextBudgetService } = await import('@services/ContextBudgetService.js');
+      const budgets = new ContextBudgetService();
+      registry.registerInstance('context_budget', budgets);
+      budgets.publish('agent-a', {
+        contextWindow: 16_384, estimatedInput: 0, outputReserve: 2_048, safetyReserve: 819,
+        triggerBudget: 13_107, targetBudget: 10_800, fixedOverhead: 3_450, requestOnlyOverhead: 0,
+        usableBudget: 9_657, domainBudget: 5_794, retainedTailBudget: 3_476, checkpointBudget: 2_318,
+        maxToolResultTokens: 40, shouldCompact: false,
+      });
+      const cache = vi.spyOn(registry.get('read_cache')!, 'record');
+      const result = await readTool.execute(
+        { file_path: testFile, offset: 1, limit: 1 }, 'read-1', undefined, false, false, { agentId: 'agent-a' },
+      );
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('Formatted read output');
+      expect(cache).not.toHaveBeenCalled();
+      expect(registry.get('read_state_manager')!.getReadState(testFile, 'agent-a')).toBeNull();
+    });
+
     it('does not record reads rejected by the formatted-output allowance', async () => {
       const cache = vi.spyOn(registry.get('read_cache')!, 'record');
       const result = await readTool.execute(
@@ -68,7 +88,7 @@ describe('ReadTool', () => {
         } },
       );
       expect(result.success).toBe(false);
-      expect(result.error).toContain('batch allowance');
+      expect(result.error).toContain('output allowance');
       expect(cache).not.toHaveBeenCalled();
       expect(registry.get('read_state_manager')!.validateLinesRead(testFile, 1, 1).success).toBe(false);
       expect((await readTool.execute({ file_path: testFile, offset: 1, limit: 1 })).success).toBe(true);
@@ -364,9 +384,9 @@ describe('ReadTool', () => {
       } as any);
 
       const bigFile = path.join(tempDir, 'big.txt');
-      // ~2500 tokens: under the legacy 20%-of-16k cap (3276), over the
-      // retained-tail ceiling (2054) that the real budget implies.
-      await fs.writeFile(bigFile, 'const value = compute(input, options);\n'.repeat(250));
+      // One long line keeps line-number formatting overhead small: the full
+      // response fits the fallback cap (3276), but not the retained cap (2054).
+      await fs.writeFile(bigFile, 'const value = compute(input, options); '.repeat(250));
 
       // Without a published budget the legacy window fraction applies (20% of
       // 16k = 3276 tokens), so this file is allowed.

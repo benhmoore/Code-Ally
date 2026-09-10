@@ -6,9 +6,14 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import { BaseTool } from '@tools/BaseTool.js';
 import { ToolResult, ActivityEvent, ActivityEventType, FunctionDefinition } from '@shared/index.js';
 import { ActivityStream } from '@services/ActivityStream.js';
+import { tokenCounter } from '@services/TokenCounter.js';
+import { toModelToolResult } from '../../utils/toolResultContent.js';
 
 // Mock tool implementation
 class MockTool extends BaseTool {
+  admit(result: ToolResult, budget: number): ToolResult | null {
+    return this.admitCompleteResult(result, budget);
+  }
   readonly name = 'mock-tool';
   readonly description = 'A mock tool for testing';
   readonly capabilities = [] as const;
@@ -122,6 +127,17 @@ describe('BaseTool', () => {
     activityStream.subscribe('*', (event) => {
       emittedEvents.push(event);
     });
+  });
+
+  it('admits complete model payloads at the exact budget without counting UI metadata', () => {
+    const result: ToolResult = { success: true, content: 'source\n  preserved', display_content: 'UI '.repeat(1000) };
+    const budget = tokenCounter.count(JSON.stringify(toModelToolResult(result)));
+    expect(tool.admit(result, budget - 1)).toBeNull();
+    const admitted = tool.admit(result, budget)!;
+    expect(admitted._non_truncatable).toBe(true);
+    expect(toModelToolResult(admitted)).toEqual(toModelToolResult(result));
+    expect(result._non_truncatable).toBeUndefined();
+    expect(tool.admit({ ...result, file_check: { errors: ['extra metadata'] } }, budget)).toBeNull();
   });
 
   describe('execute', () => {

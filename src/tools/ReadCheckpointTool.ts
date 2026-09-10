@@ -1,7 +1,6 @@
 import { BaseTool } from './BaseTool.js';
 import { ToolCapability } from './ToolCapability.js';
 import { emptySemanticCheckpoint } from '../agent/compaction/types.js';
-import { tokenCounter } from '../services/TokenCounter.js';
 import type { FunctionDefinition, ToolExecutionContext, ToolResult } from '../types/index.js';
 
 const sections = Object.keys(emptySemanticCheckpoint()).filter(key => key !== 'schemaVersion');
@@ -67,9 +66,8 @@ export class ReadCheckpointTool extends BaseTool {
         total_characters: characters.length,
         content: characters.slice(offset, end).join(''),
       });
-      if (tokenCounter.count(JSON.stringify(result)) <= budget) {
-        return { ...result, _non_truncatable: true };
-      }
+      const admitted = this.admitCompleteResult(result, budget);
+      if (admitted) return admitted;
       if (count <= 1) return this.formatErrorResponse('Insufficient output budget for a checkpoint page.', 'validation_error',
         'Read this checkpoint separately from other tool calls.');
       count = Math.floor(count / 2);

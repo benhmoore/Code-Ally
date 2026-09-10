@@ -11,8 +11,6 @@ import { applyModelPatch, type AppliedModelPatch } from '../utils/patchApplier.j
 import { checkFileAfterModification } from '../utils/fileCheckUtils.js';
 import { formatError } from '../utils/errorUtils.js';
 import { CONTEXT_SIZES, TOKEN_MANAGEMENT } from '../config/constants.js';
-import { tokenCounter } from '../services/TokenCounter.js';
-import { toModelToolResult } from '../utils/toolResultContent.js';
 import { fileMutationCoordinator } from '../services/FileMutationCoordinator.js';
 
 const MAX_PATCH_CHARS = 1_000_000;
@@ -148,13 +146,13 @@ export class ApplyPatchTool extends BaseTool {
           ...response,
           updated_content: prepared.modifiedContent,
           system_reminder: 'Returned source is a snapshot; re-read if the file changed.',
-          _non_truncatable: true,
         };
         const contextSize = registry.get('token_manager')?.getContextSize() ?? CONTEXT_SIZES.SMALL;
         const allowance = this.getOutputTokenAllowance(
           Math.floor(contextSize * TOKEN_MANAGEMENT.READ_CONTEXT_MAX_PERCENT), executionContext
         );
-        if (tokenCounter.count(JSON.stringify(toModelToolResult(candidate))) <= allowance) {
+        const admitted = this.admitCompleteResult(candidate, allowance);
+        if (admitted) {
           // Admit the complete response before granting observation credit. A
           // concurrent mutation during file checking must not authorize stale bytes.
           await fileMutationCoordinator.run(prepared.absolutePath, async () => {
@@ -166,7 +164,7 @@ export class ApplyPatchTool extends BaseTool {
               );
             }
           });
-          return candidate;
+          return admitted;
         }
         response.system_reminder += ' Full updated content was omitted because it exceeds the output allowance; read the required region.';
       }

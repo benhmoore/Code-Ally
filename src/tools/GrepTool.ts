@@ -16,8 +16,6 @@ import { TOOL_LIMITS, TOOL_OUTPUT_ESTIMATES } from '../config/toolDefaults.js';
 import { rgPath } from '@vscode/ripgrep';
 import { spawn } from 'child_process';
 import { CONTEXT_SIZES, TOKEN_MANAGEMENT } from '../config/constants.js';
-import { tokenCounter } from '../services/TokenCounter.js';
-import { toModelToolResult } from '../utils/toolResultContent.js';
 import * as path from 'path';
 
 type OutputMode = 'files_with_matches' | 'content' | 'count';
@@ -385,8 +383,8 @@ For multi-step investigations with unknown scope, prefer explore() to preserve c
         Math.floor(contextSize * TOKEN_MANAGEMENT.READ_CONTEXT_MAX_PERCENT),
         executionContext
       );
-      let result = formatMatches(matches);
-      while (tokenCounter.count(JSON.stringify(toModelToolResult(result))) > budget) {
+      let result = this.admitCompleteResult(formatMatches(matches), budget);
+      while (!result) {
         if (matches.length <= 1) {
           return this.formatErrorResponse(
             'Insufficient output budget for a complete search result.',
@@ -395,7 +393,7 @@ For multi-step investigations with unknown scope, prefer explore() to preserve c
           );
         }
         matches = matches.slice(0, Math.floor(matches.length / 2));
-        result = formatMatches(matches);
+        result = this.admitCompleteResult(formatMatches(matches), budget);
       }
 
       // Only admitted, complete lines authorize edits. Protect these records
@@ -411,7 +409,7 @@ For multi-step investigations with unknown scope, prefer explore() to preserve c
           );
         }
       }
-      return { ...result, _non_truncatable: true };
+      return result;
     } catch (error) {
       const errorMsg = formatError(error);
 
