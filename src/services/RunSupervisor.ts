@@ -6,6 +6,8 @@ import { atomicWriteFile } from '../utils/atomicFile.js';
 import type { RunPolicy } from './RunPolicyManager.js';
 import { ServiceRegistry } from './ServiceRegistry.js';
 import { FileOwnership } from '../utils/FileOwnership.js';
+import { readRunJournal, type RunJournalEvent } from './RunJournal.js';
+export type { RunJournalEvent } from './RunJournal.js';
 
 export type RunStatus =
   | 'running'
@@ -34,14 +36,6 @@ export interface RunSnapshot {
   updatedAt: number;
   nextAction?: string;
   outcome?: RunOutcome;
-}
-
-export interface RunJournalEvent {
-  sequence: number;
-  timestamp: number;
-  runId: string;
-  type: string;
-  data?: Record<string, unknown>;
 }
 
 /**
@@ -134,19 +128,7 @@ export class RunSupervisor {
     const unknownEffects = new Set<string>();
     const inFlightNonIdempotent = new Set<string>();
     try {
-      const bytes = await fs.readFile(path.join(this.runDir(runId), 'journal.jsonl'));
-      const journal = new TextDecoder('utf-8', { fatal: true }).decode(bytes);
-      if (!journal.endsWith('\n')) throw new Error('Missing complete journal record boundary');
-      const lines = journal.slice(0, -1).split('\n');
-      for (const line of lines) {
-        const event = JSON.parse(line) as RunJournalEvent;
-        if (!event || event.runId !== runId || event.sequence !== sequence + 1
-          || !Number.isSafeInteger(event.sequence)
-          || !Number.isFinite(event.timestamp)
-          || typeof event.type !== 'string' || !event.type
-          || (event.data !== undefined && (!event.data || typeof event.data !== 'object' || Array.isArray(event.data)))) {
-          throw new Error(`Invalid journal event at sequence ${sequence + 1}`);
-        }
+      for await (const event of readRunJournal(path.join(this.runDir(runId), 'journal.jsonl'), runId)) {
         sequence = event.sequence;
         const callId = event.data?.callId;
         const effect = event.data?.effect;
