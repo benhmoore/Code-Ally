@@ -368,9 +368,16 @@ Execute unattended. Do not ask follow-up questions. Use safe alternatives after 
 No user is available. Use safe alternatives after recoverable failures. Prose does not finish the run: call \`complete-objective\` after the work and verification, or \`block-objective\` only when no safe automatic path remains.`
       : '';
 
+  // Context contributed by SessionStart hooks. It is fixed for the session, so
+  // it belongs in the cache-stable prompt rather than the per-round-trip block.
+  const sessionContext = ServiceRegistry.getInstance().get('session_context');
+  const sessionContextSection = sessionContext && !sessionContext.isEmpty()
+    ? `\n\n**Session context:**\n${sessionContext.render()}`
+    : '';
+
   // Combine core directives with the cache-stable context. Volatile state (date,
   // usage, todos, plan-mode, budget) is appended separately per round-trip.
-  return `${CORE_DIRECTIVES}${unattendedInstructions}
+  return `${CORE_DIRECTIVES}${unattendedInstructions}${sessionContextSection}
 
 **Context:**
 ${context}`;

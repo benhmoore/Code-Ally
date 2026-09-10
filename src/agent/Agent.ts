@@ -974,6 +974,17 @@ export class Agent {
       throw new Error('Agent is already processing a turn; submit this message as an interjection instead.');
     }
 
+    // UserPromptSubmit belongs to the session, so only the root agent fires it.
+    // A block answers the user directly, with no model call.
+    const hookRunner = ServiceRegistry.getInstance().get('hook_runner');
+    if (!this.config.isSpecializedAgent && hookRunner?.hasHooks('UserPromptSubmit')) {
+      const verdict = await hookRunner.run('UserPromptSubmit', { prompt: message });
+      if (verdict.kind === 'block') return verdict.reason;
+      if (verdict.additionalContext.length > 0) {
+        message = [message, ...verdict.additionalContext].join('\n\n');
+      }
+    }
+
     // Claim the agent before the first await. Preparation and finalization are
     // part of the turn too; allowing another sendMessage during either phase
     // corrupts the shared interruption, context, and lifecycle state.
@@ -1205,6 +1216,18 @@ export class Agent {
       }
 
       delegationSucceeded = this.turnController.snapshot().state !== 'failed';
+
+      // Stop is a session event, so it belongs to the root agent. The verdict
+      // is recorded; continuing a turn on a block waits for a caller that
+      // needs it.
+      const stopRunner = ServiceRegistry.getInstance().get('hook_runner');
+      if (!this.config.isSpecializedAgent && stopRunner?.hasHooks('Stop')) {
+        const verdict = await stopRunner.run('Stop', { stop_hook_active: false });
+        if (verdict.kind === 'block') {
+          logger.info('[AGENT]', this.instanceId, 'Stop hook asked to continue:', verdict.reason);
+        }
+      }
+
       this.emitAgentEnd(!delegationSucceeded, delegationSucceeded ? undefined : 'model_error', finalResponse);
       this.turnController.finish(delegationSucceeded ? 'completed' : 'failed');
       return finalResponse;

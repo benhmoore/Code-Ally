@@ -894,6 +894,7 @@ export class ToolOrchestrator {
     );
     let permissionDenied = false; // Track if permission was denied to skip TOOL_CALL_END
     let validationFailed = false; // Track if validation failed (already emitted TOOL_CALL_END)
+    let hookBlocked = false; // Track if a PreToolUse hook blocked (already emitted TOOL_CALL_END)
     let executionStartTime: number | undefined; // Track execution start time for session persistence
     let journaledEffect: ReturnType<BaseTool['effectFor']> | undefined;
     let toolResultObserved = false;
@@ -951,6 +952,48 @@ export class ToolOrchestrator {
           });
           return validationResult;
         }
+      }
+
+      // PreToolUse hooks are deterministic policy, decided before the form and
+      // the permission machinery and for every tool, not only the ones that
+      // require confirmation: a policy hook on `read` is legitimate. A block is
+      // an ordinary model-visible result, so the turn continues.
+      const hookRunner = ServiceRegistry.getInstance().get('hook_runner');
+      if (hookRunner?.hasHooks('PreToolUse')) {
+        const verdict = await hookRunner.run(
+          'PreToolUse',
+          { tool_name: toolName, tool_input: args },
+          toolName,
+        );
+        if (verdict.kind === 'block') {
+          hookBlocked = true;
+          const blockedResult = createStructuredError(
+            verdict.reason,
+            'policy_denied',
+            toolName,
+            args
+          );
+          this.emitEvent({
+            id,
+            type: ActivityEventType.TOOL_CALL_END,
+            timestamp: Date.now(),
+            parentId: effectiveParentId,
+            data: {
+              toolName,
+              result: blockedResult,
+              success: false,
+              error: blockedResult.error,
+              visibleInChat: true, // Always show hook denials
+              isTransparent: tool?.isTransparentWrapper || false,
+              collapsed: false,
+              shouldCollapse,
+              hideOutput,
+              alwaysShowFullOutput,
+            },
+          });
+          return blockedResult;
+        }
+        if (verdict.updatedInput) args = verdict.updatedInput;
       }
 
       // Handle static form schema (before permission check)
@@ -1045,6 +1088,20 @@ export class ToolOrchestrator {
         executionContext
       );
       toolResultObserved = true;
+
+      // PostToolUse hooks cannot undo the call. Whatever they say, block
+      // included, reaches the model as a note appended to the result.
+      if (hookRunner?.hasHooks('PostToolUse')) {
+        const verdict = await hookRunner.run(
+          'PostToolUse',
+          { tool_name: toolName, tool_input: args, tool_response: result },
+          toolName,
+        );
+        const notes = verdict.kind === 'block' ? [verdict.reason] : verdict.additionalContext;
+        if (notes.length > 0) {
+          result.content = [result.content, ...notes].filter(Boolean).join('\n\n');
+        }
+      }
 
       if (journaledEffect && toolExecutionAdmitted) {
         const outcome = tool?.effectOutcomeFor(args, result)
@@ -1208,8 +1265,9 @@ export class ToolOrchestrator {
       }
     } finally {
       try {
-        // Permission denial and validation failure already have terminal UI handling.
-        if (!permissionDenied && !validationFailed) {
+        // Permission denial, validation failure and hook blocks already have
+        // terminal UI handling.
+        if (!permissionDenied && !validationFailed && !hookBlocked) {
           const shouldShowInChat = !result.success || (tool?.visibleInChat ?? true);
           this.emitEvent({
             id,

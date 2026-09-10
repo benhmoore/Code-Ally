@@ -120,6 +120,9 @@ function reassertTerminalState(): void {
 let cleanExitPromise: Promise<void> | undefined;
 let requestedExitCode = 0;
 
+/** How long exit waits on SessionEnd hooks before leaving them behind. */
+const SESSION_END_HOOK_BUDGET_MS = 2000;
+
 async function cleanExit(code: number = 0): Promise<void> {
   if (code !== 0) requestedExitCode = code;
   if (cleanExitPromise) return cleanExitPromise;
@@ -135,6 +138,19 @@ async function performCleanExit(): Promise<void> {
   // Flush pending session saves if registry exists
   const ServiceRegistry = (await import('./services/ServiceRegistry.js')).ServiceRegistry;
   const registry = ServiceRegistry.getInstance();
+
+  // SessionEnd runs before shutdown tears the services down. Exiting is not
+  // negotiable, so it gets a short budget and its verdict is ignored.
+  const hookRunner = registry.get('hook_runner');
+  if (hookRunner?.hasHooks('SessionEnd')) {
+    await Promise.race([
+      hookRunner.run('SessionEnd', { reason: 'other' }).catch((error: unknown) => {
+        logger.warn('[CLI] SessionEnd hook failed:', error);
+      }),
+      new Promise<void>(resolve => setTimeout(resolve, SESSION_END_HOOK_BUDGET_MS)),
+    ]);
+  }
+
   const { shutdownApplication } = await import('./services/shutdownApplication.js');
   const failures = await shutdownApplication(registry);
   if (failures.length) {
@@ -1404,6 +1420,49 @@ async function main() {
       await agentManager.loadPluginAgents(plugin.installPath, plugin.pluginName);
     }
     logger.debug(`[CLI] Plugin skills, agents, and ${pluginCommands.length} command(s) loaded`);
+
+    // Hooks. Registered even when nothing declares one, so call sites can ask
+    // hasHooks() instead of null-checking the service.
+    const { HookRunner, loadHooksConfig } = await import('./hooks/index.js');
+    const { SessionContext } = await import('./services/SessionContext.js');
+    const sessionContext = new SessionContext();
+    registry.registerInstance('session_context', sessionContext);
+    const hooksConfig = await loadHooksConfig({
+      configManager,
+      pluginManager,
+      settingsFile: options.settings,
+    });
+    const hookRunner = new HookRunner(hooksConfig, {
+      sessionId: () => sessionManager.getCurrentSession(),
+      cwd: process.cwd(),
+      projectDir: process.cwd(),
+    });
+    registry.registerInstance('hook_runner', hookRunner);
+
+    // SessionStart runs once plugins, skills and MCP servers are in place and
+    // before the first turn, so its context reaches the first system prompt.
+    if (hookRunner.hasHooks('SessionStart')) {
+      const verdict = await hookRunner.run('SessionStart', {
+        source: resumeSession ? 'resume' : 'startup',
+      });
+      if (verdict.kind === 'block') {
+        logger.warn(`[CLI] SessionStart hook from ${verdict.source} reported: ${verdict.reason}`);
+      } else {
+        for (const entry of verdict.additionalContext) sessionContext.add(entry);
+        for (const message of verdict.systemMessages) {
+          if (options.once) {
+            process.stderr.write(`${message}\n`);
+          } else {
+            activityStream.emit({
+              id: `hook-session-start-${Date.now()}`,
+              type: ActivityEventType.STATUS_MESSAGE,
+              timestamp: Date.now(),
+              data: { message },
+            });
+          }
+        }
+      }
+    }
 
     // Create agent generation service for LLM-assisted agent creation
     const { AgentGenerationService } = await import('./services/AgentGenerationService.js');
