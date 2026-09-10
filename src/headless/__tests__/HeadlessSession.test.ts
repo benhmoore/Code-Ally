@@ -403,6 +403,35 @@ describe('HeadlessSession', () => {
     expect(new Set(out.events().map(event => event.session_id))).toEqual(new Set(['run-hook']));
   });
 
+  it('does not carry a turn structured output onto the next turn', async () => {
+    const out = collector();
+    const stdin = new PassThrough();
+    const headless = await session(
+      { inputFormat: 'stream-json', outputFormat: 'stream-json' },
+      { stdin, stdout: out.stream },
+    );
+    replies = [
+      async () => {
+        headless.setStructuredOutput({ verdict: 'first' });
+        return { content: 'First.', tool_calls: [], interrupted: false };
+      },
+      'Second.',
+    ];
+
+    const run = headless.run();
+    stdin.write(`${JSON.stringify({ type: 'user', message: { role: 'user', content: 'one' } })}\n`);
+    await vi.waitFor(() => expect(out.events().filter(e => e.type === 'result')).toHaveLength(1));
+    stdin.write(`${JSON.stringify({ type: 'user', message: { role: 'user', content: 'two' } })}\n`);
+    await vi.waitFor(() => expect(out.events().filter(e => e.type === 'result')).toHaveLength(2));
+    stdin.end();
+    await run;
+
+    const results = out.events().filter(
+      (event): event is Extract<WireEvent, { type: 'result' }> => event.type === 'result');
+    expect(results[0]).toMatchObject({ structured_output: { verdict: 'first' } });
+    expect(results[1]).not.toHaveProperty('structured_output');
+  });
+
   it('keeps stdout free of everything but wire events', async () => {
     const out = collector();
     const stdout = vi.spyOn(process.stdout, 'write').mockReturnValue(true);

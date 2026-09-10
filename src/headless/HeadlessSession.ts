@@ -207,6 +207,9 @@ export class HeadlessSession {
   private async runTurn(message: string): Promise<RunOutcome> {
     const startedAt = Date.now();
     this.turnCount += 1;
+    // The payload belongs to the turn that recorded it. Left in place, a turn
+    // that records nothing would report the previous turn's answer as its own.
+    this.structuredOutput = undefined;
     let response = '';
     let outcome: RunOutcome;
 
