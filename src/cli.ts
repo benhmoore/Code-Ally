@@ -1481,7 +1481,7 @@ async function main() {
       } else {
         for (const entry of verdict.additionalContext) sessionContext.add(entry);
         for (const message of verdict.systemMessages) {
-          if (options.once) {
+          if (isHeadlessRun(options)) {
             process.stderr.write(`${message}\n`);
           } else {
             activityStream.emit({
