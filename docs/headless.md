@@ -10,7 +10,7 @@ Run Code Ally unattended and read its output as JSON.
 | `--output-format` | `text`, `json`, `stream-json` | `text` | What stdout carries. |
 | `--input-format` | `text`, `stream-json` | `text` | Where turns come from. |
 | `--session-id <id>` | safe file name | - | Create this run's session under a caller-chosen id. |
-| `--json-schema <schema>` | inline JSON or `@path` | - | Schema the final answer must satisfy. Needs a json output format. |
+| `--json-schema <schema>` | inline JSON or `@path` | - | Schema the final answer must satisfy. Needs a json output format and a headless run. |
 
 `--session-id` is `--session <name>` with a caller-chosen name: same code path,
 plus a check that the id is a single safe file name of letters, digits, dot,
@@ -36,17 +36,22 @@ the terminal `result` object only; `stream-json` writes every event below.
 
 Every turn ends with exactly one `result`.
 
+- `tools` on the init event lists what this run can call, so a tool withheld
+  by `--disallowed-tools` is absent from it.
 - `subtype` is `success` for a completed outcome, `error_during_execution` for
   a turn stopped by an interrupt, and `error` otherwise.
 - `outcome` is the run supervisor's typed outcome, untouched.
-- `structured_output` is present once a structured-output schema is in use.
+- `structured_output` carries the payload the turn that emitted this result
+  recorded, and is absent from a turn that recorded none.
 - `is_error` is true whenever `subtype` is not `success`.
 
 ## Structured output
 
 `--json-schema <schema>` takes an object schema, inline or as `@path`. It
-requires `--output-format json` or `stream-json`; a schema that is malformed,
-unreadable, or not an object schema is a startup error.
+requires `--output-format json` or `stream-json` and a headless run, so
+`--once` or `--input-format stream-json`; the sink that receives the payload
+belongs to the headless session. A schema that is malformed, unreadable, not
+an object schema, or given to an interactive run is a startup error.
 
 The schema becomes the parameters of a `structured-output` tool registered for
 that run only. The root agent must call it before its turn can end, so the
