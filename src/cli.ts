@@ -444,7 +444,9 @@ async function handleResumeCommand(
     if (await sessionManager.sessionExists(sessionId)) {
       return sessionId;
     } else {
-      console.log(`\n✗ Session "${sessionId}" not found.\n`);
+      // Diagnostics, not output: a headless run reaches this line and stdout
+      // carries nothing but wire events.
+      process.stderr.write(`\n✗ Session "${sessionId}" not found.\n\n`);
 
       if (isHeadlessRun(options)) {
         throw new Error(`Cannot resume missing session '${sessionId}' in noninteractive mode; pass --session to create one explicitly`);
@@ -463,7 +465,7 @@ async function handleResumeCommand(
       if (answer.toLowerCase().startsWith('y')) {
         await sessionManager.createSession(sessionId);
         sessionManager.setCurrentSession(sessionId);
-        console.log(`\n✓ Created new session: ${sessionId}\n`);
+        process.stderr.write(`\n✓ Created new session: ${sessionId}\n\n`);
 
         // Notify PatchManager about the new session
         const registry = ServiceRegistry.getInstance();
