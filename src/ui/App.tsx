@@ -40,6 +40,7 @@ import { ServiceRegistry } from '../services/ServiceRegistry.js';
 import { logger, LogLevel } from '../services/Logger.js';
 import { useServiceInitialization } from './hooks/useServiceInitialization.js';
 import { useModalState } from './hooks/useModalState.js';
+import { useModalActivation, type ModalChoice } from './hooks/useModalActivation.js';
 import { useSessionResume } from './hooks/useSessionResume.js';
 import { useInputHandlers } from './hooks/useInputHandlers.js';
 import { useActivitySubscriptions } from './hooks/useActivitySubscriptions.js';
@@ -59,6 +60,8 @@ import { clearMarkdownCache } from './components/MarkdownText.js';
 import { getActiveProfile } from '../config/paths.js';
 import { UI_COLORS } from './constants/colors.js';
 import { shouldRestoreMainView } from './utils/agentViewLifecycle.js';
+import { PointerProvider } from './contexts/PointerContext.js';
+import type { TerminalInputStream } from '@utils/terminalInput.js';
 
 /**
  * Props for the App component
@@ -69,6 +72,9 @@ export interface AppProps {
 
   /** Activity stream instance */
   activityStream?: ActivityStream;
+
+  /** Terminal input with mouse and cursor reports split off; enables clicks */
+  terminalInput?: TerminalInputStream;
 
   /** Agent instance */
   agent: Agent;
@@ -127,6 +133,7 @@ const AppContentComponent: React.FC<{
   totalMcpCount?: number;
   onInteractiveReady?: () => void;
   startupNotices?: string[];
+  terminalInput?: TerminalInputStream;
 }> = ({
   foregroundAgent,
   foregroundAgentId,
@@ -143,6 +150,7 @@ const AppContentComponent: React.FC<{
   totalMcpCount,
   onInteractiveReady,
   startupNotices,
+  terminalInput,
 }) => {
   const { state, actions } = useAppContext();
   const activityStream = useActivityStreamContext();
@@ -597,6 +605,76 @@ const AppContentComponent: React.FC<{
   // request + navigation props via `extra`. Implemented as a function (not a
   // component) so it renders inline without remounting InputPrompt each render
   // (which would drop the input buffer / cursor state).
+  // Rewind's Enter opens the options step for the chosen message.
+  const handleRewindSelect = (selectedIndex: number) => {
+    const targetMessage = (modal.rewindRequest?.targets ?? [])[selectedIndex];
+    if (!targetMessage) return;
+
+    // Calculate file changes for this message
+    const patchManager = ServiceRegistry.getInstance().get('patch_manager');
+
+    const calculateFileChanges = async () => {
+      if (!patchManager || !targetMessage.timestamp) {
+        return { fileCount: 0, files: [], previewData: undefined };
+      }
+
+      const patchesSince = await patchManager.getPatchesSinceTimestamp(targetMessage.timestamp);
+      const uniqueFiles = new Set<string>();
+      patchesSince.forEach(p => uniqueFiles.add(p.file_path));
+
+      // Fetch preview data for diff stats
+      const previewData = await patchManager.previewUndoSinceTimestamp(targetMessage.timestamp);
+
+      return {
+        fileCount: uniqueFiles.size,
+        files: Array.from(uniqueFiles).map(path => ({ path })),
+        previewData: previewData || undefined,
+      };
+    };
+
+    calculateFileChanges().then(result => {
+      modal.setRewindOptionsRequest({
+        selectedIndex,
+        targetMessage,
+        fileChanges: { fileCount: result.fileCount, files: result.files },
+        previewData: result.previewData,
+      });
+    });
+  };
+
+  const modalActivation = useModalActivation({
+    activityStream,
+    modal,
+    onRewindSelect: handleRewindSelect,
+    onPermissionInstruct: handleInterjection,
+  });
+
+  // Selection lives inside these requests; moving it rewrites the request.
+  const navigateSession = (newIndex: number) => {
+    if (modal.sessionSelectRequest) modal.setSessionSelectRequest({ ...modal.sessionSelectRequest, selectedIndex: newIndex });
+  };
+  const navigateLibrary = (newIndex: number) => {
+    if (modal.librarySelectRequest) modal.setLibrarySelectRequest({ ...modal.librarySelectRequest, selectedIndex: newIndex });
+  };
+  const navigateMessage = (newIndex: number) => {
+    if (modal.messageSelectRequest) modal.setMessageSelectRequest({ ...modal.messageSelectRequest, selectedIndex: newIndex });
+  };
+  const navigateRewind = (newIndex: number) => {
+    if (modal.rewindRequest) modal.setRewindRequest({ ...modal.rewindRequest, selectedIndex: newIndex });
+  };
+  const navigateUndoFileList = (newIndex: number) => {
+    if (modal.undoFileListRequest) modal.setUndoFileListRequest({ ...modal.undoFileListRequest, selectedIndex: newIndex });
+  };
+  const navigateLibraryClearConfirm = (newIndex: number) => {
+    if (modal.libraryClearConfirmRequest) modal.setLibraryClearConfirmRequest({ ...modal.libraryClearConfirmRequest, selectedIndex: newIndex });
+  };
+
+  /** A click on an option row selects it and answers with it, as Enter would. */
+  const pressOption = (navigate: (index: number) => void, choice: ModalChoice) => (index: number) => {
+    navigate(index);
+    choice.activate(index);
+  };
+
   const renderKeyboardInput = (extra: Partial<React.ComponentProps<typeof InputPrompt>>) => (
     <Box height={0} overflow="hidden">
       <InputPrompt
@@ -611,12 +689,20 @@ const AppContentComponent: React.FC<{
         onPrefillConsumed={() => modal.setInputPrefillText(undefined)}
         bufferValue={modal.inputBuffer}
         onBufferChange={modal.setInputBuffer}
+        modalActivation={modalActivation}
         {...extra}
       />
     </Box>
   );
 
+  // The terminal only reports clicks while an interactive surface is up
+  // (or always, by preference), because tracking also takes the scroll wheel
+  // away from the terminal's own scrollback.
+  const mouseSupport = effectiveConfig.mouse_support ?? 'dialogs';
+  const pointerTracking = mouseSupport === 'always' || (mouseSupport === 'dialogs' && (modal.hasOpenModal || modal.fleetFocused));
+
   return (
+    <PointerProvider input={terminalInput} tracking={pointerTracking}>
     <Box flexDirection="column" padding={1} width={terminalWidth}>
       {/* Conversation View - contains header + all conversation history */}
       {/* Constrained to max content width for readability */}
@@ -743,14 +829,11 @@ const AppContentComponent: React.FC<{
             sessions={modal.sessionSelectRequest.sessions}
             selectedIndex={modal.sessionSelectRequest.selectedIndex}
             visible={true}
+            onOptionPress={pressOption(navigateSession, modalActivation.session)}
           />
           {renderKeyboardInput({
             sessionSelectRequest: modal.sessionSelectRequest,
-            onSessionNavigate: newIndex => {
-              if (modal.sessionSelectRequest) {
-                modal.setSessionSelectRequest({ ...modal.sessionSelectRequest, selectedIndex: newIndex });
-              }
-            },
+            onSessionNavigate: navigateSession,
           })}
         </Box>
       ) : /* Library Selector (replaces input when active) */
@@ -762,14 +845,11 @@ const AppContentComponent: React.FC<{
             prompts={modal.librarySelectRequest.prompts}
             selectedIndex={modal.librarySelectRequest.selectedIndex}
             visible={true}
+            onOptionPress={pressOption(navigateLibrary, modalActivation.library)}
           />
           {renderKeyboardInput({
             librarySelectRequest: modal.librarySelectRequest,
-            onLibraryNavigate: newIndex => {
-              if (modal.librarySelectRequest) {
-                modal.setLibrarySelectRequest({ ...modal.librarySelectRequest, selectedIndex: newIndex });
-              }
-            },
+            onLibraryNavigate: navigateLibrary,
           })}
         </Box>
       ) : /* Message Selector (for prompt creation) */
@@ -781,14 +861,11 @@ const AppContentComponent: React.FC<{
             messages={modal.messageSelectRequest.messages}
             selectedIndex={modal.messageSelectRequest.selectedIndex}
             visible={true}
+            onOptionPress={pressOption(navigateMessage, modalActivation.message)}
           />
           {renderKeyboardInput({
             messageSelectRequest: modal.messageSelectRequest,
-            onMessageNavigate: newIndex => {
-              if (modal.messageSelectRequest) {
-                modal.setMessageSelectRequest({ ...modal.messageSelectRequest, selectedIndex: newIndex });
-              }
-            },
+            onMessageNavigate: navigateMessage,
           })}
         </Box>
       ) : /* Prompt Add Wizard (replaces input when active) */
@@ -862,6 +939,7 @@ const AppContentComponent: React.FC<{
             typeName={modal.modelSelectRequest.typeName}
             visible={true}
             loading={modal.modelSelectLoading}
+            onOptionPress={pressOption(modal.setModelSelectedIndex, modalActivation.model)}
           />
           {renderKeyboardInput({
             modelSelectRequest: modal.modelSelectRequest,
@@ -926,6 +1004,7 @@ const AppContentComponent: React.FC<{
                 selectedIndex={modal.rewindRequest.selectedIndex}
                 visible={true}
                 patches={patches}
+                onOptionPress={pressOption(navigateRewind, modalActivation.rewind)}
               />
               {renderKeyboardInput({
                   rewindRequest: {
@@ -933,49 +1012,7 @@ const AppContentComponent: React.FC<{
                     userMessagesCount: rewindTargets.length,
                     selectedIndex: modal.rewindRequest.selectedIndex,
                   },
-                  onRewindNavigate: newIndex => {
-                    if (modal.rewindRequest) {
-                      modal.setRewindRequest({ ...modal.rewindRequest, selectedIndex: newIndex });
-                    }
-                  },
-                  onRewindEnter: selectedIndex => {
-                    // Show options selector when Enter is pressed
-                    const targetMessage = rewindTargets[selectedIndex];
-
-                    if (targetMessage) {
-                      // Calculate file changes for this message
-                      const serviceRegistry = ServiceRegistry.getInstance();
-                      const patchManager = serviceRegistry.get('patch_manager');
-
-                      const calculateFileChanges = async () => {
-                        if (!patchManager || !targetMessage.timestamp) {
-                          return { fileCount: 0, files: [], previewData: undefined };
-                        }
-
-                        const patchesSince = await patchManager.getPatchesSinceTimestamp(targetMessage.timestamp);
-                        const uniqueFiles = new Set<string>();
-                        patchesSince.forEach(p => uniqueFiles.add(p.file_path));
-
-                        // Fetch preview data for diff stats
-                        const previewData = await patchManager.previewUndoSinceTimestamp(targetMessage.timestamp);
-
-                        return {
-                          fileCount: uniqueFiles.size,
-                          files: Array.from(uniqueFiles).map(path => ({ path })),
-                          previewData: previewData || undefined,
-                        };
-                      };
-
-                      calculateFileChanges().then(result => {
-                        modal.setRewindOptionsRequest({
-                          selectedIndex,
-                          targetMessage,
-                          fileChanges: { fileCount: result.fileCount, files: result.files },
-                          previewData: result.previewData,
-                        });
-                      });
-                    }
-                  },
+                  onRewindNavigate: navigateRewind,
               })}
             </Box>
           );
@@ -985,14 +1022,14 @@ const AppContentComponent: React.FC<{
         <Box marginTop={1} flexDirection="column">
           {statusIndicator}
 
-          <UndoFileList request={modal.undoFileListRequest} visible={true} />
+          <UndoFileList
+            request={modal.undoFileListRequest}
+            visible={true}
+            onOptionPress={pressOption(navigateUndoFileList, modalActivation.undoFileList)}
+          />
           {renderKeyboardInput({
             undoFileListRequest: modal.undoFileListRequest,
-            onUndoFileListNavigate: newIndex => {
-              if (modal.undoFileListRequest) {
-                modal.setUndoFileListRequest({ ...modal.undoFileListRequest, selectedIndex: newIndex });
-              }
-            },
+            onUndoFileListNavigate: navigateUndoFileList,
           })}
         </Box>
       ) : modal.libraryClearConfirmRequest ? (
@@ -1004,15 +1041,11 @@ const AppContentComponent: React.FC<{
             promptCount={modal.libraryClearConfirmRequest.promptCount}
             selectedIndex={modal.libraryClearConfirmRequest.selectedIndex}
             visible={true}
+            onOptionPress={pressOption(navigateLibraryClearConfirm, modalActivation.libraryClearConfirm)}
           />
           {renderKeyboardInput({
             libraryClearConfirmRequest: modal.libraryClearConfirmRequest,
-            onLibraryClearConfirmNavigate: newIndex => {
-              modal.setLibraryClearConfirmRequest({
-                ...modal.libraryClearConfirmRequest!,
-                selectedIndex: newIndex,
-              });
-            },
+            onLibraryClearConfirmNavigate: navigateLibraryClearConfirm,
           })}
         </Box>
       ) : modal.undoRequest ? (
@@ -1020,7 +1053,12 @@ const AppContentComponent: React.FC<{
         <Box marginTop={1} flexDirection="column">
           {statusIndicator}
 
-          <UndoPrompt request={modal.undoRequest} selectedIndex={modal.undoSelectedIndex} visible={true} />
+          <UndoPrompt
+            request={modal.undoRequest}
+            selectedIndex={modal.undoSelectedIndex}
+            visible={true}
+            onOptionPress={pressOption(modal.setUndoSelectedIndex, modalActivation.undo)}
+          />
           {renderKeyboardInput({
             undoRequest: modal.undoRequest,
             undoSelectedIndex: modal.undoSelectedIndex,
@@ -1082,13 +1120,12 @@ const AppContentComponent: React.FC<{
             onFeedbackTextChange={modal.setPlanApprovalFeedbackText}
             cursorPosition={modal.planApprovalCursorPosition}
             onCursorChange={modal.setPlanApprovalCursorPosition}
+            onOptionPress={pressOption(modal.setPlanApprovalSelectedIndex, modalActivation.planApproval)}
           />
           {renderKeyboardInput({
             planApprovalRequest: modal.planApprovalRequest,
             planApprovalSelectedIndex: modal.planApprovalSelectedIndex,
             onPlanApprovalNavigate: modal.setPlanApprovalSelectedIndex,
-            planApprovalFeedbackText: modal.planApprovalFeedbackText,
-            onPlanApprovalFeedbackSubmit: handleInterjection,
           })}
         </Box>
       ) : modal.permissionRequest ? (
@@ -1106,6 +1143,7 @@ const AppContentComponent: React.FC<{
             cursorPosition={modal.permissionCursorPosition}
             onCursorChange={modal.setPermissionCursorPosition}
             queueLength={modal.permissionRequestQueueLength}
+            onOptionPress={pressOption(modal.setPermissionSelectedIndex, modalActivation.permission)}
           />
           {renderKeyboardInput({
             permissionRequest: modal.permissionRequest,
@@ -1115,8 +1153,6 @@ const AppContentComponent: React.FC<{
             onSwitchToDefault: handleSwitchToDefault,
             currentAgent: state.currentAgent,
             defaultAgent: defaultAgent,
-            permissionInstructText: modal.permissionInstructText,
-            onPermissionInstructSubmit: handleInterjection,
           })}
         </Box>
       ) : (
@@ -1164,6 +1200,7 @@ const AppContentComponent: React.FC<{
             selectedIndex={modal.fleetSelectedIndex}
             focused={modal.fleetFocused}
             activeAgentId={state.activeAgentId}
+            onOptionPress={handleEnterAgent}
           />
 
           {/* Persistent metadata belongs to the normal input state only. */}
@@ -1192,6 +1229,7 @@ const AppContentComponent: React.FC<{
         </Box>
       )}
     </Box>
+    </PointerProvider>
   );
 };
 
@@ -1223,6 +1261,7 @@ const AppContent = React.memo(AppContentComponent);
 export const App: React.FC<AppProps> = ({
   config,
   activityStream,
+  terminalInput,
   agent,
   resumeSession,
   showSetupWizard,
@@ -1260,6 +1299,7 @@ export const App: React.FC<AppProps> = ({
             totalMcpCount={totalMcpCount}
             onInteractiveReady={onInteractiveReady}
             startupNotices={startupNotices}
+            terminalInput={terminalInput}
           />
         </AppProvider>
       </ActivityProvider>

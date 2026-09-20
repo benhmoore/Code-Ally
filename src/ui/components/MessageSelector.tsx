@@ -6,10 +6,11 @@
  */
 
 import React from 'react';
-import { Box, Text } from 'ink';
+import { Text } from 'ink';
 import { Message } from '@shared/index.js';
 import { TEXT_LIMITS } from '@config/constants.js';
 import { SelectionIndicator } from './SelectionIndicator.js';
+import { Clickable } from './Clickable.js';
 import { UI_COLORS } from '../constants/colors.js';
 import { KeyboardHintFooter } from './KeyboardHintFooter.js';
 import { InteractiveSurface } from './InteractiveSurface.js';
@@ -25,6 +26,8 @@ export interface MessageSelectorProps {
   visible?: boolean;
   /** Maximum visible items before windowing */
   maxVisible?: number;
+  /** Activate the option at an index, as a click on its row does. */
+  onOptionPress?: (index: number) => void;
 }
 
 /**
@@ -55,6 +58,7 @@ export const MessageSelector: React.FC<MessageSelectorProps> = ({
   selectedIndex,
   visible = true,
   maxVisible = 10,
+  onOptionPress,
 }) => {
   const terminalRows = useTerminalRows();
   const visibleCount = Math.min(
@@ -83,12 +87,12 @@ export const MessageSelector: React.FC<MessageSelectorProps> = ({
         const preview = truncateContent(msg.content, 80);
 
         return (
-          <Box key={actualIndex} marginBottom={0}>
+          <Clickable key={actualIndex} marginBottom={0} onPress={onOptionPress && (() => onOptionPress(actualIndex))}>
             <SelectionIndicator isSelected={isSelected}>
               <Text color={UI_COLORS.TEXT_DIM} bold={isSelected}>{timestamp}</Text>
               <Text bold={isSelected}> - {preview}</Text>
             </SelectionIndicator>
-          </Box>
+          </Clickable>
         );
       })}
 

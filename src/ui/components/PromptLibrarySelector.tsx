@@ -10,6 +10,7 @@ import { PromptInfo } from '@shared/index.js';
 import { formatRelativeTime } from '../utils/timeUtils.js';
 import { TEXT_LIMITS } from '@config/constants.js';
 import { SelectionIndicator } from './SelectionIndicator.js';
+import { Clickable } from './Clickable.js';
 import { UI_COLORS } from '../constants/colors.js';
 import { KeyboardHintFooter } from './KeyboardHintFooter.js';
 import { InteractiveSurface } from './InteractiveSurface.js';
@@ -25,6 +26,8 @@ export interface PromptLibrarySelectorProps {
   visible?: boolean;
   /** Maximum visible items before windowing */
   maxVisible?: number;
+  /** Activate the option at an index, as a click on its row does. */
+  onOptionPress?: (index: number) => void;
 }
 
 /**
@@ -76,6 +79,7 @@ export const PromptLibrarySelector: React.FC<PromptLibrarySelectorProps> = ({
   selectedIndex,
   visible = true,
   maxVisible = 10,
+  onOptionPress,
 }) => {
   const terminalRows = useTerminalRows();
   const visibleCount = Math.min(
@@ -118,7 +122,7 @@ export const PromptLibrarySelector: React.FC<PromptLibrarySelectorProps> = ({
             const tagsDisplay = formatTagsDisplay(prompt.tags);
 
             return (
-              <Box key={prompt.id} flexDirection="column">
+              <Clickable key={prompt.id} flexDirection="column" onPress={onOptionPress && (() => onOptionPress(actualIndex))}>
                 <SelectionIndicator isSelected={isSelected}>
                   {displayTitle}
                 </SelectionIndicator>
@@ -130,7 +134,7 @@ export const PromptLibrarySelector: React.FC<PromptLibrarySelectorProps> = ({
                     {relativeTime}{tagsDisplay}
                   </Text>
                 </Box>
-              </Box>
+              </Clickable>
             );
           })}
 

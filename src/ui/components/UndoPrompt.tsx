@@ -13,6 +13,7 @@ import { Box, Text } from 'ink';
 import { DiffDisplay } from './DiffDisplay.js';
 import type { UndoPreview } from '@services/PatchManager.js';
 import { SelectionIndicator } from './SelectionIndicator.js';
+import { Clickable } from './Clickable.js';
 import { KeyboardHintFooter } from './KeyboardHintFooter.js';
 import { UI_COLORS } from '../constants/colors.js';
 import { InteractiveSurface } from './InteractiveSurface.js';
@@ -42,6 +43,8 @@ export interface UndoPromptProps {
   selectedIndex: number;
   /** Whether the prompt is visible */
   visible?: boolean;
+  /** Activate the option at an index, as a click on its row does. */
+  onOptionPress?: (index: number) => void;
 }
 
 /**
@@ -51,6 +54,7 @@ export const UndoPrompt: React.FC<UndoPromptProps> = ({
   request,
   selectedIndex,
   visible = true,
+  onOptionPress,
 }) => {
   const terminalRows = useTerminalRows();
 
@@ -114,11 +118,11 @@ export const UndoPrompt: React.FC<UndoPromptProps> = ({
       {/* Options */}
       <Box flexDirection="column">
         {options.map((option, index) => (
-          <Box key={option} marginLeft={2}>
+          <Clickable key={option} marginLeft={2} onPress={onOptionPress && (() => onOptionPress(index))}>
             <SelectionIndicator isSelected={selectedIndex === index}>
               <Text color={selectedIndex === index ? 'yellow' : undefined}>{option}</Text>
             </SelectionIndicator>
-          </Box>
+          </Clickable>
         ))}
       </Box>
 

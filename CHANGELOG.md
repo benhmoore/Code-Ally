@@ -8,6 +8,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Mouse clicks. Option rows in permission prompts, selectors and the agent
+  fleet answer to a click exactly as they do to Enter. `mouse_support`
+  chooses when the terminal reports clicks: `dialogs` (default) only while
+  such a surface is open, because tracking also takes the scroll wheel away
+  from the terminal; `always`; or `off`.
 - File names in tool rows, diff headers and markdown links are clickable in
   terminals that render OSC 8 hyperlinks. `enable_terminal_hyperlinks` turns
   this off; `FORCE_HYPERLINK=1` enables it where the terminal cannot be

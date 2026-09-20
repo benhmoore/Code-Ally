@@ -459,6 +459,9 @@ export interface ModalState {
   setToolFormValue: (field: string, value: any) => void;
   setToolFormError: (field: string, error: string | null) => void;
 
+  /** Whether any modal or selector is open. */
+  hasOpenModal: boolean;
+
   // Input buffer (preserve across modal renders)
   inputBuffer: string;
   setInputBuffer: (buffer: string) => void;
@@ -694,6 +697,7 @@ export const useModalState = (): ModalState => {
     // Permission prompt
     permissionRequest: permission?.queue[0],
     permissionRequestQueueLength: permission?.queue.length ?? 0,
+    hasOpenModal: stack.length > 0,
     permissionSelectedIndex: permission?.selectedIndex ?? 0,
     permissionInstructText: permission?.instructText ?? '',
     permissionCursorPosition: permission?.cursorPosition ?? 0,

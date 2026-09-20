@@ -10,6 +10,7 @@ import { SessionInfo } from '@shared/index.js';
 import { formatRelativeTime } from '../utils/timeUtils.js';
 import { TEXT_LIMITS } from '@config/constants.js';
 import { SelectionIndicator } from './SelectionIndicator.js';
+import { Clickable } from './Clickable.js';
 import { KeyboardHintFooter } from './KeyboardHintFooter.js';
 import { UI_COLORS } from '../constants/colors.js';
 import { InteractiveSurface } from './InteractiveSurface.js';
@@ -25,6 +26,8 @@ export interface SessionSelectorProps {
   visible?: boolean;
   /** Maximum visible items before windowing */
   maxVisible?: number;
+  /** Activate the option at an index, as a click on its row does. */
+  onOptionPress?: (index: number) => void;
 }
 
 /**
@@ -56,6 +59,7 @@ export const SessionSelector: React.FC<SessionSelectorProps> = ({
   selectedIndex,
   visible = true,
   maxVisible = 10,
+  onOptionPress,
 }) => {
   const terminalRows = useTerminalRows();
   const visibleCount = Math.min(
@@ -91,7 +95,7 @@ export const SessionSelector: React.FC<SessionSelectorProps> = ({
           const lastMessage = session.lastUserMessage || '(no messages)';
 
           return (
-            <Box key={session.session_id} flexDirection="column">
+            <Clickable key={session.session_id} flexDirection="column" onPress={onOptionPress && (() => onOptionPress(actualIndex))}>
               <SelectionIndicator isSelected={isSelected}>
                 {displayName}
                 <Text dimColor> ({session.message_count} msgs, {relativeTime})</Text>
@@ -104,7 +108,7 @@ export const SessionSelector: React.FC<SessionSelectorProps> = ({
                   {workingDir}
                 </Text>
               </Box>
-            </Box>
+            </Clickable>
           );
         })}
 

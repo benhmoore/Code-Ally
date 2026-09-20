@@ -5,8 +5,9 @@
  */
 
 import React from 'react';
-import { Box, Text } from 'ink';
+import { Text } from 'ink';
 import { SelectionIndicator } from './SelectionIndicator.js';
+import { Clickable } from './Clickable.js';
 import { KeyboardHintFooter } from './KeyboardHintFooter.js';
 import { UI_COLORS } from '../constants/colors.js';
 import { InteractiveSurface } from './InteractiveSurface.js';
@@ -32,6 +33,8 @@ export interface ModelSelectorProps {
   visible?: boolean;
   /** Whether capability testing is in progress */
   loading?: boolean;
+  /** Activate the option at an index, as a click on its row does. */
+  onOptionPress?: (index: number) => void;
 }
 
 /**
@@ -44,6 +47,7 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
   typeName,
   visible = true,
   loading = false,
+  onOptionPress,
 }) => {
   const terminalRows = useTerminalRows();
   const visibleCount = visibleItemBudget(terminalRows, { chromeRows: 9, maximum: 10 });
@@ -79,7 +83,7 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
           const isCurrent = model.name === currentModel;
 
           return (
-            <Box key={model.name}>
+            <Clickable key={model.name} onPress={onOptionPress && (() => onOptionPress(actualIndex))}>
               <SelectionIndicator isSelected={isSelected}>
                 {model.name}
                 {isCurrent && (
@@ -89,7 +93,7 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
                   <Text dimColor> - {model.size}</Text>
                 )}
               </SelectionIndicator>
-            </Box>
+            </Clickable>
           );
         })}
 

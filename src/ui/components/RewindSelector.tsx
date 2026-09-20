@@ -11,6 +11,7 @@ import { TEXT_LIMITS } from '@config/constants.js';
 import { PatchMetadata } from '@services/PatchManager.js';
 import { logger } from '@services/Logger.js';
 import { SelectionIndicator } from './SelectionIndicator.js';
+import { Clickable } from './Clickable.js';
 import { KeyboardHintFooter } from './KeyboardHintFooter.js';
 import { UI_COLORS } from '../constants/colors.js';
 import { InteractiveSurface } from './InteractiveSurface.js';
@@ -28,6 +29,8 @@ export interface RewindSelectorProps {
   maxVisible?: number;
   /** All patches from the current session */
   patches?: PatchMetadata[];
+  /** Activate the option at an index, as a click on its row does. */
+  onOptionPress?: (index: number) => void;
 }
 
 /**
@@ -155,6 +158,7 @@ export const RewindSelector: React.FC<RewindSelectorProps> = ({
   visible = true,
   maxVisible = 10,
   patches = [],
+  onOptionPress,
 }) => {
   const terminalRows = useTerminalRows();
   const visibleCount = Math.min(
@@ -218,7 +222,7 @@ export const RewindSelector: React.FC<RewindSelectorProps> = ({
         };
 
         return (
-          <Box key={actualIndex} flexDirection="column">
+          <Clickable key={actualIndex} flexDirection="column" onPress={onOptionPress && (() => onOptionPress(actualIndex))}>
             <Box>
               <SelectionIndicator isSelected={isSelected}>
                 <Text color="gray" bold={isSelected}>{time}</Text>
@@ -226,7 +230,7 @@ export const RewindSelector: React.FC<RewindSelectorProps> = ({
               </SelectionIndicator>
             </Box>
             <FileChangesDisplay changes={changes} isSelected={isSelected} />
-          </Box>
+          </Clickable>
         );
       })}
 

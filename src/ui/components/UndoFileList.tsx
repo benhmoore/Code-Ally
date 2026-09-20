@@ -12,6 +12,7 @@ import React from 'react';
 import { Box, Text } from 'ink';
 import type { UndoFileEntry } from '@services/PatchManager.js';
 import { SelectionIndicator } from './SelectionIndicator.js';
+import { Clickable } from './Clickable.js';
 import { KeyboardHintFooter } from './KeyboardHintFooter.js';
 import { UI_COLORS } from '../constants/colors.js';
 import { formatDiffStats, truncatePath } from '../utils/formatters.js';
@@ -34,6 +35,8 @@ export interface UndoFileListProps {
   request: UndoFileListRequest;
   /** Whether the prompt is visible */
   visible?: boolean;
+  /** Activate the option at an index, as a click on its row does. */
+  onOptionPress?: (index: number) => void;
 }
 
 /**
@@ -42,6 +45,7 @@ export interface UndoFileListProps {
 export const UndoFileList: React.FC<UndoFileListProps> = ({
   request,
   visible = true,
+  onOptionPress,
 }) => {
   const terminalRows = useTerminalRows();
 
@@ -66,7 +70,7 @@ export const UndoFileList: React.FC<UndoFileListProps> = ({
             const filePath = truncatePath(fileEntry.file_path);
 
             return (
-              <Box key={fileEntry.file_path} flexDirection="column">
+              <Clickable key={fileEntry.file_path} flexDirection="column" onPress={onOptionPress && (() => onOptionPress(actualIndex))}>
                 <Box>
                   {/* Selection indicator */}
                   <SelectionIndicator isSelected={isSelected}>
@@ -88,7 +92,7 @@ export const UndoFileList: React.FC<UndoFileListProps> = ({
                     {timestamp}
                   </Text>
                 </Box>
-              </Box>
+              </Clickable>
             );
           })}
         </Box>

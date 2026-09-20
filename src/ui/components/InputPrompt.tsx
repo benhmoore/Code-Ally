@@ -19,10 +19,10 @@ import { CompletionProvider, Completion } from '@services/CompletionProvider.js'
 import { CompletionDropdown } from './CompletionDropdown.js';
 import { PermissionRequest } from './PermissionPrompt.js';
 import { ModelOption } from './ModelSelector.js';
+import type { ModalActivation } from '../hooks/useModalActivation.js';
 import { ActivityStream } from '@services/ActivityStream.js';
 import { ActivityEventType } from '@shared/index.js';
 import { logger } from '@services/Logger.js';
-import { PermissionChoice } from '@agent/TrustManager.js';
 import { Agent } from '@agent/Agent.js';
 import { UI_DELAYS } from '@config/constants.js';
 import { UI_COLORS } from '../constants/colors.js';
@@ -119,8 +119,6 @@ interface InputPromptProps {
   rewindRequest?: { requestId: string; userMessagesCount: number; selectedIndex: number };
   /** Callback when rewind selection changes */
   onRewindNavigate?: (newIndex: number) => void;
-  /** Callback when rewind Enter pressed (to show options) */
-  onRewindEnter?: (selectedIndex: number) => void;
   /** Undo prompt data (if active) */
   undoRequest?: { requestId: string; count: number; patches: any[]; previewData: any[] };
   /** Selected undo option index */
@@ -155,20 +153,18 @@ interface InputPromptProps {
   promptPrefilled?: boolean;
   /** Callback when prompt prefill state should be cleared (user modified buffer) */
   onPromptPrefilledClear?: () => void;
-  /** Current instruction text for INSTRUCT option in permission prompt */
-  permissionInstructText?: string;
-  /** Callback when instruction is submitted (Enter pressed on INSTRUCT option) */
-  onPermissionInstructSubmit?: (text: string) => void;
   /** Plan approval request data (if active) */
   planApprovalRequest?: import('./PlanApprovalPrompt.js').PlanApprovalRequest;
   /** Selected plan approval option index */
   planApprovalSelectedIndex?: number;
   /** Callback when plan approval selection changes */
   onPlanApprovalNavigate?: (newIndex: number) => void;
-  /** Current plan approval feedback text */
-  planApprovalFeedbackText?: string;
-  /** Callback when plan approval feedback is submitted */
-  onPlanApprovalFeedbackSubmit?: (text: string) => void;
+  /**
+   * Answers modal requests. Enter and Escape in every selector go through
+   * it, as does a click on an option row, so both input paths share one
+   * implementation.
+   */
+  modalActivation?: ModalActivation;
 }
 
 /**
@@ -210,7 +206,6 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
   onMessageNavigate,
   rewindRequest,
   onRewindNavigate,
-  onRewindEnter,
   undoRequest,
   undoSelectedIndex = 0,
   onUndoNavigate,
@@ -228,13 +223,10 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
   autoAllowMode = false,
   promptPrefilled = false,
   onPromptPrefilledClear,
-  permissionInstructText,
-  onPermissionInstructSubmit,
   planApprovalRequest,
   planApprovalSelectedIndex = 0,
   onPlanApprovalNavigate,
-  planApprovalFeedbackText,
-  onPlanApprovalFeedbackSubmit,
+  modalActivation,
 }) => {
   const { exit } = useApp();
   const [buffer, setBuffer] = useState(bufferValue || '');
@@ -351,7 +343,6 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
   const exitConfirmationTimerRef = useRef<NodeJS.Timeout | null>(null);
 
   // Track last cancelled request IDs to prevent duplicates
-  const lastCancelledIdRef = useRef<string | null>(null);
 
   // Notify parent when exit confirmation state changes
   useEffect(() => {
@@ -850,7 +841,7 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
       }
 
       // ===== Model Selector Navigation (second priority after force-quit) =====
-      if (modelSelectRequest && onModelNavigate && activityStream) {
+      if (modelSelectRequest && onModelNavigate && modalActivation) {
         const modelsCount = modelSelectRequest.models.length;
 
         // Up arrow - navigate to previous model
@@ -867,48 +858,15 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
           return;
         }
 
-        // Enter - submit selection
+        // Enter - answer with the selected option
         if (key.return) {
-          const selectedModel = modelSelectRequest.models[modelSelectedIndex];
-          if (selectedModel) {
-            try {
-              activityStream.emit({
-                id: `response_${modelSelectRequest.requestId}`,
-                type: ActivityEventType.MODEL_SELECT_RESPONSE,
-                timestamp: Date.now(),
-                data: {
-                  requestId: modelSelectRequest.requestId,
-                  modelName: selectedModel.name,
-                  modelType: modelSelectRequest.modelType, // Pass through model type
-                },
-              });
-            } catch (error) {
-              console.error('[InputPrompt] Failed to emit model selection:', error);
-            }
-          }
+          modalActivation.model.activate(modelSelectedIndex);
           return;
         }
 
-        // Escape or Ctrl+C - cancel selection
+        // Escape or Ctrl+C - cancel
         if (key.escape || (key.ctrl && input === 'c')) {
-          // Prevent duplicate cancellations for same request
-          if (lastCancelledIdRef.current === modelSelectRequest.requestId) return;
-          lastCancelledIdRef.current = modelSelectRequest.requestId;
-
-          try {
-            activityStream.emit({
-              id: `response_${modelSelectRequest.requestId}_cancel`,
-              type: ActivityEventType.MODEL_SELECT_RESPONSE,
-              timestamp: Date.now(),
-              data: {
-                requestId: modelSelectRequest.requestId,
-                modelName: null, // null = cancelled
-                modelType: modelSelectRequest.modelType, // Pass through model type
-              },
-            });
-          } catch (error) {
-            console.error('[InputPrompt] Failed to emit model cancellation:', error);
-          }
+          modalActivation.model.cancel();
           return;
         }
 
@@ -917,7 +875,7 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
       }
 
       // ===== Session Selector Navigation =====
-      if (sessionSelectRequest && onSessionNavigate && activityStream) {
+      if (sessionSelectRequest && onSessionNavigate && modalActivation) {
         const sessionsCount = sessionSelectRequest.sessions.length;
         const currentIndex = sessionSelectRequest.selectedIndex;
 
@@ -935,48 +893,15 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
           return;
         }
 
-        // Enter - submit selection (load session)
+        // Enter - answer with the selected option
         if (key.return) {
-          try {
-            const selectedSession = sessionSelectRequest.sessions[currentIndex];
-            if (selectedSession) {
-              activityStream.emit({
-                id: `response_${sessionSelectRequest.requestId}`,
-                type: ActivityEventType.SESSION_SELECT_RESPONSE,
-                timestamp: Date.now(),
-                data: {
-                  requestId: sessionSelectRequest.requestId,
-                  sessionId: selectedSession.session_id,
-                  cancelled: false,
-                },
-              });
-            }
-          } catch (error) {
-            console.error('[InputPrompt] Failed to emit session selection:', error);
-          }
+          modalActivation.session.activate(currentIndex);
           return;
         }
 
-        // Escape or Ctrl+C - cancel session selection
-        if (key.escape || (input === 'c' && key.ctrl)) {
-          // Prevent duplicate cancellation
-          if (lastCancelledIdRef.current === sessionSelectRequest.requestId) return;
-          lastCancelledIdRef.current = sessionSelectRequest.requestId;
-
-          try {
-            activityStream.emit({
-              id: `response_${sessionSelectRequest.requestId}_cancel`,
-              type: ActivityEventType.SESSION_SELECT_RESPONSE,
-              timestamp: Date.now(),
-              data: {
-                requestId: sessionSelectRequest.requestId,
-                sessionId: null,
-                cancelled: true,
-              },
-            });
-          } catch (error) {
-            console.error('[InputPrompt] Failed to emit session cancellation:', error);
-          }
+        // Escape or Ctrl+C - cancel
+        if (key.escape || (key.ctrl && input === 'c')) {
+          modalActivation.session.cancel();
           return;
         }
 
@@ -985,7 +910,7 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
       }
 
       // ===== Message Selector Navigation (for prompt creation) =====
-      if (messageSelectRequest && onMessageNavigate && activityStream) {
+      if (messageSelectRequest && onMessageNavigate && modalActivation) {
         const messagesCount = messageSelectRequest.messages.length;
         const currentIndex = messageSelectRequest.selectedIndex;
 
@@ -1003,66 +928,21 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
           return;
         }
 
-        // Enter - select message and use for prompt content
+        // Enter - answer with the selected option
         if (key.return) {
-          try {
-            const selectedMessage = messageSelectRequest.messages[currentIndex];
-            if (selectedMessage) {
-              activityStream.emit({
-                id: `response_${messageSelectRequest.requestId}`,
-                type: ActivityEventType.PROMPT_MESSAGE_SELECT_RESPONSE,
-                timestamp: Date.now(),
-                data: {
-                  requestId: messageSelectRequest.requestId,
-                  selectedMessage: selectedMessage,
-                  cancelled: false,
-                },
-              });
-            }
-          } catch (error) {
-            console.error('[InputPrompt] Failed to emit message selection:', error);
-          }
+          modalActivation.message.activate(currentIndex);
           return;
         }
 
         // 'N' key - create new prompt (skip message selection)
         if (input.toLowerCase() === 'n') {
-          try {
-            activityStream.emit({
-              id: `response_${messageSelectRequest.requestId}_new`,
-              type: ActivityEventType.PROMPT_MESSAGE_SELECT_RESPONSE,
-              timestamp: Date.now(),
-              data: {
-                requestId: messageSelectRequest.requestId,
-                selectedMessage: undefined, // No message selected
-                cancelled: false,
-              },
-            });
-          } catch (error) {
-            console.error('[InputPrompt] Failed to emit new prompt request:', error);
-          }
+          modalActivation.message.createNew();
           return;
         }
 
-        // Escape or Ctrl+C - cancel entire flow
+        // Escape or Ctrl+C - cancel
         if (key.escape || (key.ctrl && input === 'c')) {
-          // Prevent duplicate cancellations for same request
-          if (lastCancelledIdRef.current === messageSelectRequest.requestId) return;
-          lastCancelledIdRef.current = messageSelectRequest.requestId;
-
-          try {
-            activityStream.emit({
-              id: `response_${messageSelectRequest.requestId}_cancel`,
-              type: ActivityEventType.PROMPT_MESSAGE_SELECT_RESPONSE,
-              timestamp: Date.now(),
-              data: {
-                requestId: messageSelectRequest.requestId,
-                cancelled: true,
-              },
-            });
-          } catch (error) {
-            console.error('[InputPrompt] Failed to emit message selection cancellation:', error);
-          }
+          modalActivation.message.cancel();
           return;
         }
 
@@ -1071,7 +951,7 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
       }
 
       // ===== Library Selector Navigation =====
-      if (librarySelectRequest && onLibraryNavigate && activityStream) {
+      if (librarySelectRequest && onLibraryNavigate && modalActivation) {
         const promptsCount = librarySelectRequest.prompts.length;
         const currentIndex = librarySelectRequest.selectedIndex;
 
@@ -1089,47 +969,15 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
           return;
         }
 
-        // Enter - submit selection (load prompt)
+        // Enter - answer with the selected option
         if (key.return) {
-          try {
-            const selectedPrompt = librarySelectRequest.prompts[currentIndex];
-            if (selectedPrompt) {
-              activityStream.emit({
-                id: `response_${librarySelectRequest.requestId}`,
-                type: ActivityEventType.LIBRARY_SELECT_RESPONSE,
-                timestamp: Date.now(),
-                data: {
-                  requestId: librarySelectRequest.requestId,
-                  promptId: selectedPrompt.id,
-                  cancelled: false,
-                },
-              });
-            }
-          } catch (error) {
-            console.error('[InputPrompt] Failed to emit library selection:', error);
-          }
+          modalActivation.library.activate(currentIndex);
           return;
         }
 
-        // Escape or Ctrl+C - cancel selection
+        // Escape or Ctrl+C - cancel
         if (key.escape || (key.ctrl && input === 'c')) {
-          // Prevent duplicate cancellations for same request
-          if (lastCancelledIdRef.current === librarySelectRequest.requestId) return;
-          lastCancelledIdRef.current = librarySelectRequest.requestId;
-
-          try {
-            activityStream.emit({
-              id: `response_${librarySelectRequest.requestId}_cancel`,
-              type: ActivityEventType.LIBRARY_SELECT_RESPONSE,
-              timestamp: Date.now(),
-              data: {
-                requestId: librarySelectRequest.requestId,
-                cancelled: true,
-              },
-            });
-          } catch (error) {
-            console.error('[InputPrompt] Failed to emit library cancellation:', error);
-          }
+          modalActivation.library.cancel();
           return;
         }
 
@@ -1138,7 +986,7 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
       }
 
       // ===== Rewind Selector Navigation =====
-      if (rewindRequest && onRewindNavigate) {
+      if (rewindRequest && onRewindNavigate && modalActivation) {
         const messagesCount = rewindRequest.userMessagesCount;
         const currentIndex = rewindRequest.selectedIndex;
 
@@ -1156,35 +1004,15 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
           return;
         }
 
-        // Enter - show options modal (don't submit yet)
+        // Enter - open the options step for the selected message
         if (key.return) {
-          if (onRewindEnter) {
-            onRewindEnter(currentIndex);
-          }
+          modalActivation.rewind.activate(currentIndex);
           return;
         }
 
-        // Escape or Ctrl+C - cancel rewind
+        // Escape or Ctrl+C - cancel
         if (key.escape || (key.ctrl && input === 'c')) {
-          // Prevent duplicate cancellations for same request
-          if (lastCancelledIdRef.current === rewindRequest.requestId) return;
-          lastCancelledIdRef.current = rewindRequest.requestId;
-
-          if (activityStream) {
-            try {
-              activityStream.emit({
-                id: `response_${rewindRequest.requestId}_cancel`,
-                type: ActivityEventType.REWIND_RESPONSE,
-                timestamp: Date.now(),
-                data: {
-                  requestId: rewindRequest.requestId,
-                  cancelled: true,
-                },
-              });
-            } catch (error) {
-              console.error('[InputPrompt] Failed to emit rewind cancellation:', error);
-            }
-          }
+          modalActivation.rewind.cancel();
           return;
         }
 
@@ -1193,7 +1021,7 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
       }
 
       // ===== Library Clear Confirmation Navigation =====
-      if (libraryClearConfirmRequest && onLibraryClearConfirmNavigate && activityStream) {
+      if (libraryClearConfirmRequest && onLibraryClearConfirmNavigate && modalActivation) {
         const optionsCount = 2; // Confirm and Cancel
         const currentIndex = libraryClearConfirmRequest.selectedIndex;
 
@@ -1211,46 +1039,15 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
           return;
         }
 
-        // Enter - submit selection
+        // Enter - answer with the selected option
         if (key.return) {
-          const confirmed = currentIndex === 0; // 0 = Confirm, 1 = Cancel
-          try {
-            activityStream.emit({
-              id: `response_${libraryClearConfirmRequest.requestId}`,
-              type: ActivityEventType.LIBRARY_CLEAR_CONFIRM_RESPONSE,
-              timestamp: Date.now(),
-              data: {
-                requestId: libraryClearConfirmRequest.requestId,
-                confirmed,
-                cancelled: false,
-              },
-            });
-          } catch (error) {
-            console.error('[InputPrompt] Failed to emit library clear confirmation:', error);
-          }
+          modalActivation.libraryClearConfirm.activate(currentIndex);
           return;
         }
 
         // Escape or Ctrl+C - cancel
         if (key.escape || (key.ctrl && input === 'c')) {
-          // Prevent duplicate cancellations for same request
-          if (lastCancelledIdRef.current === libraryClearConfirmRequest.requestId) return;
-          lastCancelledIdRef.current = libraryClearConfirmRequest.requestId;
-
-          try {
-            activityStream.emit({
-              id: `response_${libraryClearConfirmRequest.requestId}_cancel`,
-              type: ActivityEventType.LIBRARY_CLEAR_CONFIRM_RESPONSE,
-              timestamp: Date.now(),
-              data: {
-                requestId: libraryClearConfirmRequest.requestId,
-                confirmed: false,
-                cancelled: true,
-              },
-            });
-          } catch (error) {
-            console.error('[InputPrompt] Failed to emit library clear cancellation:', error);
-          }
+          modalActivation.libraryClearConfirm.cancel();
           return;
         }
 
@@ -1259,7 +1056,7 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
       }
 
       // ===== Undo File List Navigation (Two-Stage Flow - Stage 1) =====
-      if (undoFileListRequest && onUndoFileListNavigate && activityStream) {
+      if (undoFileListRequest && onUndoFileListNavigate && modalActivation) {
         const filesCount = undoFileListRequest.fileList.length;
         const currentIndex = undoFileListRequest.selectedIndex;
 
@@ -1277,46 +1074,15 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
           return;
         }
 
-        // Enter - select file (move to stage 2: show diff)
+        // Enter - answer with the selected option
         if (key.return) {
-          try {
-            const selectedFile = undoFileListRequest.fileList[currentIndex];
-            if (selectedFile) {
-              activityStream.emit({
-                id: `undo_file_selected_${Date.now()}`,
-                type: ActivityEventType.UNDO_FILE_SELECTED,
-                timestamp: Date.now(),
-                data: {
-                  requestId: undoFileListRequest.requestId,
-                  patchNumber: selectedFile.patch_number,
-                  filePath: selectedFile.file_path,
-                },
-              });
-            }
-          } catch (error) {
-            console.error('[InputPrompt] Failed to emit file selection:', error);
-          }
+          modalActivation.undoFileList.activate(currentIndex);
           return;
         }
 
-        // Escape or Ctrl+C - cancel undo
+        // Escape or Ctrl+C - cancel
         if (key.escape || (key.ctrl && input === 'c')) {
-          // Prevent duplicate cancellations for same request
-          if (lastCancelledIdRef.current === undoFileListRequest.requestId) return;
-          lastCancelledIdRef.current = undoFileListRequest.requestId;
-
-          try {
-            activityStream.emit({
-              id: `undo_cancelled_${Date.now()}`,
-              type: ActivityEventType.UNDO_CANCELLED,
-              timestamp: Date.now(),
-              data: {
-                requestId: undoFileListRequest.requestId,
-              },
-            });
-          } catch (error) {
-            console.error('[InputPrompt] Failed to emit undo cancellation:', error);
-          }
+          modalActivation.undoFileList.cancel();
           return;
         }
 
@@ -1325,7 +1091,7 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
       }
 
       // ===== Undo Prompt Navigation (Two-Stage Flow - Stage 2) =====
-      if (undoRequest && onUndoNavigate && activityStream) {
+      if (undoRequest && onUndoNavigate && modalActivation) {
         const optionsCount = 2; // Confirm and Cancel
 
         // Up arrow - navigate to previous option
@@ -1342,53 +1108,15 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
           return;
         }
 
-        // Enter - submit selection
+        // Enter - answer with the selected option
         if (key.return) {
-          const confirmed = undoSelectedIndex === 0; // 0 = Confirm, 1 = Cancel
-          try {
-            if (confirmed) {
-              activityStream.emit({
-                id: `undo_confirm_${Date.now()}`,
-                type: ActivityEventType.UNDO_CONFIRM,
-                timestamp: Date.now(),
-                data: {
-                  requestId: undoRequest.requestId,
-                },
-              });
-            } else {
-              activityStream.emit({
-                id: `undo_file_back_${Date.now()}`,
-                type: ActivityEventType.UNDO_FILE_BACK,
-                timestamp: Date.now(),
-                data: {
-                  requestId: undoRequest.requestId,
-                },
-              });
-            }
-          } catch (error) {
-            console.error('[InputPrompt] Failed to emit undo response:', error);
-          }
+          modalActivation.undo.activate(undoSelectedIndex);
           return;
         }
 
-        // Escape or Ctrl+C - go back to file list
+        // Escape or Ctrl+C - cancel
         if (key.escape || (key.ctrl && input === 'c')) {
-          // Prevent duplicate cancellations for same request
-          if (lastCancelledIdRef.current === undoRequest.requestId) return;
-          lastCancelledIdRef.current = undoRequest.requestId;
-
-          try {
-            activityStream.emit({
-              id: `undo_file_back_${Date.now()}`,
-              type: ActivityEventType.UNDO_FILE_BACK,
-              timestamp: Date.now(),
-              data: {
-                requestId: undoRequest.requestId,
-              },
-            });
-          } catch (error) {
-            console.error('[InputPrompt] Failed to emit undo back:', error);
-          }
+          modalActivation.undo.cancel();
           return;
         }
 
@@ -1397,7 +1125,7 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
       }
 
       // ===== Plan Approval Navigation =====
-      if (planApprovalRequest && onPlanApprovalNavigate && activityStream) {
+      if (planApprovalRequest && onPlanApprovalNavigate && modalActivation) {
         const optionsCount = 3; // Approve, Approve + clear context, Provide feedback
 
         // Up arrow
@@ -1414,47 +1142,15 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
           return;
         }
 
-        // Enter - submit selection
+        // Enter - answer with the selected option
         if (key.return) {
-          if (planApprovalSelectedIndex === 0) {
-            // Approve
-            activityStream.emit({
-              id: `plan_response_${Date.now()}`,
-              type: ActivityEventType.PLAN_APPROVAL_RESPONSE,
-              timestamp: Date.now(),
-              data: { choice: 'approve' },
-            });
-          } else if (planApprovalSelectedIndex === 1) {
-            // Approve + clear context
-            activityStream.emit({
-              id: `plan_response_${Date.now()}`,
-              type: ActivityEventType.PLAN_APPROVAL_RESPONSE,
-              timestamp: Date.now(),
-              data: { choice: 'approve_clear_context' },
-            });
-          } else if (planApprovalSelectedIndex === 2) {
-            // Provide feedback
-            if (planApprovalFeedbackText?.trim() && onPlanApprovalFeedbackSubmit) {
-              activityStream.emit({
-                id: `plan_response_${Date.now()}`,
-                type: ActivityEventType.PLAN_APPROVAL_RESPONSE,
-                timestamp: Date.now(),
-                data: { choice: 'feedback', feedback: planApprovalFeedbackText },
-              });
-            }
-            // If empty, do nothing
-          }
+          modalActivation.planApproval.activate(planApprovalSelectedIndex);
           return;
         }
 
-        // Escape or Ctrl+C - treat as feedback with empty text (cancel)
+        // Escape or Ctrl+C - cancel
         if (key.escape || (key.ctrl && input === 'c')) {
-          activityStream.emit({
-            id: `plan_response_${Date.now()}`,
-            type: ActivityEventType.PLAN_APPROVAL_RESPONSE,
-            timestamp: Date.now(),
-            data: { choice: 'feedback', feedback: 'Plan rejected by user.' },
-          });
+          modalActivation.planApproval.cancel();
           return;
         }
 
@@ -1463,7 +1159,7 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
       }
 
       // ===== Permission Prompt Navigation =====
-      if (permissionRequest && onPermissionNavigate && activityStream) {
+      if (permissionRequest && onPermissionNavigate && modalActivation) {
         const optionsCount = permissionRequest.options.length;
 
         // Up arrow - navigate to previous option (even from INSTRUCT)
@@ -1480,73 +1176,15 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
           return;
         }
 
-        // Enter - submit selection
+        // Enter - answer with the selected option
         if (key.return) {
-          const selectedChoice = permissionRequest.options[permissionSelectedIndex];
-
-          // If INSTRUCT is selected (dynamic string like "Tell Assistant what to do instead..."), handle instruction submission
-          const isInstructOption = typeof selectedChoice === 'string' && selectedChoice.startsWith('Tell ') && selectedChoice.endsWith('...');
-          if (isInstructOption) {
-            if (permissionInstructText?.trim() && onPermissionInstructSubmit) {
-              // Submit the instruction
-              onPermissionInstructSubmit(permissionInstructText);
-              // Emit DENY response (instruction flow denies the original permission)
-              try {
-                activityStream.emit({
-                  id: `response_${permissionRequest.requestId}`,
-                  type: ActivityEventType.PERMISSION_RESPONSE,
-                  timestamp: Date.now(),
-                  data: {
-                    requestId: permissionRequest.requestId,
-                    choice: PermissionChoice.DENY,
-                  },
-                });
-              } catch (error) {
-                console.error('[InputPrompt] Failed to emit permission response:', error);
-              }
-            }
-            // If empty, do nothing (don't submit empty instruction)
-            return;
-          }
-
-          // Otherwise handle normal permission choice
-          if (selectedChoice) {
-            try {
-              activityStream.emit({
-                id: `response_${permissionRequest.requestId}`,
-                type: ActivityEventType.PERMISSION_RESPONSE,
-                timestamp: Date.now(),
-                data: {
-                  requestId: permissionRequest.requestId,
-                  choice: selectedChoice,
-                },
-              });
-            } catch (error) {
-              console.error('[InputPrompt] Failed to emit permission response:', error);
-            }
-          }
+          modalActivation.permission.activate(permissionSelectedIndex);
           return;
         }
 
-        // Escape or Ctrl+C - deny permission and cancel
+        // Escape or Ctrl+C - cancel
         if (key.escape || (key.ctrl && input === 'c')) {
-          // Prevent duplicate cancellations for same request
-          if (lastCancelledIdRef.current === permissionRequest.requestId) return;
-          lastCancelledIdRef.current = permissionRequest.requestId;
-
-          try {
-            activityStream.emit({
-              id: `response_${permissionRequest.requestId}_cancel`,
-              type: ActivityEventType.PERMISSION_RESPONSE,
-              timestamp: Date.now(),
-              data: {
-                requestId: permissionRequest.requestId,
-                choice: PermissionChoice.DENY,
-              },
-            });
-          } catch (error) {
-            console.error('[InputPrompt] Failed to emit permission denial:', error);
-          }
+          modalActivation.permission.cancel();
           return;
         }
 

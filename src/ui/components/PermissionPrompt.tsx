@@ -10,7 +10,7 @@
  */
 
 import React from 'react';
-import { Box, Text } from 'ink';
+import { Text } from 'ink';
 import { PermissionChoice, SensitivityTier } from '@agent/TrustManager.js';
 import { SelectionIndicator } from './SelectionIndicator.js';
 import { KeyboardHintFooter } from './KeyboardHintFooter.js';
@@ -18,6 +18,7 @@ import { UI_COLORS } from '../constants/colors.js';
 import { UI_SYMBOLS } from '@config/uiSymbols.js';
 import { TextInput } from './TextInput.js';
 import { InteractiveSurface } from './InteractiveSurface.js';
+import { Clickable } from './Clickable.js';
 
 export interface PermissionRequest {
   /** Tool or command requesting permission */
@@ -53,6 +54,8 @@ export interface PermissionPromptProps {
   onCursorChange?: (position: number) => void;
   /** Number of permissions in the queue */
   queueLength?: number;
+  /** Activate the option at an index, as a click on its row does. */
+  onOptionPress?: (index: number) => void;
 }
 
 /**
@@ -76,6 +79,7 @@ export const PermissionPrompt: React.FC<PermissionPromptProps> = ({
   cursorPosition = 0,
   onCursorChange = () => {},
   queueLength,
+  onOptionPress,
 }) => {
   if (!visible) {
     return null;
@@ -103,7 +107,7 @@ export const PermissionPrompt: React.FC<PermissionPromptProps> = ({
         const isInstructOption = typeof option === 'string' && option.startsWith('Tell ') && option.endsWith('...');
 
         return (
-          <Box key={idx} flexDirection="row">
+          <Clickable key={idx} flexDirection="row" onPress={onOptionPress && (() => onOptionPress(idx))}>
             {/* For INSTRUCT option when selected, show chevron + TextInput */}
             {isInstructOption && isSelected ? (
               <>
@@ -125,7 +129,7 @@ export const PermissionPrompt: React.FC<PermissionPromptProps> = ({
                 {option}
               </SelectionIndicator>
             )}
-          </Box>
+          </Clickable>
         );
       })}
 

@@ -12,6 +12,7 @@
 import React from 'react';
 import { Box, Text } from 'ink';
 import { SelectionIndicator } from './SelectionIndicator.js';
+import { Clickable } from './Clickable.js';
 import { KeyboardHintFooter } from './KeyboardHintFooter.js';
 import { MarkdownText } from './MarkdownText.js';
 import { UI_COLORS } from '../constants/colors.js';
@@ -41,6 +42,8 @@ export interface PlanApprovalPromptProps {
   cursorPosition: number;
   /** Cursor position change callback */
   onCursorChange: (position: number) => void;
+  /** Activate the option at an index, as a click on its row does. */
+  onOptionPress?: (index: number) => void;
 }
 
 /** Plan approval option labels */
@@ -60,6 +63,7 @@ export const PlanApprovalPrompt: React.FC<PlanApprovalPromptProps> = ({
   onFeedbackTextChange,
   cursorPosition,
   onCursorChange,
+  onOptionPress,
 }) => {
   const terminalRows = useTerminalRows();
 
@@ -89,7 +93,7 @@ export const PlanApprovalPrompt: React.FC<PlanApprovalPromptProps> = ({
           const isFeedbackOption = idx === 2;
 
           return (
-            <Box key={idx} flexDirection="row">
+            <Clickable key={idx} flexDirection="row" onPress={onOptionPress && (() => onOptionPress(idx))}>
               {isFeedbackOption && isSelected ? (
                 <>
                   <Text color={UI_COLORS.PRIMARY}>{UI_SYMBOLS.NAVIGATION.CHEVRON_RIGHT} </Text>
@@ -109,7 +113,7 @@ export const PlanApprovalPrompt: React.FC<PlanApprovalPromptProps> = ({
                   {option}
                 </SelectionIndicator>
               )}
-            </Box>
+            </Clickable>
           );
         })}
       </Box>

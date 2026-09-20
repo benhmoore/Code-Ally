@@ -7,6 +7,7 @@
 import React from 'react';
 import { Box, Text } from 'ink';
 import { SelectionIndicator } from './SelectionIndicator.js';
+import { Clickable } from './Clickable.js';
 import { UI_COLORS } from '../constants/colors.js';
 import { InteractiveSurface } from './InteractiveSurface.js';
 import { KeyboardHintFooter } from './KeyboardHintFooter.js';
@@ -18,6 +19,8 @@ export interface LibraryClearConfirmationProps {
   selectedIndex: number;
   /** Whether the prompt is visible */
   visible?: boolean;
+  /** Activate the option at an index, as a click on its row does. */
+  onOptionPress?: (index: number) => void;
 }
 
 /**
@@ -27,6 +30,7 @@ export const LibraryClearConfirmation: React.FC<LibraryClearConfirmationProps> =
   promptCount,
   selectedIndex,
   visible = true,
+  onOptionPress,
 }) => {
   if (!visible) {
     return null;
@@ -47,13 +51,13 @@ export const LibraryClearConfirmation: React.FC<LibraryClearConfirmationProps> =
               const color = option === 'Confirm' ? UI_COLORS.WARNING : UI_COLORS.TEXT_DEFAULT;
 
               return (
-                <Box key={idx}>
+                <Clickable key={idx} onPress={onOptionPress && (() => onOptionPress(idx))}>
                   <SelectionIndicator isSelected={isSelected}>
                     <Text color={color} bold={isSelected}>
                       {option}
                     </Text>
                   </SelectionIndicator>
-                </Box>
+                </Clickable>
               );
             })}
           </Box>

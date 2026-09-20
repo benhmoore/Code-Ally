@@ -453,6 +453,14 @@ export interface ToolCallTreeNode extends ToolCallState {
 // Configuration Types
 // ===========================
 
+/**
+ * When mouse tracking is on. While it is on, the terminal sends clicks and
+ * wheel events to the app instead of scrolling its own scrollback, so the
+ * default limits it to dialogs, where nothing needs scrolling.
+ */
+export const MOUSE_SUPPORT_VALUES = ['off', 'dialogs', 'always'] as const;
+export type MouseSupport = (typeof MOUSE_SUPPORT_VALUES)[number];
+
 export interface Config {
   // LLM Settings
   model: string | null;
@@ -495,6 +503,7 @@ export interface Config {
   enable_idle_messages: boolean; // Enable auto-generated idle status messages
   enable_session_title_generation: boolean; // Enable auto-generated session titles
   enable_terminal_hyperlinks: boolean; // Make file names and links clickable in terminals that support OSC 8
+  mouse_support: MouseSupport; // When the terminal reports mouse clicks to the app
 
   // Tool Call Retry Settings
   tool_call_retry_enabled: boolean;

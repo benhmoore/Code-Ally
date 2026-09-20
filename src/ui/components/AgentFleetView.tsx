@@ -18,6 +18,7 @@ import { Box, Text } from 'ink';
 import { BackgroundAgentInfo } from '../hooks/useBackgroundAgents.js';
 import { BackgroundAgentStatus } from '@services/BackgroundAgentManager.js';
 import { SelectionIndicator } from './SelectionIndicator.js';
+import { Clickable } from './Clickable.js';
 import { UI_COLORS } from '../constants/colors.js';
 import { formatElapsed } from '../utils/timeUtils.js';
 import { TEXT_LIMITS } from '@config/constants.js';
@@ -33,6 +34,8 @@ export interface AgentFleetViewProps {
   activeAgentId: string;
   /** Max agent rows before windowing */
   maxVisible?: number;
+  /** Activate the option at an index, as a click on its row does. */
+  onOptionPress?: (index: number) => void;
 }
 
 const CURRENT_AGENT_DOT = '●';
@@ -87,6 +90,7 @@ const AgentFleetViewComponent: React.FC<AgentFleetViewProps> = ({
   focused,
   activeAgentId,
   maxVisible = 6,
+  onOptionPress,
 }) => {
   // Nothing to show until at least one background agent exists.
   if (agents.length === 0) {
@@ -116,11 +120,13 @@ const AgentFleetViewComponent: React.FC<AgentFleetViewProps> = ({
   return (
     <Box flexDirection="column" paddingX={1} marginTop={1}>
       {/* main row (selectable index 0) */}
-      <SelectionIndicator isSelected={focused && selectedIndex === 0}>
-        <Text color={activeAgentId === 'main' ? UI_COLORS.TEXT_DEFAULT : undefined} bold>
-          {agentFleetDot(activeAgentId === 'main')} main
-        </Text>
-      </SelectionIndicator>
+      <Clickable onPress={onOptionPress && (() => onOptionPress(0))}>
+        <SelectionIndicator isSelected={focused && selectedIndex === 0}>
+          <Text color={activeAgentId === 'main' ? UI_COLORS.TEXT_DEFAULT : undefined} bold>
+            {agentFleetDot(activeAgentId === 'main')} main
+          </Text>
+        </SelectionIndicator>
+      </Clickable>
 
       {hasMoreAbove && (
         <Text dimColor>  ↑ {startIdx} more…</Text>
@@ -136,14 +142,16 @@ const AgentFleetViewComponent: React.FC<AgentFleetViewProps> = ({
         const label = labels[startIdx + idx];
 
         return (
-          <SelectionIndicator key={agent.id} isSelected={isSelected}>
-            <Text color={color} dimColor={agent.status === 'cancelled'}>{dot} </Text>
-            <Text bold={isViewed} wrap="truncate-end">{label}</Text>
-            <Text dimColor>  {formatElapsed(elapsedSeconds)} · {formatTokens(agent.tokens)}</Text>
-            {agent.status !== 'running' && (
-              <Text dimColor> ({agent.status})</Text>
-            )}
-          </SelectionIndicator>
+          <Clickable key={agent.id} onPress={onOptionPress && (() => onOptionPress(actualIndex))}>
+            <SelectionIndicator isSelected={isSelected}>
+              <Text color={color} dimColor={agent.status === 'cancelled'}>{dot} </Text>
+              <Text bold={isViewed} wrap="truncate-end">{label}</Text>
+              <Text dimColor>  {formatElapsed(elapsedSeconds)} · {formatTokens(agent.tokens)}</Text>
+              {agent.status !== 'running' && (
+                <Text dimColor> ({agent.status})</Text>
+              )}
+            </SelectionIndicator>
+          </Clickable>
         );
       })}
 

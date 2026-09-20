@@ -17,6 +17,7 @@ import React, { useState } from 'react';
 import { Box, Text, useInput } from 'ink';
 import { Message } from '@shared/index.js';
 import { SelectionIndicator } from './SelectionIndicator.js';
+import { Clickable } from './Clickable.js';
 import { KeyboardHintFooter } from './KeyboardHintFooter.js';
 import { UI_COLORS } from '../constants/colors.js';
 import type { UndoPreview } from '@services/PatchManager.js';
@@ -284,7 +285,7 @@ export const RewindOptionsSelector: React.FC<RewindOptionsSelectorProps> = ({
           const isSelected = index === selectedOption;
 
           return (
-            <Box key={option.choice} flexDirection="column">
+            <Clickable key={option.choice} flexDirection="column" onPress={() => onConfirm(option.choice)}>
               {/* Option label */}
               <SelectionIndicator isSelected={isSelected}>
                 <Text>{option.label}</Text>
@@ -295,7 +296,7 @@ export const RewindOptionsSelector: React.FC<RewindOptionsSelectorProps> = ({
                   <Text dimColor>{option.description}</Text>
                 </Box>
               )}
-            </Box>
+            </Clickable>
           );
         })}
       </Box>

@@ -36,6 +36,8 @@ import { runStartupValidation, needsSetup } from './cli/validation.js';
 import { ProfileManager } from './services/ProfileManager.js';
 import { setActiveProfile } from './config/paths.js';
 import { initializePrimaryColor } from './ui/constants/colors.js';
+import { MOUSE_TRACKING_DISABLE } from './utils/terminal.js';
+import { TerminalInputStream } from './utils/terminalInput.js';
 import { getAgentDisplayName } from './utils/agentTypeUtils.js';
 import { ScheduledTaskManager, ScheduledTask, presetPolicy } from './services/ScheduledTaskManager.js';
 import { SchedulerInstaller } from './services/SchedulerInstaller.js';
@@ -97,6 +99,7 @@ function resetTerminalState(): void {
     + '\x1b[39m\x1b[49m'  // Reset foreground/background colors
     + '\x1b[?1049l'        // Exit alternate screen buffer
     + '\x1b[?2004l'        // Reset bracketed paste mode
+    + MOUSE_TRACKING_DISABLE
     + '\n'
   );
 }
@@ -114,6 +117,7 @@ function reassertTerminalState(): void {
     + '\x1b[39m\x1b[49m' // Reset fg/bg colors
     + '\x1b]8;;\x1b\\'  // Close any open hyperlinks
     + '\x1b[?2004l'     // Reset bracketed paste mode
+    + MOUSE_TRACKING_DISABLE
   );
 }
 
@@ -1692,11 +1696,16 @@ async function main() {
     const { setTerminalTitle } = await import('./utils/terminal.js');
     setTerminalTitle('New Session');
 
+    // Terminal reports (mouse, cursor position) are split off before Ink
+    // parses keys; the app resolves clicks from the same stream.
+    const terminalInput = new TerminalInputStream(process.stdin);
+
     const { waitUntilExit } = render(
       React.createElement(App, {
         config,
         activityStream,
         agent,
+        terminalInput,
         resumeSession,
         showSetupWizard: options.init || forceSetup, // Show setup wizard if --init flag or missing critical config
         showModelSelector: forceModelSelector, // Show model selector if model not found
@@ -1715,6 +1724,9 @@ async function main() {
           : undefined,
       }),
       {
+        // Ink types stdin as a TTY ReadStream but only relies on the members
+        // TerminalInputStream forwards (isTTY, setRawMode, ref, unref, read).
+        stdin: terminalInput as unknown as NodeJS.ReadStream,
         exitOnCtrlC: false,
         patchConsole: true, // Intercept console to prevent interference with Ink rendering
         // Rewrite only the lines that changed between frames. The default

@@ -5,7 +5,7 @@
  * Configuration can be overridden via config file or runtime modifications.
  */
 
-import type { Config } from '../types/index.js';
+import { MOUSE_SUPPORT_VALUES, type Config, type MouseSupport } from '../types/index.js';
 import { isHooksConfigShape } from '../hooks/types.js';
 import { formatError } from '../utils/errorUtils.js';
 import { REASONING_EFFORT, REASONING_EFFORT_API_VALUES } from './constants.js';
@@ -64,6 +64,7 @@ export const DEFAULT_CONFIG: Config = {
   enable_idle_messages: true, // Enable auto-generated idle status messages
   enable_session_title_generation: true, // Enable auto-generated session titles
   enable_terminal_hyperlinks: true, // Make file names and links clickable in terminals that support OSC 8
+  mouse_support: 'dialogs', // off | dialogs | always — when clicks are sent to the app instead of the terminal
 
   // ==========================================
   // TOOL CALL RETRY SETTINGS
@@ -172,6 +173,7 @@ export const CONFIG_TYPES: Record<keyof Config, string> = {
   show_tool_parameters_in_chat: 'boolean',
   enable_idle_messages: 'boolean',
   enable_terminal_hyperlinks: 'boolean',
+  mouse_support: 'string',
   enable_session_title_generation: 'boolean',
 
   // Tool Call Retry
@@ -268,6 +270,14 @@ export function validateConfigValue(
       return { valid: true, coercedValue: lowerValue };
     }
     return { valid: false, error: `reasoning_effort must be one of: ${REASONING_EFFORT_API_VALUES.join(', ')}` };
+  }
+
+  if (key === 'mouse_support' && typeof value === 'string') {
+    const lowerValue = value.toLowerCase();
+    if (MOUSE_SUPPORT_VALUES.includes(lowerValue as MouseSupport)) {
+      return { valid: true, coercedValue: lowerValue };
+    }
+    return { valid: false, error: `mouse_support must be one of: ${MOUSE_SUPPORT_VALUES.join(', ')}` };
   }
 
   // Validate provider values

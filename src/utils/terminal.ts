@@ -5,9 +5,20 @@
  * - Setting window/tab titles
  * - Sending notifications/bells
  * - Clickable hyperlinks (OSC 8)
+ * - Mouse tracking and cursor position queries
  */
 
 import { pathToFileURL } from 'node:url';
+
+/**
+ * Report button presses and releases (mode 1000) in the SGR encoding
+ * (mode 1006), which has no column limit and distinguishes release events.
+ */
+export const MOUSE_TRACKING_ENABLE = '\x1b[?1000h\x1b[?1006h';
+export const MOUSE_TRACKING_DISABLE = '\x1b[?1006l\x1b[?1000l';
+
+/** Device Status Report request; the terminal answers with `ESC [ row ; col R`. */
+export const CURSOR_POSITION_REQUEST = '\x1b[6n';
 
 /** Closes any open OSC 8 hyperlink. */
 export const HYPERLINK_CLOSE = '\x1b]8;;\x1b\\';
