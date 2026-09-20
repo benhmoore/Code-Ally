@@ -14,6 +14,7 @@ import { UI_COLORS } from '../constants/colors.js';
 import { getDisplayPath } from '@utils/pathUtils.js';
 import { stripAnsi, truncateAnsiToWidth } from '@utils/terminalText.js';
 import { useContentWidth } from '../hooks/useContentWidth.js';
+import { fileHyperlink } from '../utils/fileLinks.js';
 
 export interface DiffLine {
   type: 'add' | 'remove' | 'context' | 'header' | 'meta';
@@ -52,6 +53,8 @@ export interface DiffDisplayProps {
   removedColor?: string;
   /** Configured style for hunk headers, e.g. "yellow" or "on rgb(50,50,20)" */
   modifiedColor?: string;
+  /** Render the file path as a clickable OSC 8 hyperlink. */
+  hyperlinks?: boolean;
 }
 
 export interface DiffHunk {
@@ -109,6 +112,7 @@ export const DiffDisplay: React.FC<DiffDisplayProps> = ({
   addedColor = DEFAULT_ADDED_COLOR,
   removedColor = DEFAULT_REMOVED_COLOR,
   modifiedColor = DEFAULT_MODIFIED_COLOR,
+  hyperlinks = false,
 }) => {
   const contentWidth = useContentWidth();
   const renderWidth = Math.max(20, contentWidth - reservedColumns - RENDER_SAFETY_COLUMNS);
@@ -152,7 +156,7 @@ export const DiffDisplay: React.FC<DiffDisplayProps> = ({
     <Box flexDirection="column">
       {/* File path header */}
       <Box>
-        <Text>{displayPath}</Text>
+        <Text>{hyperlinks ? fileHyperlink(displayPath, filePath) : displayPath}</Text>
       </Box>
 
       {/* Changes summary */}

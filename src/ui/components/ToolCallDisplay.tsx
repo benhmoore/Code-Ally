@@ -23,6 +23,8 @@ import { useActivityEvent } from '../hooks/useActivityEvent.js';
 import { UI_SYMBOLS } from '@config/uiSymbols.js';
 import { UI_COLORS } from '../constants/colors.js';
 import { ServiceRegistry } from '@services/ServiceRegistry.js';
+import { defaultSubtextFilePath, type BaseTool } from '@tools/BaseTool.js';
+import { linkFileNameIn, terminalHyperlinksEnabled } from '../utils/fileLinks.js';
 import { getAgentType, getAgentDisplayName } from '@utils/agentTypeUtils.js';
 import { getToolCallTiming } from '@utils/toolTiming.js';
 
@@ -134,6 +136,30 @@ function formatArgsPreview(args: any, toolName?: string): string {
  * @param isAgentTool - Whether this is an agent delegation tool (skips truncation)
  * @returns Truncated subtext string or empty string
  */
+/**
+ * The registered tool instance behind a tool call, or undefined when the
+ * registry is unavailable (e.g., in tests) so callers fall back to legacy logic.
+ */
+function lookupTool(toolName: string): BaseTool | undefined {
+  try {
+    return ServiceRegistry.getInstance().get('tool_manager')?.getTool(toolName);
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * The file a tool call's subtext refers to, for linking its name.
+ */
+function extractSubtextFilePath(toolCall: ToolCallState, toolName: string): string | null {
+  const args = toolCall.arguments;
+  if (!args || typeof args !== 'object') {
+    return null;
+  }
+  const tool = lookupTool(toolName);
+  return tool ? tool.subtextFilePath(args) : defaultSubtextFilePath(args);
+}
+
 function extractSubtext(toolCall: ToolCallState, toolName: string, isAgentTool: boolean = false): string {
   const args = toolCall.arguments;
   if (!args || typeof args !== 'object') {
@@ -142,23 +168,13 @@ function extractSubtext(toolCall: ToolCallState, toolName: string, isAgentTool: 
 
   let subtext = '';
 
-  // Try to get tool instance from ToolManager and call formatSubtext()
-  try {
-    const registry = ServiceRegistry.getInstance();
-    const toolManager = registry.get('tool_manager');
-
-    if (toolManager) {
-      const tool = toolManager.getTool(toolName);
-      if (tool && typeof tool.formatSubtext === 'function') {
-        // Pass result to formatSubtext if available (for tools that need post-execution data)
-        const formatted = tool.formatSubtext(args, toolCall.result);
-        if (formatted) {
-          subtext = formatted;
-        }
-      }
+  // Pass result to formatSubtext if available (for tools that need post-execution data)
+  const tool = lookupTool(toolName);
+  if (tool && typeof tool.formatSubtext === 'function') {
+    const formatted = tool.formatSubtext(args, toolCall.result);
+    if (formatted) {
+      subtext = formatted;
     }
-  } catch (error) {
-    // ServiceRegistry not available (e.g., in tests) - fall back to legacy logic
   }
 
   // Fallback to legacy logic if tool-based formatting didn't produce a result
@@ -336,6 +352,11 @@ const ToolCallDisplayComponent: React.FC<ToolCallDisplayProps> = ({
   // We'll handle truncation for completed agents separately in the rendering
   const subtext = extractSubtext(toolCall, toolCall.toolName, isAgentDelegation);
 
+  // The file name inside the subtext opens the file when the terminal supports it
+  const hyperlinks = terminalHyperlinksEnabled(config);
+  const subtextFilePath = hyperlinks ? extractSubtextFilePath(toolCall, toolCall.toolName) : null;
+  const linkedSubtext = subtextFilePath ? linkFileNameIn(subtext, subtextFilePath) : subtext;
+
   // Extract thoroughness for agent delegation tools
   const thoroughness = isAgentDelegation ? toolCall.arguments?.thoroughness : null;
 
@@ -384,7 +405,7 @@ const ToolCallDisplayComponent: React.FC<ToolCallDisplayProps> = ({
 
         {/* When hideToolName is true, show subtext as the main content */}
         {toolCall.hideToolName && subtext && (
-          <Text color={statusColor}>{subtext}</Text>
+          <Text color={statusColor}>{linkedSubtext}</Text>
         )}
 
         {/* Model - show for agent delegations only if different from primary */}
@@ -404,7 +425,7 @@ const ToolCallDisplayComponent: React.FC<ToolCallDisplayProps> = ({
 
         {/* Subtext - contextual information (not shown inline for agents or when hideToolName) */}
         {!toolCall.hideToolName && subtext && !isAgentDelegation && (
-          <Text dimColor> · {subtext}</Text>
+          <Text dimColor> · {linkedSubtext}</Text>
         )}
 
         {/* Arguments preview - only show if config enabled and not hideToolName */}
@@ -501,6 +522,7 @@ const ToolCallDisplayComponent: React.FC<ToolCallDisplayProps> = ({
             addedColor={config?.diff_display_color_added}
             removedColor={config?.diff_display_color_removed}
             modifiedColor={config?.diff_display_color_modified}
+            hyperlinks={hyperlinks}
           />
         </Box>
       )}

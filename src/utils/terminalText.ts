@@ -4,10 +4,18 @@
  * Ink and chalk strings can contain escape sequences that should not count
  * toward visible width. These helpers keep truncation and padding stable for
  * highlighted code and other styled terminal output.
+ *
+ * Two families are recognised: CSI sequences (styling, cursor movement) and
+ * OSC strings terminated by BEL or ST (hyperlinks, titles).
  */
 
-const ANSI_SEQUENCE_PATTERN = /\x1b\[[0-?]*[ -/]*[@-~]/g;
-const ANSI_SEQUENCE_AT_START_PATTERN = /^\x1b\[[0-?]*[ -/]*[@-~]/;
+import { HYPERLINK_CLOSE } from './terminal.js';
+
+const CSI_SEQUENCE = '\\x1b\\[[0-?]*[ -/]*[@-~]';
+const OSC_SEQUENCE = '\\x1b\\][^\\x07\\x1b]*(?:\\x07|\\x1b\\\\)';
+const ANSI_SEQUENCE_PATTERN = new RegExp(`${CSI_SEQUENCE}|${OSC_SEQUENCE}`, 'g');
+const ANSI_SEQUENCE_AT_START_PATTERN = new RegExp(`^(?:${CSI_SEQUENCE}|${OSC_SEQUENCE})`);
+const HYPERLINK_OPEN_PATTERN = /^\x1b\]8;[^;]*;(?<url>[^\x07\x1b]*)(?:\x07|\x1b\\)/;
 const ANSI_RESET = '\x1b[0m';
 
 /**
@@ -97,6 +105,9 @@ export function truncateAnsiToWidth(text: string, width: number, ellipsis: strin
   let usedWidth = 0;
   let index = 0;
   let sawAnsi = false;
+  // A hyperlink cut off by truncation must still be closed, or it would
+  // swallow whatever is printed after the ellipsis.
+  let hyperlinkOpen = false;
 
   while (index < expanded.length && usedWidth < contentWidth) {
     const remaining = expanded.slice(index);
@@ -104,6 +115,10 @@ export function truncateAnsiToWidth(text: string, width: number, ellipsis: strin
 
     if (ansiMatch?.[0]) {
       sawAnsi = true;
+      const hyperlink = ansiMatch[0].match(HYPERLINK_OPEN_PATTERN);
+      if (hyperlink) {
+        hyperlinkOpen = (hyperlink.groups?.url ?? '') !== '';
+      }
       result += ansiMatch[0];
       index += ansiMatch[0].length;
       continue;
@@ -124,7 +139,7 @@ export function truncateAnsiToWidth(text: string, width: number, ellipsis: strin
     index += char.length;
   }
 
-  return result + ellipsis + (sawAnsi ? ANSI_RESET : '');
+  return result + (hyperlinkOpen ? HYPERLINK_CLOSE : '') + ellipsis + (sawAnsi ? ANSI_RESET : '');
 }
 
 export interface WrapOptions {

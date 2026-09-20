@@ -87,3 +87,28 @@ describe('terminalText', () => {
     });
   });
 });
+
+describe('terminalText with OSC sequences', () => {
+  const link = '\x1b]8;;file:///tmp/a.ts\x1b\\a.ts\x1b]8;;\x1b\\';
+  const title = '\x1b]0;session\x07';
+
+  it('treats hyperlinks and titles as zero-width', () => {
+    expect(stripAnsi(`read ${link} now${title}`)).toBe('read a.ts now');
+    expect(visibleLength(`read ${link}`)).toBe(9);
+    expect(padAnsiToWidth(link, 6)).toBe(`${link}  `);
+  });
+
+  it('wraps without breaking a hyperlink sequence', () => {
+    const lines = wrapAnsiText(`open ${link} please`, 10);
+
+    expect(lines.map(stripAnsi)).toEqual(['open a.ts', 'please']);
+    expect(lines[0]).toContain(link);
+  });
+
+  it('closes a hyperlink that truncation cuts open', () => {
+    const truncated = truncateAnsiToWidth(`\x1b]8;;file:///tmp/long-name.ts\x1b\\long-name.ts\x1b]8;;\x1b\\ tail`, 8);
+
+    expect(stripAnsi(truncated)).toBe('long-...');
+    expect(truncated).toMatch(/long-\x1b\]8;;\x1b\\\.\.\./);
+  });
+});

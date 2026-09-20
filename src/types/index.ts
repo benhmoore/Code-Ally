@@ -494,6 +494,7 @@ export interface Config {
   show_tool_parameters_in_chat: boolean; // Show tool parameter lists in chat UI
   enable_idle_messages: boolean; // Enable auto-generated idle status messages
   enable_session_title_generation: boolean; // Enable auto-generated session titles
+  enable_terminal_hyperlinks: boolean; // Make file names and links clickable in terminals that support OSC 8
 
   // Tool Call Retry Settings
   tool_call_retry_enabled: boolean;

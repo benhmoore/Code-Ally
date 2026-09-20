@@ -846,6 +846,17 @@ export abstract class BaseTool {
   }
 
   /**
+   * Path of the file the subtext refers to, so the UI can turn the file name
+   * it shows into a clickable link. Return null when the subtext names no
+   * single file.
+   *
+   * Default implementation: the `file_path` argument when present.
+   */
+  subtextFilePath(args: Record<string, any>): string | null {
+    return defaultSubtextFilePath(args);
+  }
+
+  /**
    * Get list of parameter names that are shown in subtext
    *
    * These parameters will be filtered from the args preview in the UI
@@ -1022,3 +1033,11 @@ export abstract class BaseTool {
 
 // Export FormCancelledError for tools to catch
 export { FormCancelledError };
+
+/**
+ * The file a tool's subtext refers to when the tool declares nothing more
+ * specific: its `file_path` argument.
+ */
+export function defaultSubtextFilePath(args: Record<string, any>): string | null {
+  return typeof args.file_path === 'string' && args.file_path.length > 0 ? args.file_path : null;
+}

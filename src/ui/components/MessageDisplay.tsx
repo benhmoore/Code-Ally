@@ -3,6 +3,7 @@ import { Box, Text } from 'ink';
 import { Message } from '@shared/index.js';
 import { MarkdownText } from './MarkdownText.js';
 import { TEXT_LIMITS } from '@config/constants.js';
+import { terminalHyperlinksEnabled } from '../utils/fileLinks.js';
 import { UI_COLORS } from '../constants/colors.js';
 import { formatDuration } from '../utils/timeUtils.js';
 import { useContentWidth } from '../hooks/useContentWidth.js';
@@ -116,7 +117,7 @@ const MessageDisplayComponent: React.FC<MessageDisplayProps> = ({ message, confi
               {showAgentPrefix && (
                 <Text dimColor italic>{agentPrefix}</Text>
               )}
-              <MarkdownText content={safeContent} width={contentWidth} />
+              <MarkdownText content={safeContent} width={contentWidth} hyperlinks={terminalHyperlinksEnabled(config)} />
             </>
           )
         )}

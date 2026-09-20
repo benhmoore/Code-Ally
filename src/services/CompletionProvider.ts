@@ -980,6 +980,7 @@ export class CompletionProvider {
       'show_tool_parameters_in_chat': 'Show tool parameters in chat',
       'enable_idle_messages': 'Enable generated idle status messages',
       'enable_session_title_generation': 'Enable generated session titles',
+      'enable_terminal_hyperlinks': 'Make file names and links clickable in supporting terminals',
 
       // Tool Call Retry
       'tool_call_retry_enabled': 'Enable automatic tool-call retry',

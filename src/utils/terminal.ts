@@ -4,7 +4,70 @@
  * Provides functions for terminal control including:
  * - Setting window/tab titles
  * - Sending notifications/bells
+ * - Clickable hyperlinks (OSC 8)
  */
+
+import { pathToFileURL } from 'node:url';
+
+/** Closes any open OSC 8 hyperlink. */
+export const HYPERLINK_CLOSE = '\x1b]8;;\x1b\\';
+
+/**
+ * Wrap text in an OSC 8 hyperlink so the terminal shows `text` and opens
+ * `url` when it is clicked. Terminals without OSC 8 support ignore the
+ * sequence and show the plain text.
+ */
+export function hyperlink(text: string, url: string): string {
+  return `\x1b]8;;${url}\x1b\\${text}${HYPERLINK_CLOSE}`;
+}
+
+/** file:// URL for an absolute path, percent-encoded per RFC 8089. */
+export function fileUrl(absolutePath: string): string {
+  return pathToFileURL(absolutePath).href;
+}
+
+/**
+ * Whether the terminal renders OSC 8 hyperlinks as clickable text.
+ *
+ * There is no capability query for OSC 8, so this is the same heuristic the
+ * ecosystem uses: recognise emulators known to support it and assume nothing
+ * about the rest. Unknown terminals get plain text, never a broken sequence.
+ * FORCE_HYPERLINK=1 or =0 overrides the detection.
+ */
+export function supportsHyperlinks(
+  env: NodeJS.ProcessEnv = process.env,
+  isTTY: boolean = process.stdout.isTTY === true
+): boolean {
+  // The conventional override for terminals the heuristic cannot see, such as
+  // a supporting emulator reached through tmux or ssh.
+  if (env.FORCE_HYPERLINK !== undefined && env.FORCE_HYPERLINK !== '') {
+    return env.FORCE_HYPERLINK !== '0';
+  }
+
+  if (!isTTY || env.CI) {
+    return false;
+  }
+
+  const program = env.TERM_PROGRAM ?? '';
+  if (program === 'Apple_Terminal') {
+    return false;
+  }
+  if (['iTerm.app', 'WezTerm', 'Hyper', 'vscode', 'ghostty'].includes(program)) {
+    return true;
+  }
+
+  const term = env.TERM ?? '';
+  if (/kitty|alacritty|wezterm|foot|ghostty/i.test(term)) {
+    return true;
+  }
+
+  if (env.WT_SESSION || env.KONSOLE_VERSION || env.TERMINAL_EMULATOR === 'JetBrains-JediTerm') {
+    return true;
+  }
+
+  const vte = Number.parseInt(env.VTE_VERSION ?? '', 10);
+  return Number.isFinite(vte) && vte >= 5000;
+}
 
 /**
  * Set the terminal window/tab title

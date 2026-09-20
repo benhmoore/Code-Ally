@@ -63,6 +63,7 @@ export const DEFAULT_CONFIG: Config = {
   show_tool_parameters_in_chat: false, // Show tool parameter lists in parentheses after tool names
   enable_idle_messages: true, // Enable auto-generated idle status messages
   enable_session_title_generation: true, // Enable auto-generated session titles
+  enable_terminal_hyperlinks: true, // Make file names and links clickable in terminals that support OSC 8
 
   // ==========================================
   // TOOL CALL RETRY SETTINGS
@@ -170,6 +171,7 @@ export const CONFIG_TYPES: Record<keyof Config, string> = {
   show_full_tool_output: 'boolean',
   show_tool_parameters_in_chat: 'boolean',
   enable_idle_messages: 'boolean',
+  enable_terminal_hyperlinks: 'boolean',
   enable_session_title_generation: 'boolean',
 
   // Tool Call Retry

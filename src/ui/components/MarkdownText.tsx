@@ -19,6 +19,7 @@ import { SyntaxHighlighter } from '@services/SyntaxHighlighter.js';
 import { FORMATTING } from '@config/constants.js';
 import { useContentWidth } from '../hooks/useContentWidth.js';
 import { expandTabsAnsiAware, padAnsiToWidth, truncateAnsiToWidth, visibleLength, wrapAnsiText } from '@utils/terminalText.js';
+import { hyperlink } from '@utils/terminal.js';
 import { UI_SYMBOLS } from '@config/uiSymbols.js';
 import { UI_COLORS } from '../constants/colors.js';
 import { logger } from '@services/Logger.js';
@@ -94,6 +95,8 @@ export interface MarkdownTextProps {
    * Falls back to the conversation content width when omitted.
    */
   width?: number;
+  /** Render markdown links as clickable OSC 8 hyperlinks. */
+  hyperlinks?: boolean;
 }
 
 /**
@@ -107,6 +110,14 @@ export interface StyledSegment {
   bold?: boolean;
   code?: boolean;
   underline?: boolean;
+  /** Link target, emitted as an OSC 8 hyperlink when the renderer allows it. */
+  href?: string;
+}
+
+/** How segments are serialised for the terminal. */
+export interface TerminalRenderOptions {
+  /** Emit OSC 8 hyperlinks for segments that carry an href. */
+  hyperlinks?: boolean;
 }
 
 export interface ParsedNode {
@@ -131,7 +142,7 @@ export interface ParsedNode {
  * Parses markdown and renders it with appropriate terminal styling.
  * Uses marked for parsing and cli-highlight for syntax highlighting.
  */
-export const MarkdownText: React.FC<MarkdownTextProps> = ({ content, theme, width }) => {
+export const MarkdownText: React.FC<MarkdownTextProps> = ({ content, theme, width, hyperlinks = false }) => {
   // Use singleton instance for better performance (avoids creating new instances)
   const highlighter = useMemo(() => SyntaxHighlighter.getInstance(theme), [theme]);
   // Width flows from the layout owner; fall back to the conversation content width.
@@ -160,7 +171,7 @@ export const MarkdownText: React.FC<MarkdownTextProps> = ({ content, theme, widt
   return (
     <Box flexDirection="column" width={contentWidth}>
       {parsed.map((node, idx) => (
-        <RenderNode key={idx} node={node} highlighter={highlighter} width={contentWidth} />
+        <RenderNode key={idx} node={node} highlighter={highlighter} width={contentWidth} hyperlinks={hyperlinks} />
       ))}
     </Box>
   );
@@ -277,11 +288,13 @@ function parseTokens(tokens: any[]): ParsedNode[] {
 /**
  * Render a single parsed node
  */
-const RenderNode: React.FC<{ node: ParsedNode; highlighter: SyntaxHighlighter; width: number }> = ({
+const RenderNode: React.FC<{ node: ParsedNode; highlighter: SyntaxHighlighter; width: number; hyperlinks: boolean }> = ({
   node,
   highlighter,
   width,
+  hyperlinks,
 }) => {
+  const renderOptions: TerminalRenderOptions = { hyperlinks };
   if (node.type === 'code') {
     return <CodeBlockRenderer content={node.content || ''} language={node.language} highlighter={highlighter} width={width} />;
   }
@@ -290,7 +303,7 @@ const RenderNode: React.FC<{ node: ParsedNode; highlighter: SyntaxHighlighter; w
     return (
       <Box>
         <Text bold color={UI_COLORS.TEXT_DEFAULT}>
-          {renderSegmentsForTerminal(node.segments ?? plainTextToSegments(node.content || ''))}
+          {renderSegmentsForTerminal(node.segments ?? plainTextToSegments(node.content || ''), renderOptions)}
         </Text>
       </Box>
     );
@@ -301,7 +314,7 @@ const RenderNode: React.FC<{ node: ParsedNode; highlighter: SyntaxHighlighter; w
       <Box flexDirection="column">
         {node.children?.map((item, idx) => {
           const bullet = getListBullet(node.ordered, idx, item);
-          const itemLines = renderSegmentLinesForTerminal(item.segments ?? inlineMarkdownToSegments(item.content || ''));
+          const itemLines = renderSegmentLinesForTerminal(item.segments ?? inlineMarkdownToSegments(item.content || ''), renderOptions);
           const continuationIndent = ' '.repeat(visibleLength(bullet));
 
           return (
@@ -313,7 +326,7 @@ const RenderNode: React.FC<{ node: ParsedNode; highlighter: SyntaxHighlighter; w
               {item.children && item.children.length > 0 && (
                 <Box flexDirection="column" paddingLeft={2}>
                   {item.children.map((child, childIdx) => (
-                    <RenderNode key={childIdx} node={child} highlighter={highlighter} width={Math.max(1, width - 2)} />
+                    <RenderNode key={childIdx} node={child} highlighter={highlighter} width={Math.max(1, width - 2)} hyperlinks={hyperlinks} />
                   ))}
                 </Box>
               )}
@@ -337,7 +350,7 @@ const RenderNode: React.FC<{ node: ParsedNode; highlighter: SyntaxHighlighter; w
   }
 
   if (node.type === 'paragraph') {
-    const lines = renderSegmentLinesForTerminal(node.segments ?? inlineMarkdownToSegments(node.content || ''));
+    const lines = renderSegmentLinesForTerminal(node.segments ?? inlineMarkdownToSegments(node.content || ''), renderOptions);
 
     // If only one line, render as before
     if (lines.length === 1) {
@@ -378,7 +391,7 @@ const RenderNode: React.FC<{ node: ParsedNode; highlighter: SyntaxHighlighter; w
   if (node.type === 'text') {
     return (
       <Box>
-        <Text>{renderSegmentsForTerminal(node.segments ?? plainTextToSegments(node.content || ''))}</Text>
+        <Text>{renderSegmentsForTerminal(node.segments ?? plainTextToSegments(node.content || ''), renderOptions)}</Text>
       </Box>
     );
   }
@@ -746,6 +759,7 @@ function inlineTokensToSegments(tokens: any[], baseStyle: SegmentStyle = {}): St
         ...currentStyle,
         color: currentStyle.color ?? UI_COLORS.PRIMARY,
         underline: true,
+        href: typeof token.href === 'string' && token.href ? token.href : currentStyle.href,
       }));
       continue;
     }
@@ -783,20 +797,20 @@ function appendTextSegment(segments: StyledSegment[], text: string, style: Segme
   });
 }
 
-function renderSegmentsForTerminal(segments: StyledSegment[]): string {
-  return segmentsToAnsiString(mergeSegments(segments));
+function renderSegmentsForTerminal(segments: StyledSegment[], options: TerminalRenderOptions = {}): string {
+  return segmentsToAnsiString(mergeSegments(segments), options);
 }
 
-export function renderInlineMarkdownForTerminal(text: string): string {
-  return renderSegmentsForTerminal(inlineMarkdownToSegments(text));
+export function renderInlineMarkdownForTerminal(text: string, options: TerminalRenderOptions = {}): string {
+  return renderSegmentsForTerminal(inlineMarkdownToSegments(text), options);
 }
 
-export function renderInlineMarkdownLinesForTerminal(text: string): string[] {
-  return renderSegmentLinesForTerminal(inlineMarkdownToSegments(text));
+export function renderInlineMarkdownLinesForTerminal(text: string, options: TerminalRenderOptions = {}): string[] {
+  return renderSegmentLinesForTerminal(inlineMarkdownToSegments(text), options);
 }
 
-function renderSegmentLinesForTerminal(segments: StyledSegment[]): string[] {
-  return splitSegmentsOnNewlines(segments).map((line) => renderSegmentsForTerminal(line));
+function renderSegmentLinesForTerminal(segments: StyledSegment[], options: TerminalRenderOptions = {}): string[] {
+  return splitSegmentsOnNewlines(segments).map((line) => renderSegmentsForTerminal(line, options));
 }
 
 function splitSegmentsOnNewlines(segments: StyledSegment[]): StyledSegment[][] {
@@ -949,11 +963,15 @@ function decodeCodeSpanText(text: string): string {
  * Convert styled segments to a single string with ANSI escape codes. This avoids
  * Ink's Text wrapping issues by pre-rendering styles into a single text node.
  */
-function segmentsToAnsiString(segments: StyledSegment[]): string {
+function segmentsToAnsiString(segments: StyledSegment[], options: TerminalRenderOptions = {}): string {
   let result = '';
 
   for (const segment of segments) {
     let text = segment.text;
+
+    if (options.hyperlinks && segment.href) {
+      text = hyperlink(text, segment.href);
+    }
 
     if (segment.color) {
       const colorCode = getAnsiColorCode(segment.color);
@@ -1030,7 +1048,8 @@ function mergeSegments(segments: StyledSegment[]): StyledSegment[] {
       current.italic === segment.italic &&
       current.strikethrough === segment.strikethrough &&
       current.code === segment.code &&
-      current.underline === segment.underline
+      current.underline === segment.underline &&
+      current.href === segment.href
     ) {
       current.text += segment.text;
     } else {

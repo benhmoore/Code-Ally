@@ -51,6 +51,16 @@ describe('MarkdownText', () => {
     expect(segments.find((segment) => segment.text === 'now')?.bold).toBe(true);
     expect(segments.find((segment) => segment.text === 'now')?.color).toBe('cyan');
     expect(segments.find((segment) => segment.text === 'docs')?.underline).toBe(true);
+    expect(segments.find((segment) => segment.text === 'docs')?.href).toBe('https://example.test');
+  });
+
+  it('emits OSC 8 hyperlinks for links only when asked to', () => {
+    const plain = renderInlineMarkdownForTerminal('see [docs](https://example.test)');
+    const linked = renderInlineMarkdownForTerminal('see [docs](https://example.test)', { hyperlinks: true });
+
+    expect(plain).not.toContain('\x1b]8;;');
+    expect(linked).toContain('\x1b]8;;https://example.test\x1b\\docs\x1b]8;;\x1b\\');
+    expect(stripAnsi(linked)).toBe('see docs');
   });
 
   it('renders terminal lines without leaking ANSI state across hard breaks', () => {

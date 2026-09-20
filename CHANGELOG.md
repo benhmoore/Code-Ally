@@ -8,6 +8,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- File names in tool rows, diff headers and markdown links are clickable in
+  terminals that render OSC 8 hyperlinks. `enable_terminal_hyperlinks` turns
+  this off; `FORCE_HYPERLINK=1` enables it where the terminal cannot be
+  detected, such as through tmux or ssh.
 - Hooks: external commands run at fixed points in a session. `SessionStart`,
   `UserPromptSubmit`, `PreToolUse`, `PostToolUse`, `Stop` and `SessionEnd`,
   configured from the profile config, a plugin's `hooks/hooks.json`, or
