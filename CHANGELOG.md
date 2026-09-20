@@ -8,6 +8,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Diffs are laid out side by side, old file on the left and new on the right,
+  when the terminal is at least 120 columns wide. `diff_display_layout`
+  forces `unified` or `side-by-side`.
 - Tool calls in the live region open and close: click a call's row, or press
   ctrl+o to open or close all of them. Completed calls stay in the live
   region until the turn ends or a later message closes the sequence, and are

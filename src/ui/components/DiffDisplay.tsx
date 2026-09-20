@@ -9,6 +9,7 @@ import React, { useMemo } from 'react';
 import { Box, Text } from 'ink';
 import { createTwoFilesPatch } from 'diff';
 import { FORMATTING } from '@config/constants.js';
+import type { DiffLayout } from '@shared/index.js';
 import { SyntaxHighlighter } from '@services/SyntaxHighlighter.js';
 import { UI_COLORS } from '../constants/colors.js';
 import { getDisplayPath } from '@utils/pathUtils.js';
@@ -55,6 +56,15 @@ export interface DiffDisplayProps {
   modifiedColor?: string;
   /** Render the file path as a clickable OSC 8 hyperlink. */
   hyperlinks?: boolean;
+  /** Unified or side-by-side; auto picks side-by-side when the width allows. */
+  layout?: DiffLayout;
+}
+
+/** A side-by-side row: old on the left, new on the right; `full` spans both. */
+export interface DiffRow {
+  left?: DiffLine;
+  right?: DiffLine;
+  full?: DiffLine;
 }
 
 export interface DiffHunk {
@@ -86,6 +96,50 @@ const DEFAULT_ADDED_COLOR = 'on rgb(20,50,20)';
 const DEFAULT_REMOVED_COLOR = 'on rgb(50,20,20)';
 const DEFAULT_MODIFIED_COLOR = 'on rgb(50,50,20)';
 const RENDER_SAFETY_COLUMNS = 1;
+/** Narrowest render width at which `auto` lays a diff out side by side. */
+const SIDE_BY_SIDE_MIN_WIDTH = 120;
+/** Between the old and new columns. */
+const COLUMN_SEPARATOR = ' │ ';
+
+/** The layout to draw at a given width. */
+export function resolveDiffLayout(layout: DiffLayout | undefined, renderWidth: number): 'unified' | 'side-by-side' {
+  if (layout === 'unified' || layout === 'side-by-side') {
+    return layout;
+  }
+  return renderWidth >= SIDE_BY_SIDE_MIN_WIDTH ? 'side-by-side' : 'unified';
+}
+
+/**
+ * Pair a hunk's lines into side-by-side rows. Context lines sit on both
+ * sides; a run of removals followed by a run of additions is zipped so each
+ * changed line faces its replacement, with the longer run's tail alone.
+ */
+export function pairDiffRows(lines: readonly DiffLine[]): DiffRow[] {
+  const rows: DiffRow[] = [];
+  let removed: DiffLine[] = [];
+  let added: DiffLine[] = [];
+
+  const flush = () => {
+    for (let index = 0; index < Math.max(removed.length, added.length); index++) {
+      rows.push({ left: removed[index], right: added[index] });
+    }
+    removed = [];
+    added = [];
+  };
+
+  for (const line of lines) {
+    if (line.type === 'remove') {
+      removed.push(line);
+    } else if (line.type === 'add') {
+      added.push(line);
+    } else {
+      flush();
+      rows.push(line.type === 'context' ? { left: line, right: line } : { full: line });
+    }
+  }
+  flush();
+  return rows;
+}
 
 /**
  * DiffDisplay Component
@@ -113,9 +167,11 @@ export const DiffDisplay: React.FC<DiffDisplayProps> = ({
   removedColor = DEFAULT_REMOVED_COLOR,
   modifiedColor = DEFAULT_MODIFIED_COLOR,
   hyperlinks = false,
+  layout,
 }) => {
   const contentWidth = useContentWidth();
   const renderWidth = Math.max(20, contentWidth - reservedColumns - RENDER_SAFETY_COLUMNS);
+  const resolvedLayout = resolveDiffLayout(layout, renderWidth);
   const resolvedSyntaxTheme = syntaxTheme ?? resolveDiffSyntaxTheme(diffTheme);
   const syntaxHighlightEnabled = syntaxHighlight && diffTheme !== 'minimal';
 
@@ -174,6 +230,7 @@ export const DiffDisplay: React.FC<DiffDisplayProps> = ({
             isLast={hunkIdx === hunks.length - 1}
             contentWidth={renderWidth}
             styles={styles}
+            layout={resolvedLayout}
           />
         ))}
       </Box>
@@ -190,17 +247,31 @@ const DiffHunkDisplay: React.FC<{
   isLast: boolean;
   contentWidth: number;
   styles: DiffStyles;
-}> = ({ hunk, maxLines, isLast, contentWidth, styles }) => {
+  layout: 'unified' | 'side-by-side';
+}> = ({ hunk, maxLines, isLast, contentWidth, styles, layout }) => {
   const displayLines = maxLines > 0 ? hunk.lines.slice(0, maxLines) : hunk.lines;
   const truncated = maxLines > 0 && hunk.lines.length > maxLines;
   const hiddenCount = truncated ? hunk.lines.length - maxLines : 0;
+  const columnWidth = Math.floor((contentWidth - COLUMN_SEPARATOR.length) / 2);
 
   return (
     <Box flexDirection="column">
       {hunk.header && <DiffLineComponent line={hunk.header} contentWidth={contentWidth} styles={styles} />}
-      {displayLines.map((line, idx) => (
-        <DiffLineComponent key={idx} line={line} contentWidth={contentWidth} styles={styles} />
-      ))}
+      {layout === 'unified'
+        ? displayLines.map((line, idx) => (
+            <DiffLineComponent key={idx} line={line} contentWidth={contentWidth} styles={styles} />
+          ))
+        : pairDiffRows(displayLines).map((row, idx) =>
+            row.full ? (
+              <DiffLineComponent key={idx} line={row.full} contentWidth={contentWidth} styles={styles} />
+            ) : (
+              <Box key={idx}>
+                <DiffCell line={row.left} side="left" width={columnWidth} styles={styles} />
+                <Text dimColor>{COLUMN_SEPARATOR}</Text>
+                <DiffCell line={row.right} side="right" width={columnWidth} styles={styles} />
+              </Box>
+            )
+          )}
       {truncated && (
         <Box>
           <Text dimColor>
@@ -225,7 +296,22 @@ const DiffLineComponent: React.FC<{
   line: DiffLine;
   contentWidth: number;
   styles: DiffStyles;
-}> = ({ line, contentWidth, styles }) => {
+}> = ({ line, contentWidth, styles }) => <DiffCell line={line} side="full" width={contentWidth} styles={styles} />;
+
+/**
+ * One diff line in a cell: the whole row (unified), or the old or new column
+ * (side by side). An empty cell keeps its width so the columns stay aligned.
+ */
+const DiffCell: React.FC<{
+  line?: DiffLine;
+  side: 'full' | 'left' | 'right';
+  width: number;
+  styles: DiffStyles;
+}> = ({ line, side, width, styles }) => {
+  if (!line) {
+    return <Box width={width} />;
+  }
+  const contentWidth = width;
   const isDimmed = line.type === 'header' || line.type === 'meta';
   const style = styles[line.type];
 
@@ -244,7 +330,9 @@ const DiffLineComponent: React.FC<{
 
   // Line number column: show for content lines, blank placeholder for headers/meta
   const hasLineNumber = line.type !== 'header';
-  const lineNum = line.type === 'add' ? line.newLineNumber : line.lineNumber;
+  const lineNum = side === 'right' ? line.newLineNumber
+    : side === 'left' ? line.lineNumber
+    : line.type === 'add' ? line.newLineNumber : line.lineNumber;
   const lineNumDisplay = hasLineNumber
     ? lineNum
       ? lineNum.toString().padStart(FORMATTING.LINE_NUMBER_WIDTH, ' ')
@@ -262,7 +350,7 @@ const DiffLineComponent: React.FC<{
   const contentColor = hasSyntaxAnsi ? undefined : style.contentColor;
 
   return (
-    <Box>
+    <Box width={side === 'full' ? undefined : width}>
       {hasLineNumber && (
         <Text dimColor color={style.gutterColor}>
           {lineNumDisplay} │{' '}

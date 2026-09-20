@@ -1002,6 +1002,7 @@ export class CompletionProvider {
       'diff_display_max_file_size': 'Max diff file size (bytes)',
       'diff_display_context_lines': 'Diff context lines',
       'diff_display_theme': 'Diff theme',
+      'diff_display_layout': 'Diff layout: auto, unified or side-by-side',
       'diff_display_color_removed': 'Removed line color',
       'diff_display_color_added': 'Added line color',
       'diff_display_color_modified': 'Modified line color',

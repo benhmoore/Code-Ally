@@ -460,6 +460,10 @@ export interface ToolCallTreeNode extends ToolCallState {
  * default limits it to dialogs, where nothing needs scrolling.
  */
 export const MOUSE_SUPPORT_VALUES = ['off', 'dialogs', 'always'] as const;
+
+/** How a diff is laid out: side by side when the terminal is wide enough (auto), or forced either way. */
+export const DIFF_LAYOUT_VALUES = ['auto', 'unified', 'side-by-side'] as const;
+export type DiffLayout = (typeof DIFF_LAYOUT_VALUES)[number];
 export type MouseSupport = (typeof MOUSE_SUPPORT_VALUES)[number];
 
 export interface Config {
@@ -525,6 +529,7 @@ export interface Config {
   diff_display_max_file_size: number;
   diff_display_context_lines: number;
   diff_display_theme: string;
+  diff_display_layout: DiffLayout; // auto | unified | side-by-side
   diff_display_color_removed: string;
   diff_display_color_added: string;
   diff_display_color_modified: string;

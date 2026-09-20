@@ -5,7 +5,7 @@
  * Configuration can be overridden via config file or runtime modifications.
  */
 
-import { MOUSE_SUPPORT_VALUES, type Config, type MouseSupport } from '../types/index.js';
+import { DIFF_LAYOUT_VALUES, MOUSE_SUPPORT_VALUES, type Config, type DiffLayout, type MouseSupport } from '../types/index.js';
 import { isHooksConfigShape } from '../hooks/types.js';
 import { formatError } from '../utils/errorUtils.js';
 import { REASONING_EFFORT, REASONING_EFFORT_API_VALUES } from './constants.js';
@@ -93,6 +93,7 @@ export const DEFAULT_CONFIG: Config = {
   diff_display_max_file_size: 102400, // Max file size for diffs (bytes)
   diff_display_context_lines: 3, // Context lines around changes
   diff_display_theme: 'auto', // Theme: auto, dark, light, minimal
+  diff_display_layout: 'auto', // auto (side by side when wide enough) | unified | side-by-side
   diff_display_color_removed: 'on rgb(50,20,20)', // Removed line color
   diff_display_color_added: 'on rgb(20,50,20)', // Added line color
   diff_display_color_modified: 'on rgb(50,50,20)', // Modified line color
@@ -195,6 +196,7 @@ export const CONFIG_TYPES: Record<keyof Config, string> = {
   diff_display_max_file_size: 'number',
   diff_display_context_lines: 'number',
   diff_display_theme: 'string',
+  diff_display_layout: 'string',
   diff_display_color_removed: 'string',
   diff_display_color_added: 'string',
   diff_display_color_modified: 'string',
@@ -270,6 +272,14 @@ export function validateConfigValue(
       return { valid: true, coercedValue: lowerValue };
     }
     return { valid: false, error: `reasoning_effort must be one of: ${REASONING_EFFORT_API_VALUES.join(', ')}` };
+  }
+
+  if (key === 'diff_display_layout' && typeof value === 'string') {
+    const lowerValue = value.toLowerCase();
+    if (DIFF_LAYOUT_VALUES.includes(lowerValue as DiffLayout)) {
+      return { valid: true, coercedValue: lowerValue };
+    }
+    return { valid: false, error: `diff_display_layout must be one of: ${DIFF_LAYOUT_VALUES.join(', ')}` };
   }
 
   if (key === 'mouse_support' && typeof value === 'string') {

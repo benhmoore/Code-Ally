@@ -530,6 +530,7 @@ const ToolCallDisplayComponent: React.FC<ToolCallDisplayProps> = ({
             removedColor={config?.diff_display_color_removed}
             modifiedColor={config?.diff_display_color_modified}
             hyperlinks={hyperlinks}
+            layout={config?.diff_display_layout}
           />
         </Box>
       )}

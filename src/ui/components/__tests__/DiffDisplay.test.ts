@@ -7,7 +7,10 @@ import {
   applySyntaxHighlightingToDiffLines,
   generateDiffLines,
   groupIntoHunks,
+  pairDiffRows,
+  resolveDiffLayout,
   resolveDiffSyntaxTheme,
+  type DiffLine,
 } from '../DiffDisplay.js';
 
 describe('generateDiffLines', () => {
@@ -113,5 +116,45 @@ describe('resolveDiffSyntaxTheme', () => {
 
   it('passes custom themes through', () => {
     expect(resolveDiffSyntaxTheme('dracula')).toBe('dracula');
+  });
+});
+
+describe('pairDiffRows', () => {
+  const line = (type: DiffLine['type'], content: string, lineNumber?: number, newLineNumber?: number): DiffLine => ({ type, content, lineNumber, newLineNumber });
+
+  it('faces each removed line with its replacement and keeps context on both sides', () => {
+    const rows = pairDiffRows([
+      line('context', 'a', 1, 1),
+      line('remove', 'b', 2),
+      line('remove', 'c', 3),
+      line('add', 'B', undefined, 2),
+      line('context', 'd', 4, 3),
+    ]);
+
+    expect(rows).toEqual([
+      { left: line('context', 'a', 1, 1), right: line('context', 'a', 1, 1) },
+      { left: line('remove', 'b', 2), right: line('add', 'B', undefined, 2) },
+      { left: line('remove', 'c', 3), right: undefined },
+      { left: line('context', 'd', 4, 3), right: line('context', 'd', 4, 3) },
+    ]);
+  });
+
+  it('spans headers and meta lines across both columns', () => {
+    const rows = pairDiffRows([line('meta', '\\ No newline at end of file'), line('add', 'x', undefined, 1)]);
+    expect(rows[0]).toEqual({ full: line('meta', '\\ No newline at end of file') });
+    expect(rows[1]).toEqual({ left: undefined, right: line('add', 'x', undefined, 1) });
+  });
+});
+
+describe('resolveDiffLayout', () => {
+  it('goes side by side only when auto has the width for it', () => {
+    expect(resolveDiffLayout('auto', 119)).toBe('unified');
+    expect(resolveDiffLayout('auto', 120)).toBe('side-by-side');
+    expect(resolveDiffLayout(undefined, 200)).toBe('side-by-side');
+  });
+
+  it('honours an explicit layout at any width', () => {
+    expect(resolveDiffLayout('unified', 200)).toBe('unified');
+    expect(resolveDiffLayout('side-by-side', 60)).toBe('side-by-side');
   });
 });
