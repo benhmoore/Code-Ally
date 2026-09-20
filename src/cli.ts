@@ -1717,6 +1717,10 @@ async function main() {
       {
         exitOnCtrlC: false,
         patchConsole: true, // Intercept console to prevent interference with Ink rendering
+        // Rewrite only the lines that changed between frames. The default
+        // writer erases and repaints the whole live region on every frame,
+        // which is the flicker seen while a response streams.
+        incrementalRendering: true,
       }
     );
 
