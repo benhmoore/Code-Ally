@@ -57,7 +57,7 @@ export class BraveProvider implements ISearchProvider {
       try {
         data = (await response.json()) as BraveSearchResponse;
       } catch (parseError) {
-        throw new Error(`Brave API returned invalid JSON: ${parseError instanceof Error ? parseError.message : String(parseError)}`);
+        throw new Error(`Brave API returned invalid JSON: ${parseError instanceof Error ? parseError.message : String(parseError)}`, { cause: parseError });
       }
       logger.debug(`[BraveProvider] Received ${data.web?.results?.length ?? 0} results`);
 
@@ -66,7 +66,7 @@ export class BraveProvider implements ISearchProvider {
       clearTimeout(timeoutId);
 
       if (error instanceof Error && error.name === 'AbortError') {
-        throw new Error(`Brave search timed out after ${SEARCH_TIMEOUTS.SEARCH}ms`);
+        throw new Error(`Brave search timed out after ${SEARCH_TIMEOUTS.SEARCH}ms`, { cause: error });
       }
 
       throw error;

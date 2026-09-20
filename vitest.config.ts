@@ -17,18 +17,13 @@ export default defineConfig({
 
     // Prevent resource leaks
     pool: 'forks',
-    poolOptions: {
-      forks: {
-        singleFork: false,
-      },
-    },
 
     // Set reasonable timeouts
     testTimeout: 15000,
     hookTimeout: 10000,
 
     // Limit parallelism
-    fileParallelism: 4,
+    maxWorkers: 4,
     maxConcurrency: 5,
 
     coverage: {
@@ -46,31 +41,35 @@ export default defineConfig({
       // real regression, far above the jitter. These are also ratios, so
       // deleting a well-tested module lowers them without any code getting
       // worse; re-baseline in one commit and say so when that happens.
+      //
+      // Last re-baselined for Vitest 5, whose AST-based V8 remapping counts
+      // functions and branches differently from the v8-to-istanbul mapping
+      // these floors were first measured under.
       thresholds: {
-        lines: 42,
-        functions: 68,
-        branches: 73,
-        statements: 42,
+        lines: 53,
+        functions: 57,
+        branches: 45,
+        statements: 52,
       },
     },
   },
   resolve: {
     alias: {
-      '@agent': resolve(__dirname, './src/agent'),
-      '@agents': resolve(__dirname, './src/agents'),
-      '@services': resolve(__dirname, './src/services'),
-      '@tools': resolve(__dirname, './src/tools'),
-      '@utils': resolve(__dirname, './src/utils'),
-      '@config': resolve(__dirname, './src/config'),
-      '@llm': resolve(__dirname, './src/llm'),
-      '@security': resolve(__dirname, './src/security'),
-      '@checkers': resolve(__dirname, './src/checkers'),
-      '@plugins': resolve(__dirname, './src/plugins'),
-      '@marketplace': resolve(__dirname, './src/marketplace'),
-      '@mcp': resolve(__dirname, './src/mcp'),
-      '@ui': resolve(__dirname, './src/ui'),
-      '@shared': resolve(__dirname, './src/types'),
-      '@cli': resolve(__dirname, './src/cli'),
+      '@agent': resolve(import.meta.dirname, './src/agent'),
+      '@agents': resolve(import.meta.dirname, './src/agents'),
+      '@services': resolve(import.meta.dirname, './src/services'),
+      '@tools': resolve(import.meta.dirname, './src/tools'),
+      '@utils': resolve(import.meta.dirname, './src/utils'),
+      '@config': resolve(import.meta.dirname, './src/config'),
+      '@llm': resolve(import.meta.dirname, './src/llm'),
+      '@security': resolve(import.meta.dirname, './src/security'),
+      '@checkers': resolve(import.meta.dirname, './src/checkers'),
+      '@plugins': resolve(import.meta.dirname, './src/plugins'),
+      '@marketplace': resolve(import.meta.dirname, './src/marketplace'),
+      '@mcp': resolve(import.meta.dirname, './src/mcp'),
+      '@ui': resolve(import.meta.dirname, './src/ui'),
+      '@shared': resolve(import.meta.dirname, './src/types'),
+      '@cli': resolve(import.meta.dirname, './src/cli'),
     },
   },
 });

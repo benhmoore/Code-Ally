@@ -60,7 +60,7 @@ export async function runFleetDelegation(p: FleetDelegationParams): Promise<Flee
     p.manager.addTask(task);
   } catch (error) {
     try { await p.cleanup(); }
-    catch (cleanupError) { throw new AggregateError([error, cleanupError], 'Delegation admission and cleanup failed'); }
+    catch (cleanupError) { throw new AggregateError([error, cleanupError], 'Delegation admission and cleanup failed', { cause: cleanupError }); }
     throw error;
   }
 

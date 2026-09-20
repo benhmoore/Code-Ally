@@ -355,7 +355,7 @@ export class AgentPoolService implements IService {
       }
 
       // Check if configuration matches
-      let matches = false;
+      let matches: boolean;
 
       // CRITICAL: Prevent cross-type agent reuse
       // If EITHER side has a pool key, BOTH must have matching pool keys

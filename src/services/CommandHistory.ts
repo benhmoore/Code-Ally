@@ -320,7 +320,7 @@ export class CommandHistory {
         });
       }
     } catch (error) {
-      throw new Error(`Invalid history JSON: ${error}`);
+      throw new Error(`Invalid history JSON: ${error}`, { cause: error });
     }
   }
 }

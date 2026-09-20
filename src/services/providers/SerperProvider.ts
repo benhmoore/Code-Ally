@@ -52,7 +52,7 @@ export class SerperProvider implements ISearchProvider {
       try {
         data = (await response.json()) as SerperSearchResponse;
       } catch (parseError) {
-        throw new Error(`Serper API returned invalid JSON: ${parseError instanceof Error ? parseError.message : String(parseError)}`);
+        throw new Error(`Serper API returned invalid JSON: ${parseError instanceof Error ? parseError.message : String(parseError)}`, { cause: parseError });
       }
       logger.debug(`[SerperProvider] Received ${data.organic?.length ?? 0} results`);
 
@@ -61,7 +61,7 @@ export class SerperProvider implements ISearchProvider {
       clearTimeout(timeoutId);
 
       if (error instanceof Error && error.name === 'AbortError') {
-        throw new Error(`Serper search timed out after ${SEARCH_TIMEOUTS.SEARCH}ms`);
+        throw new Error(`Serper search timed out after ${SEARCH_TIMEOUTS.SEARCH}ms`, { cause: error });
       }
 
       throw error;

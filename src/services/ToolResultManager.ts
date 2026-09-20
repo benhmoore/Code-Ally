@@ -287,7 +287,7 @@ export class ToolResultManager {
     const toolGuidance = this.getToolSpecificGuidance(toolName);
 
     // Create clear, prominent warning at the top
-    let warning = '';
+    let warning: string;
     if (truncationLevel === 'critical') {
       warning = `⚠️ CRITICAL: Output truncated to ${percentageKept}% - CONTENT BELOW IS INCOMPLETE (context nearly full)`;
     } else if (truncationLevel === 'aggressive') {

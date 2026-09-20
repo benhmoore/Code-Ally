@@ -1,7 +1,7 @@
 import React, { useEffect } from 'react';
 import { EventEmitter } from 'node:events';
 import { render } from 'ink';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { Agent } from '@agent/Agent.js';
 import { ActivityStream } from '@services/ActivityStream.js';
 import { ServiceRegistry } from '@services/ServiceRegistry.js';
@@ -27,6 +27,8 @@ afterEach(() => {
   registry._descriptors.clear();
 });
 
+// Stream events set state from outside React's event system, which commits on
+// a later scheduler task, so each step waits for the view it expects.
 describe('useForegroundConversationView', () => {
   it('projects child messages and live chunks without mutating root state', async () => {
     const stream = new ActivityStream('child-call');
@@ -52,10 +54,11 @@ describe('useForegroundConversationView', () => {
       patchConsole: false,
     });
     mounted.push(instance);
-    await new Promise((resolve) => setTimeout(resolve, 0));
 
-    expect(observed.at(-1)?.messages).toEqual(messages);
-    expect(observed.at(-1)?.isThinking).toBe(true);
+    await vi.waitFor(() => {
+      expect(observed.at(-1)?.messages).toEqual(messages);
+      expect(observed.at(-1)?.isThinking).toBe(true);
+    });
 
     messages.push({ role: 'user', content: 'follow-up' });
     stream.emit({
@@ -64,8 +67,7 @@ describe('useForegroundConversationView', () => {
       timestamp: Date.now(),
       data: { message: messages.at(-1)! },
     });
-    await new Promise((resolve) => setTimeout(resolve, 0));
-    expect(observed.at(-1)?.messages.at(-1)?.content).toBe('follow-up');
+    await vi.waitFor(() => expect(observed.at(-1)?.messages.at(-1)?.content).toBe('follow-up'));
 
     stream.emit({
       id: 'display-error',
@@ -73,8 +75,7 @@ describe('useForegroundConversationView', () => {
       timestamp: Date.now(),
       data: { message: { role: 'assistant', content: 'route-local error' } },
     });
-    await new Promise((resolve) => setTimeout(resolve, 0));
-    expect(observed.at(-1)?.messages.at(-1)?.content).toBe('route-local error');
+    await vi.waitFor(() => expect(observed.at(-1)?.messages.at(-1)?.content).toBe('route-local error'));
 
     stream.emit({
       id: 'chunk',
@@ -82,8 +83,7 @@ describe('useForegroundConversationView', () => {
       timestamp: Date.now(),
       data: { chunk: 'working' },
     });
-    await new Promise((resolve) => setTimeout(resolve, 0));
-    expect(observed.at(-1)?.streamingContent).toBe('working');
+    await vi.waitFor(() => expect(observed.at(-1)?.streamingContent).toBe('working'));
 
     stream.emit({
       id: 'retry-boundary',
@@ -91,8 +91,7 @@ describe('useForegroundConversationView', () => {
       timestamp: Date.now(),
       data: { reason: 'Stream timeout', attempt: 1 },
     });
-    await new Promise((resolve) => setTimeout(resolve, 0));
-    expect(observed.at(-1)?.streamingContent).toBeUndefined();
+    await vi.waitFor(() => expect(observed.at(-1)?.streamingContent).toBeUndefined());
 
     stream.emit({
       id: 'replacement-chunk',
@@ -100,8 +99,7 @@ describe('useForegroundConversationView', () => {
       timestamp: Date.now(),
       data: { chunk: 'replacement' },
     });
-    await new Promise((resolve) => setTimeout(resolve, 0));
-    expect(observed.at(-1)?.streamingContent).toBe('replacement');
+    await vi.waitFor(() => expect(observed.at(-1)?.streamingContent).toBe('replacement'));
 
     messages.push({ role: 'assistant', content: 'done' });
     processing = false;
@@ -111,11 +109,11 @@ describe('useForegroundConversationView', () => {
       timestamp: Date.now(),
       data: { content: 'done' },
     });
-    await new Promise((resolve) => setTimeout(resolve, 0));
-
-    expect(observed.at(-1)?.messages).toEqual(messages);
-    expect(observed.at(-1)?.streamingContent).toBeUndefined();
-    expect(observed.at(-1)?.isThinking).toBe(false);
+    await vi.waitFor(() => {
+      expect(observed.at(-1)?.messages).toEqual(messages);
+      expect(observed.at(-1)?.streamingContent).toBeUndefined();
+      expect(observed.at(-1)?.isThinking).toBe(false);
+    });
 
     stream.emit({
       id: 'clear',
@@ -123,7 +121,6 @@ describe('useForegroundConversationView', () => {
       timestamp: Date.now(),
       data: {},
     });
-    await new Promise((resolve) => setTimeout(resolve, 0));
-    expect(observed.at(-1)?.messages).toEqual([]);
+    await vi.waitFor(() => expect(observed.at(-1)?.messages).toEqual([]));
   });
 });

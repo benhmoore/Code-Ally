@@ -35,7 +35,7 @@ npm run build
 npm link  # Makes 'ally' command available globally
 ```
 
-Requires Node.js 20.9 or newer.
+Requires Node.js 22 or newer.
 
 ## Usage
 
@@ -425,7 +425,7 @@ src/
 
 ## Requirements
 
-- Node.js 18+
+- Node.js 22+
 - Ollama running locally
 - Terminal with Unicode support
 

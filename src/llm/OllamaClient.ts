@@ -526,7 +526,7 @@ export class OllamaClient extends ModelClient {
       // Normalize it to the retryable timeout error so it is not misread as an
       // owner-initiated interruption.
       if (responseTimedOut && error?.name === 'AbortError') {
-        throw new Error('Request timeout');
+        throw new Error('Request timeout', { cause: error });
       }
       throw error;
     } finally {
@@ -894,7 +894,7 @@ export class OllamaClient extends ModelClient {
     logger.debug('[OLLAMA_CLIENT] Error type:', error.constructor.name);
     logger.debug('[OLLAMA_CLIENT] HTTP status:', error.httpStatus);
 
-    let suggestions: string[] = [];
+    let suggestions: string[];
 
     const protocolSuggestions = httpRecoverySuggestions(error);
     if (protocolSuggestions) {

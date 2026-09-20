@@ -477,7 +477,7 @@ export class ConfigManager implements IService {
       await this.setValues(imported);
     } catch (error) {
       if (error instanceof SyntaxError) {
-        throw new Error(`Invalid JSON: ${error.message}`);
+        throw new Error(`Invalid JSON: ${error.message}`, { cause: error });
       }
       throw error;
     }
@@ -627,7 +627,7 @@ export class ConfigManager implements IService {
     }
 
     // Parse value (try JSON first, fallback to string)
-    let value: any = valueString;
+    let value: any;
     try {
       value = JSON.parse(valueString);
     } catch {

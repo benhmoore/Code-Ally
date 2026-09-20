@@ -471,7 +471,6 @@ For multi-file exploration, prefer explore() to preserve context. Parallelize on
     const endLine = limit > 0 ? startLine + limit : Infinity;
     const selectedLines: string[] = [];
     let lineIndex = 0;
-    let totalLines = 0;
 
     const rl = readline.createInterface({
       input: createReadStream(absolutePath, { encoding: 'utf-8' }),
@@ -495,7 +494,7 @@ For multi-file exploration, prefer explore() to preserve context. Parallelize on
       // we can stop early (but we need totalLines for the header)
       // Continue counting for accurate total
     }
-    totalLines = lineIndex;
+    const totalLines = lineIndex;
 
     return { lines: selectedLines, totalLines, startLine };
   }

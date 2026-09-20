@@ -125,11 +125,11 @@ export async function fileToBase64(filePath: string): Promise<string> {
     return optimizedBuffer.toString('base64');
   } catch (error: any) {
     if (error.code === 'ENOENT') {
-      throw new Error(`Image file not found: ${filePath}`);
+      throw new Error(`Image file not found: ${filePath}`, { cause: error });
     } else if (error.code === 'EACCES') {
-      throw new Error(`Permission denied reading image file: ${filePath}`);
+      throw new Error(`Permission denied reading image file: ${filePath}`, { cause: error });
     } else {
-      throw new Error(`Failed to process image file ${filePath}: ${error.message}`);
+      throw new Error(`Failed to process image file ${filePath}: ${error.message}`, { cause: error });
     }
   }
 }

@@ -15,9 +15,9 @@ import { ActivityStream } from '../ActivityStream.js';
 
 // Mock the Agent class
 vi.mock('../../agent/Agent.js', () => ({
-  Agent: vi.fn().mockImplementation(() => ({
-    cleanup: vi.fn().mockResolvedValue(undefined),
-  })),
+  Agent: vi.fn(class {
+    cleanup = vi.fn().mockResolvedValue(undefined);
+  }),
 }));
 
 describe('AgentPoolService', () => {
@@ -436,9 +436,9 @@ describe('AgentPoolService', () => {
       const mockCleanup = vi.fn().mockResolvedValue(undefined);
 
       // Override mock for this test
-      (Agent as any).mockImplementationOnce(() => ({
-        cleanup: mockCleanup,
-      }));
+      (Agent as any).mockImplementationOnce(class {
+        cleanup = mockCleanup;
+      });
 
       const config: AgentConfig = { isSpecializedAgent: true };
       const result = await pool.acquire(config);

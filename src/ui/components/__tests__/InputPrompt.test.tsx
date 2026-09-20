@@ -554,10 +554,9 @@ describe('InputPrompt controlled buffer', () => {
     stdin.write('/co');
     await new Promise(resolve => setTimeout(resolve, 200));
     stdin.write('\u001b');
-    await settle();
+    await vi.waitFor(() => expect(stripAnsi(stdout.frames.at(-1) ?? '')).not.toContain('suggestion'));
 
     expect(interrupt).not.toHaveBeenCalled();
-    expect(stripAnsi(stdout.frames.at(-1) ?? '')).not.toContain('suggestion');
     instance.unmount();
   });
 });

@@ -1,7 +1,7 @@
 import React, { useEffect } from 'react';
 import { EventEmitter } from 'node:events';
 import { render } from 'ink';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { Agent } from '@agent/Agent.js';
 import { ActivityStream } from '@services/ActivityStream.js';
 import { ServiceRegistry } from '@services/ServiceRegistry.js';
@@ -32,6 +32,8 @@ function fakeAgent(id: string): Agent {
   } as Agent;
 }
 
+// State set from outside React's event system commits on a later scheduler
+// task, so each step waits for the routing it expects rather than a fixed tick.
 describe('useAgentRouting', () => {
   it('changes only the foreground route when entering and exiting a child', async () => {
     const main = fakeAgent('main-instance');
@@ -60,17 +62,15 @@ describe('useAgentRouting', () => {
       patchConsole: false,
     });
     mounted.push(instance);
-    await new Promise((resolve) => setTimeout(resolve, 0));
+    await vi.waitFor(() => expect(current).toBeDefined());
     expect(primaryAnnouncements).toEqual([]);
 
     current!.selectForegroundConversation(child, 'task-id');
-    await new Promise((resolve) => setTimeout(resolve, 0));
-    expect(current).toMatchObject({ primaryAgent: main, foregroundAgent: child, foregroundAgentId: 'task-id' });
+    await vi.waitFor(() => expect(current).toMatchObject({ primaryAgent: main, foregroundAgent: child, foregroundAgentId: 'task-id' }));
     expect(primaryAnnouncements).toEqual([]);
 
     current!.returnToPrimaryConversation();
-    await new Promise((resolve) => setTimeout(resolve, 0));
-    expect(current).toMatchObject({ primaryAgent: main, foregroundAgent: main, foregroundAgentId: 'main' });
+    await vi.waitFor(() => expect(current).toMatchObject({ primaryAgent: main, foregroundAgent: main, foregroundAgentId: 'main' }));
     expect(primaryAnnouncements).toEqual([]);
   });
 
@@ -94,7 +94,7 @@ describe('useAgentRouting', () => {
       patchConsole: false,
     });
     mounted.push(instance);
-    await new Promise((resolve) => setTimeout(resolve, 0));
+    await vi.waitFor(() => expect(observed).toBeDefined());
 
     registry.registerInstance('agent', second);
     activityStream.emit({
@@ -103,7 +103,6 @@ describe('useAgentRouting', () => {
       timestamp: Date.now(),
       data: { agentId: 'second', agentName: 'review' },
     });
-    await new Promise((resolve) => setTimeout(resolve, 0));
-    expect(observed).toMatchObject({ primaryAgent: second, foregroundAgent: second, foregroundAgentId: 'main' });
+    await vi.waitFor(() => expect(observed).toMatchObject({ primaryAgent: second, foregroundAgent: second, foregroundAgentId: 'main' }));
   });
 });

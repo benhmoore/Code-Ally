@@ -165,7 +165,7 @@ export class WriteTool extends BaseTool {
     try {
       return await fileMutationCoordinator.run(absolutePath, async () => {
       // Check if the path already exists. Write is intentionally creation-only.
-      let fileExists = false;
+      let fileExists: boolean;
       try {
         await fs.access(absolutePath);
         fileExists = true;

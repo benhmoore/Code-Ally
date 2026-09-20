@@ -685,7 +685,7 @@ export class ScheduledTaskManager implements IService {
       if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
       const stale = await this.isLockStale(effectiveLockPath);
       if (!stale) {
-        throw new Error('Scheduler is already running');
+        throw new Error('Scheduler is already running', { cause: error });
       }
       await fs.unlink(effectiveLockPath).catch(() => {});
       const handle = await fs.open(effectiveLockPath, 'wx');

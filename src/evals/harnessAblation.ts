@@ -655,8 +655,8 @@ async function schemaReliabilityCase(
   ], functions, options);
   const calls = result.response.tool_calls ?? [];
   const efficiencyScore = Number(calls.length === 1);
-  let functionalScore = 0;
-  let functionalMax = 0;
+  let functionalScore: number;
+  let functionalMax: number;
 
   if (scenario === 'grep_options') {
     const call = callNamed(result.response, 'grep');
@@ -907,7 +907,7 @@ async function loadCapturedTools(path: string | undefined): Promise<FunctionDefi
   try {
     return normalizeProviderToolDefinitions(snapshot.payload.tools);
   } catch (error) {
-    throw new Error(`Invalid request snapshot ${path}: ${error instanceof Error ? error.message : String(error)}`);
+    throw new Error(`Invalid request snapshot ${path}: ${error instanceof Error ? error.message : String(error)}`, { cause: error });
   }
 }
 

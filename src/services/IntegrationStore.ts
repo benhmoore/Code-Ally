@@ -76,7 +76,7 @@ export class IntegrationStore implements IService {
         error instanceof Error ? error.message : String(error)
       }. The encryption key may have changed, or the config file may be corrupted.`;
       logger.error(`[IntegrationStore] ${errorMsg}`);
-      throw new Error(errorMsg);
+      throw new Error(errorMsg, { cause: error });
     }
   }
 

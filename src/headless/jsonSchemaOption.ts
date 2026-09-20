@@ -21,7 +21,7 @@ export function parseJsonSchemaOption(value: string): ParameterSchema {
   try {
     parsed = JSON.parse(text);
   } catch (error) {
-    throw new Error(`--json-schema is not valid JSON: ${formatError(error)}`);
+    throw new Error(`--json-schema is not valid JSON: ${formatError(error)}`, { cause: error });
   }
 
   if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
@@ -58,6 +58,6 @@ function readSchemaFile(path: string): string {
   try {
     return readFileSync(path, 'utf-8');
   } catch (error) {
-    throw new Error(`--json-schema cannot read ${path}: ${formatError(error)}`);
+    throw new Error(`--json-schema cannot read ${path}: ${formatError(error)}`, { cause: error });
   }
 }

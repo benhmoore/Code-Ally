@@ -62,13 +62,13 @@ async function readSettingsHooks(path: string): Promise<unknown> {
   try {
     raw = await readFile(path, 'utf-8');
   } catch (error) {
-    throw new Error(`Could not read settings file ${path}: ${formatError(error)}`);
+    throw new Error(`Could not read settings file ${path}: ${formatError(error)}`, { cause: error });
   }
   let parsed: unknown;
   try {
     parsed = JSON.parse(raw);
   } catch (error) {
-    throw new Error(`Settings file ${path} is not valid JSON: ${formatError(error)}`);
+    throw new Error(`Settings file ${path} is not valid JSON: ${formatError(error)}`, { cause: error });
   }
   if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
     throw new Error(`Settings file ${path} must contain a JSON object`);

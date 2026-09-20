@@ -253,11 +253,11 @@ export class ProfileManager implements IService {
       return profile;
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
-        throw new Error(`Profile '${name}' does not exist`);
+        throw new Error(`Profile '${name}' does not exist`, { cause: error });
       }
 
       if (error instanceof SyntaxError) {
-        throw new Error(`Profile '${name}' has corrupted metadata: ${error.message}`);
+        throw new Error(`Profile '${name}' has corrupted metadata: ${error.message}`, { cause: error });
       }
 
       logger.error(`Failed to load profile ${name}:`, error);
@@ -509,7 +509,7 @@ export class ProfileManager implements IService {
       logger.info(`[PROFILE] Deleted profile '${name}' (moved to quarantine: ${quarantinePath})`);
     } catch (error) {
       logger.error(`Failed to delete profile ${name}:`, error);
-      throw new Error(`Failed to delete profile '${name}': ${error}`);
+      throw new Error(`Failed to delete profile '${name}': ${error}`, { cause: error });
     }
   }
 

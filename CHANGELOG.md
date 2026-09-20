@@ -28,6 +28,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   tool for the run and reports the validated payload on the `result` event.
 
 ### Changed
+- Requires Node.js 22 or newer.
+- The terminal UI renders through Ink 7 on React 19.
+- An error raised while handling another error now carries the original as
+  its `cause`.
 - `ToolValidator` validates nested objects, array items, enums and
   `additionalProperties`, and names the failing JSON path.
 - Scheduled task presets now run through the shared run authorization

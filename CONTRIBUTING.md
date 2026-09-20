@@ -9,7 +9,7 @@ Thanks for your interest in contributing to Code Ally! This document provides gu
 3. Install dependencies: `npm install`
 4. Create a branch: `git checkout -b feature/your-feature`
 
-Node.js 20.9 or newer is required.
+Node.js 22 or newer is required.
 
 ## Development
 

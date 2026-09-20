@@ -413,7 +413,7 @@ describe('Agent - Interruption Handling', () => {
         }
         return true;
       });
-      compactor.checkAndPerformAutoCompaction = vi.fn(attempt);
+      compactor.checkAndPerformAutoCompaction = vi.fn((context: { signal: AbortSignal }) => attempt(context));
       compactor.compactAndApply = attempt;
       const monitor = (agent as any).activityMonitor;
       monitor.start();

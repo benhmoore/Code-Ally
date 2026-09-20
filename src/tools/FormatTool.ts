@@ -367,7 +367,7 @@ export class FormatTool extends BaseTool {
       const data = yaml.parse(content);
       return yaml.stringify(data, { indent: FORMATTING.YAML_INDENT_SPACES, lineWidth: FORMATTING.YAML_LINE_WIDTH });
     } catch (error) {
-      throw new Error(`YAML formatting failed: ${formatError(error)}`);
+      throw new Error(`YAML formatting failed: ${formatError(error)}`, { cause: error });
     }
   }
 

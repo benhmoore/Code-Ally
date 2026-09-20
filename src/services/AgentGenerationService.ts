@@ -122,7 +122,7 @@ Do not include any text before or after the JSON. The name must be lowercase wit
         systemPrompt: parsed.systemPrompt,
       };
     } catch (error) {
-      throw new Error(`Failed to parse agent generation response: ${error instanceof Error ? error.message : String(error)}`);
+      throw new Error(`Failed to parse agent generation response: ${error instanceof Error ? error.message : String(error)}`, { cause: error });
     }
   }
 

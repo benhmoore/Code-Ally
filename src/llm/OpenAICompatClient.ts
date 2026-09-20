@@ -357,7 +357,7 @@ export class OpenAICompatClient extends ModelClient {
           );
     } catch (error: any) {
       if (responseTimedOut && error?.name === 'AbortError') {
-        throw new Error('Request timeout');
+        throw new Error('Request timeout', { cause: error });
       }
       throw error;
     } finally {

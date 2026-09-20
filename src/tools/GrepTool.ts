@@ -311,7 +311,7 @@ For multi-step investigations with unknown scope, prefer explore() to preserve c
         }
 
         // Format results based on output mode
-        let content = '';
+        let content: string;
         const responseData: any = {
           output_mode: outputMode,
           files_searched: filesWithMatches.size,
