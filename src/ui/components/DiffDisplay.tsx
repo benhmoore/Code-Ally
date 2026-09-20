@@ -101,12 +101,21 @@ const SIDE_BY_SIDE_MIN_WIDTH = 120;
 /** Between the old and new columns. */
 const COLUMN_SEPARATOR = ' │ ';
 
-/** The layout to draw at a given width. */
-export function resolveDiffLayout(layout: DiffLayout | undefined, renderWidth: number): 'unified' | 'side-by-side' {
+/**
+ * The layout to draw. `auto` goes side by side only when the width allows
+ * and there are lines on both sides to face each other: a new or deleted
+ * file has one column of content and reads best unified.
+ */
+export function resolveDiffLayout(
+  layout: DiffLayout | undefined,
+  renderWidth: number,
+  changes: { additions: number; deletions: number }
+): 'unified' | 'side-by-side' {
   if (layout === 'unified' || layout === 'side-by-side') {
     return layout;
   }
-  return renderWidth >= SIDE_BY_SIDE_MIN_WIDTH ? 'side-by-side' : 'unified';
+  const twoSided = changes.additions > 0 && changes.deletions > 0;
+  return twoSided && renderWidth >= SIDE_BY_SIDE_MIN_WIDTH ? 'side-by-side' : 'unified';
 }
 
 /**
@@ -171,7 +180,6 @@ export const DiffDisplay: React.FC<DiffDisplayProps> = ({
 }) => {
   const contentWidth = useContentWidth();
   const renderWidth = Math.max(20, contentWidth - reservedColumns - RENDER_SAFETY_COLUMNS);
-  const resolvedLayout = resolveDiffLayout(layout, renderWidth);
   const resolvedSyntaxTheme = syntaxTheme ?? resolveDiffSyntaxTheme(diffTheme);
   const syntaxHighlightEnabled = syntaxHighlight && diffTheme !== 'minimal';
 
@@ -195,6 +203,7 @@ export const DiffDisplay: React.FC<DiffDisplayProps> = ({
   // Count total additions and deletions across all hunks
   const additions = diffLines.filter(l => l.type === 'add').length;
   const deletions = diffLines.filter(l => l.type === 'remove').length;
+  const resolvedLayout = resolveDiffLayout(layout, renderWidth, { additions, deletions });
 
   // Build summary text
   const parts: string[] = [];

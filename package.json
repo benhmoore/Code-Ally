@@ -51,7 +51,7 @@
     "diff": "^9.0.0",
     "fast-glob": "^3.3.2",
     "fs-native-extensions": "^1.5.1",
-    "ink": "^7.1.1",
+    "ink": "github:vadimdemedes/ink#06385e9",
     "marked": "^18.0.13",
     "openai": "^7.20.0",
     "react": "^19.3.0",

@@ -9,7 +9,7 @@
  * measurement if the context is unavailable.
  */
 
-import { useStdout } from 'ink';
+import { useWindowSize } from 'ink';
 import { TEXT_LIMITS } from '@config/constants.js';
 import { useTerminalContext } from '../contexts/TerminalContext.js';
 
@@ -19,11 +19,11 @@ import { useTerminalContext } from '../contexts/TerminalContext.js';
  * @returns Raw terminal width in columns.
  */
 export function useTerminalWidth(): number {
-  const { stdout } = useStdout();
+  const { columns } = useWindowSize();
   try {
     return useTerminalContext().width;
   } catch {
     // Fallback to direct measurement if used outside the provider.
-    return stdout?.columns || TEXT_LIMITS.TERMINAL_WIDTH_FALLBACK;
+    return columns || TEXT_LIMITS.TERMINAL_WIDTH_FALLBACK;
   }
 }

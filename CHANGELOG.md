@@ -9,7 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - Diffs are laid out side by side, old file on the left and new on the right,
-  when the terminal is at least 120 columns wide. `diff_display_layout`
+  when the terminal is at least 120 columns wide and the change has lines on
+  both sides; a new or deleted file stays unified. `diff_display_layout`
   forces `unified` or `side-by-side`.
 - Tool calls in the live region open and close: click a call's row, or press
   ctrl+o to open or close all of them. Completed calls stay in the live
@@ -45,6 +46,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 - Requires Node.js 22 or newer.
+- Ink is pinned to upstream commit 06385e9 until the next release: 7.1.1's
+  incremental renderer leaves stale rows behind whenever the live region
+  grows while it ends in a blank line at the bottom of the screen.
 - The terminal UI renders through Ink 7 on React 19.
 - An error raised while handling another error now carries the original as
   its `cause`.

@@ -147,14 +147,21 @@ describe('pairDiffRows', () => {
 });
 
 describe('resolveDiffLayout', () => {
+  const twoSided = { additions: 2, deletions: 1 };
+
   it('goes side by side only when auto has the width for it', () => {
-    expect(resolveDiffLayout('auto', 119)).toBe('unified');
-    expect(resolveDiffLayout('auto', 120)).toBe('side-by-side');
-    expect(resolveDiffLayout(undefined, 200)).toBe('side-by-side');
+    expect(resolveDiffLayout('auto', 119, twoSided)).toBe('unified');
+    expect(resolveDiffLayout('auto', 120, twoSided)).toBe('side-by-side');
+    expect(resolveDiffLayout(undefined, 200, twoSided)).toBe('side-by-side');
+  });
+
+  it('keeps a new or deleted file unified, since one column would be empty', () => {
+    expect(resolveDiffLayout('auto', 200, { additions: 40, deletions: 0 })).toBe('unified');
+    expect(resolveDiffLayout('auto', 200, { additions: 0, deletions: 40 })).toBe('unified');
   });
 
   it('honours an explicit layout at any width', () => {
-    expect(resolveDiffLayout('unified', 200)).toBe('unified');
-    expect(resolveDiffLayout('side-by-side', 60)).toBe('side-by-side');
+    expect(resolveDiffLayout('unified', 200, twoSided)).toBe('unified');
+    expect(resolveDiffLayout('side-by-side', 60, { additions: 40, deletions: 0 })).toBe('side-by-side');
   });
 });
