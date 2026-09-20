@@ -605,6 +605,13 @@ const AppContentComponent: React.FC<{
   // request + navigation props via `extra`. Implemented as a function (not a
   // component) so it renders inline without remounting InputPrompt each render
   // (which would drop the input buffer / cursor state).
+  // Ctrl+O alternates between opening and closing every tool call.
+  const toolOutputExpandedRef = useRef(false);
+  const handleToggleToolOutput = React.useCallback(() => {
+    toolOutputExpandedRef.current = !toolOutputExpandedRef.current;
+    actions.setToolCallsExpanded(toolOutputExpandedRef.current);
+  }, [actions]);
+
   // Rewind's Enter opens the options step for the chosen message.
   const handleRewindSelect = (selectedIndex: number) => {
     const targetMessage = (modal.rewindRequest?.targets ?? [])[selectedIndex];
@@ -710,6 +717,7 @@ const AppContentComponent: React.FC<{
         <ErrorBoundary label="ConversationView" resetKey={state.staticRemountKey}>
           <ConversationView
           messages={displayedMessages}
+          onToggleToolCall={isChildSelected ? undefined : actions.toggleToolCallExpanded}
           isThinking={displayedIsThinking}
           streamingContent={displayedStreamingContent}
           activeToolCalls={displayedToolCalls}
@@ -1192,6 +1200,7 @@ const AppContentComponent: React.FC<{
             onExitAgent={returnToMain}
             onBackgroundAgents={handleBackgroundAgents}
             onKillAgent={handleKillAgent}
+            onToggleToolOutput={handleToggleToolOutput}
           />
 
           {/* Background agent fleet — reachable with ↓ from an empty prompt */}

@@ -11,6 +11,7 @@ import { useStdout } from 'ink';
 import type { Message, Config, ToolCallState } from '@shared/index.js';
 import { UI_DELAYS } from '@config/constants.js';
 import { generateMessageId } from '@utils/id.js';
+import { isToolCallExpanded } from '../utils/toolVisibility.js';
 
 const LIVE_MESSAGE_LIMIT = 500;
 const LIVE_MESSAGE_BYTES = 4 * 1024 * 1024;
@@ -200,6 +201,10 @@ export interface AppActions {
 
   /** Clear all active tool calls */
   clearToolCalls: () => void;
+  /** Open a tool call if it is closed, and close it if it is open */
+  toggleToolCallExpanded: (id: string) => void;
+  /** Open or close every tool call at once */
+  setToolCallsExpanded: (expanded: boolean) => void;
 
   /** Set thinking state */
   setIsThinking: (isThinking: boolean) => void;
@@ -506,6 +511,24 @@ export const AppProvider: React.FC<AppProviderProps> = ({
     ));
   }, []);
 
+  // Presentation changes apply at once: they answer a keypress or a click.
+  const toggleToolCallExpanded = useCallback((id: string) => {
+    setConversationView((prev) => {
+      const call = prev.activeToolCalls.find((candidate) => candidate.id === id);
+      if (!call) return prev;
+      const updates = new Map([[id, { expanded: !isToolCallExpanded(call) }]]);
+      return { ...prev, activeToolCalls: applyToolCallUpdates(prev.activeToolCalls, updates) };
+    });
+  }, []);
+
+  const setToolCallsExpanded = useCallback((expanded: boolean) => {
+    setConversationView((prev) => {
+      const updates = new Map(prev.activeToolCalls.map((call) => [call.id, { expanded }]));
+      const activeToolCalls = applyToolCallUpdates(prev.activeToolCalls, updates);
+      return activeToolCalls === prev.activeToolCalls ? prev : { ...prev, activeToolCalls };
+    });
+  }, []);
+
   const addCompactionNotice = useCallback((notice: CompactionNotice) => {
     setCompactionNotices((prev) => [...prev, notice].slice(-NOTICE_LIMIT));
   }, []);
@@ -671,6 +694,8 @@ export const AppProvider: React.FC<AppProviderProps> = ({
     updateToolCall,
     removeToolCall,
     clearToolCalls,
+    toggleToolCallExpanded,
+    setToolCallsExpanded,
     setIsThinking,
     setStreamingContent,
     setIsCompacting,
@@ -688,7 +713,7 @@ export const AppProvider: React.FC<AppProviderProps> = ({
     addSubAgent,
     removeSubAgent,
     setActiveAgentId,
-  }), [addMessage, setMessagesWithTimestamps, updateConfig, setContextUsage, addToolCall, updateToolCall, removeToolCall, clearToolCalls, setIsThinking, setStreamingContent, setIsCompacting, addCompactionNotice, clearCompactionNotices, addRewindNotice, clearRewindNotices, addStatusMessage, clearStatusMessages, forceStaticRemount, repaintConversationSurface, resetConversationView, resetConversationViewWithTools, setCurrentAgent, addSubAgent, removeSubAgent, setActiveAgentId]);
+  }), [addMessage, setMessagesWithTimestamps, updateConfig, setContextUsage, addToolCall, updateToolCall, removeToolCall, clearToolCalls, toggleToolCallExpanded, setToolCallsExpanded, setIsThinking, setStreamingContent, setIsCompacting, addCompactionNotice, clearCompactionNotices, addRewindNotice, clearRewindNotices, addStatusMessage, clearStatusMessages, forceStaticRemount, repaintConversationSurface, resetConversationView, resetConversationViewWithTools, setCurrentAgent, addSubAgent, removeSubAgent, setActiveAgentId]);
 
   // Memoize context value to prevent unnecessary re-renders of consumers
   const value: AppContextValue = React.useMemo(() => ({

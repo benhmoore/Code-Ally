@@ -414,6 +414,7 @@ export interface ToolCallState {
   visibleInChat?: boolean; // Whether this tool should appear in conversation
   isTransparent?: boolean; // For wrapper tools that should not be displayed
   collapsed?: boolean; // For tools that should hide their children immediately
+  expanded?: boolean; // The user's choice to open or close the call; undefined leaves the tool's default
   shouldCollapse?: boolean; // For tools that should collapse after completion
   hideOutput?: boolean; // For tools that should never show output
   alwaysShowFullOutput?: boolean; // For tools that must always show full output without truncation

@@ -8,6 +8,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Tool calls in the live region open and close: click a call's row, or press
+  ctrl+o to open or close all of them. Completed calls stay in the live
+  region until the turn ends or a later message closes the sequence, and are
+  written to the transcript in whichever state they were left.
 - Mouse clicks. Option rows in permission prompts, selectors and the agent
   fleet answer to a click exactly as they do to Enter. `mouse_support`
   chooses when the terminal reports clicks: `dialogs` (default) only while

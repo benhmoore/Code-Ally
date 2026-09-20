@@ -65,6 +65,8 @@ interface InputPromptProps {
   onExitAgent?: () => void;
   /** Background all running foreground agents (Ctrl+B) */
   onBackgroundAgents?: () => void;
+  /** Open or close every tool call in the live region (Ctrl+O) */
+  onToggleToolOutput?: () => void;
   /** Kill the selected fleet agent (index over [main, ...agents]; excludes main) */
   onKillAgent?: (selectedIndex: number) => void;
   /** Placeholder text to show when empty */
@@ -184,6 +186,7 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
   onExitFleet,
   onExitAgent,
   onBackgroundAgents,
+  onToggleToolOutput,
   onKillAgent,
   placeholder = 'Type a message...',
   commandHistory,
@@ -1228,6 +1231,12 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
       // ===== Ctrl+B: background all running foreground agents =====
       if (key.ctrl && input === 'b' && onBackgroundAgents) {
         onBackgroundAgents();
+        return;
+      }
+
+      // ===== Ctrl+O: open or close the tool calls in the live region =====
+      if (key.ctrl && input === 'o' && onToggleToolOutput) {
+        onToggleToolOutput();
         return;
       }
 

@@ -22,6 +22,8 @@ import { getStatusColor, getStatusIcon } from '../utils/statusUtils.js';
 import { ErrorBoundary } from './ErrorBoundary.js';
 import { useTerminalRows } from '../hooks/useTerminalRows.js';
 import { liveRegionBudget } from '../utils/layout.js';
+import { resolveToolVisibility } from '../utils/toolVisibility.js';
+import { fitToolsToBudget, partitionCompletedToolCalls } from '../utils/liveToolCalls.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -75,6 +77,8 @@ interface ConversationViewProps {
   startupNotices?: string[];
   /** Current agent name (to prefix non-ally responses) */
   currentAgent?: string;
+  /** Open or close a live-region tool call (click on its row, or ctrl+o for all). */
+  onToggleToolCall?: (id: string) => void;
 }
 
 /**
@@ -155,6 +159,7 @@ function renderToolCallTree(
   config?: any,
   compactionNotices?: CompactionNotice[],
   width?: number,
+  onToggle?: (id: string) => void,
 ): React.ReactNode {
   return (
     <ToolCallDisplay
@@ -164,6 +169,7 @@ function renderToolCallTree(
       config={config}
       compactionNotices={compactionNotices}
       width={width}
+      onToggle={onToggle}
     />
   );
 }
@@ -226,59 +232,65 @@ const MAX_VISIBLE_RUNNING_TOOLS = 8;
  */
 const MAX_STREAMING_LINES = 60;
 
-function estimateToolRows(toolCall: ToolCallTreeNode): number {
+function estimateToolRows(toolCall: ToolCallTreeNode, config?: any): number {
+  const visibility = resolveToolVisibility(toolCall, config);
   let rows = 1;
   const output = toolCall.output?.trim();
-  if (output && !toolCall.collapsed && (!toolCall.hideOutput || toolCall.alwaysShowFullOutput)) {
+  if (output && visibility.showOutput) {
     rows += Math.min(6, output.split('\n').length);
   }
-  if (toolCall.diffPreview && !toolCall.collapsed) rows += 6;
+  if (toolCall.diffPreview && !visibility.collapsed) rows += 6;
   if (toolCall.thinking && toolCall.thinkingEndTime) rows += 1;
-  if (!toolCall.collapsed) {
-    rows += (toolCall.children ?? []).reduce((sum, child) => sum + estimateToolRows(child), 0);
+  if (visibility.showChildren) {
+    rows += (toolCall.children ?? []).reduce((sum, child) => sum + estimateToolRows(child, config), 0);
   }
   return rows;
 }
 
 const ActiveContent = React.memo<{
+  /** Completed calls of the current turn, still open to expansion. */
+  completedToolCalls: ToolCallTreeNode[];
   runningToolCalls: ToolCallTreeNode[];
   streamingContent?: string;
   config?: any;
   compactionNotices?: CompactionNotice[];
   pendingSummary?: ToolCallSummary;
   width: number;
-}>(({ runningToolCalls, streamingContent, config, compactionNotices, pendingSummary, width }) => {
+  onToggleToolCall?: (id: string) => void;
+}>(({ completedToolCalls, runningToolCalls, streamingContent, config, compactionNotices, pendingSummary, width, onToggleToolCall }) => {
   const terminalRows = useTerminalRows();
   const maxActiveHeight = liveRegionBudget(terminalRows);
 
   // Early return null if nothing to render - prevents empty Box from taking space
-  if (runningToolCalls.length === 0 && !streamingContent && !pendingSummary) {
+  if (completedToolCalls.length === 0 && runningToolCalls.length === 0 && !streamingContent && !pendingSummary) {
     return null;
   }
 
   // Cap visible running tools to keep dynamic output height bounded
-  const visibleTools = runningToolCalls.length > MAX_VISIBLE_RUNNING_TOOLS
+  const visibleRunning = runningToolCalls.length > MAX_VISIBLE_RUNNING_TOOLS
     ? runningToolCalls.slice(-MAX_VISIBLE_RUNNING_TOOLS)
     : runningToolCalls;
-  const hiddenToolCount = runningToolCalls.length - visibleTools.length;
+  const hiddenToolCount = runningToolCalls.length - visibleRunning.length;
+  const noticeRows = (pendingSummary ? 1 : 0) + (hiddenToolCount > 0 ? 1 : 0);
 
-  // Keep the newest streaming lines within the terminal-relative budget.
-  // `maxHeight` caps large output without reserving empty rows for small output.
+  // The newest streaming lines come first within the budget; tools take what
+  // is left, dropping the oldest, so an expanded call never hides the reply.
+  const estimate = (toolCall: ToolCallTreeNode) => estimateToolRows(toolCall, config);
+  const wantedToolRows = [...completedToolCalls, ...visibleRunning].reduce((sum, toolCall) => sum + estimate(toolCall), 0);
   let displayStreaming = streamingContent?.trimStart();
+  let streamingRows = 0;
   if (displayStreaming) {
     const lines = displayStreaming.split('\n');
-    const reservedRows = visibleTools.length + (pendingSummary ? 1 : 0) + (hiddenToolCount > 0 ? 1 : 0);
-    const availableStreamingRows = Math.max(1, Math.min(MAX_STREAMING_LINES, maxActiveHeight - reservedRows));
+    const availableStreamingRows = Math.max(1, Math.min(MAX_STREAMING_LINES, maxActiveHeight - noticeRows - wantedToolRows));
     if (lines.length > availableStreamingRows) {
       displayStreaming = lines.slice(-availableStreamingRows).join('\n');
     }
+    streamingRows = Math.min(lines.length, availableStreamingRows);
   }
+  const toolBudget = Math.max(1, maxActiveHeight - noticeRows - streamingRows);
+  const visibleTools = fitToolsToBudget([...completedToolCalls, ...visibleRunning], toolBudget, estimate);
 
-  const estimatedRows =
-    visibleTools.reduce((sum, tool) => sum + estimateToolRows(tool), 0) +
-    (displayStreaming ? displayStreaming.split('\n').length : 0) +
-    (pendingSummary ? 1 : 0) +
-    (hiddenToolCount > 0 ? 1 : 0);
+  const estimatedRows = noticeRows + streamingRows + visibleTools.reduce((sum, toolCall) => sum + estimate(toolCall), 0);
   const constrainedHeight = estimatedRows > maxActiveHeight ? maxActiveHeight : undefined;
 
   return (
@@ -298,9 +310,9 @@ const ActiveContent = React.memo<{
       )}
 
       {visibleTools.map((toolCall) => (
-        <Box key={`running-tool-${toolCall.id}`} paddingLeft={2} width={width}>
-          <ErrorBoundary label={`running-tool-${toolCall.id}`}>
-            {renderToolCallTree(toolCall, 0, config, compactionNotices, Math.max(1, width - 2))}
+        <Box key={`live-tool-${toolCall.id}`} paddingLeft={2} width={width}>
+          <ErrorBoundary label={`live-tool-${toolCall.id}`}>
+            {renderToolCallTree(toolCall, 0, config, compactionNotices, Math.max(1, width - 2), onToggleToolCall)}
           </ErrorBoundary>
         </Box>
       ))}
@@ -321,6 +333,7 @@ const ActiveContent = React.memo<{
  */
 const ConversationViewComponent: React.FC<ConversationViewProps> = ({
   messages,
+  isThinking = false,
   streamingContent,
   activeToolCalls = [],
   compactionNotices = [],
@@ -334,6 +347,7 @@ const ConversationViewComponent: React.FC<ConversationViewProps> = ({
   totalMcpCount,
   startupNotices = [],
   currentAgent,
+  onToggleToolCall,
 }) => {
   const terminalWidth = useContentWidth();
 
@@ -350,6 +364,9 @@ const ConversationViewComponent: React.FC<ConversationViewProps> = ({
 
   // Memoize toolCallTree with reference equality check to prevent unnecessary recalculations
   const toolCallTree = React.useMemo(() => buildToolCallTree(activeToolCalls), [activeToolCalls]);
+  // Latest tree for the timeline memo, which must not recompute on every update
+  const toolCallTreeRef = useRef(toolCallTree);
+  toolCallTreeRef.current = toolCallTree;
 
   // Track completed tool IDs to stabilize completedToolCalls reference
   // This prevents the Static component from recalculating when only running tools update
@@ -386,7 +403,7 @@ const ConversationViewComponent: React.FC<ConversationViewProps> = ({
 
   // Build completed timeline (messages + completed tools + compaction notices)
   // Relies on React's memoization + AppContext ref equality for efficient updates
-  const { completedTimeline, pendingContextSummary } = React.useMemo(() => {
+  const { completedTimeline, pendingContextSummary, liveCompletedIds } = React.useMemo(() => {
     const timeline: TimelineItem[] = [];
 
     // Add all messages (except tool/system role messages and empty assistant messages)
@@ -422,14 +439,26 @@ const ConversationViewComponent: React.FC<ConversationViewProps> = ({
       });
     });
 
-    // Add completed tool calls
-    completedToolCalls.forEach((toolCall) => {
+    // Completed tool calls later than every committed non-tool item stay in the
+    // live region during the turn, where they can still be opened and closed.
+    const lastCommittedTimestamp = Math.max(
+      0,
+      ...timeline.map((item) => item.timestamp),
+      ...compactionNotices.filter((notice) => !notice.parentId).map((notice) => notice.timestamp),
+      ...rewindNotices.map((notice) => notice.timestamp),
+      ...statusMessages.map((statusMessage) => statusMessage.timestamp),
+    );
+    const partition = partitionCompletedToolCalls(completedToolCalls, lastCommittedTimestamp, isThinking);
+    // Commit the current objects: a call toggled while live keeps that state.
+    const latest = new Map(toolCallTreeRef.current.map((toolCall) => [toolCall.id, toolCall]));
+    partition.committed.forEach((toolCall) => {
       timeline.push({
         type: 'toolCall',
-        toolCall,
+        toolCall: latest.get(toolCall.id) ?? toolCall,
         timestamp: toolCall.startTime,
       });
     });
+    const liveCompletedIds = new Set(partition.live.map((toolCall) => toolCall.id));
 
     // Add compaction notices (only top-level ones without parentId)
     compactionNotices.forEach((notice) => {
@@ -472,8 +501,13 @@ const ConversationViewComponent: React.FC<ConversationViewProps> = ({
       disabled: config?.show_full_tool_output === true,
     });
 
-    return { completedTimeline: grouped.items, pendingContextSummary: grouped.pendingSummary };
-  }, [messages, completedToolCalls, compactionNotices, rewindNotices, statusMessages, config?.show_full_tool_output]);
+    return { completedTimeline: grouped.items, pendingContextSummary: grouped.pendingSummary, liveCompletedIds };
+  }, [messages, completedToolCalls, compactionNotices, rewindNotices, statusMessages, config?.show_full_tool_output, isThinking]);
+
+  const liveCompletedToolCalls = React.useMemo(
+    () => toolCallTree.filter((toolCall) => liveCompletedIds.has(toolCall.id)),
+    [toolCallTree, liveCompletedIds]
+  );
 
   // Commit only newly-finalized timeline items to Ink's static output. Static
   // content lives in the terminal scrollback and is excluded from Ink's live
@@ -665,12 +699,14 @@ const ConversationViewComponent: React.FC<ConversationViewProps> = ({
 
       {/* Active content - only re-renders when active tools change */}
       <ActiveContent
+        completedToolCalls={liveCompletedToolCalls}
         runningToolCalls={runningToolCalls}
         streamingContent={streamingContent}
         config={config}
         compactionNotices={compactionNotices}
         pendingSummary={pendingContextSummary}
         width={terminalWidth}
+        onToggleToolCall={onToggleToolCall}
       />
     </Box>
   );
@@ -690,11 +726,12 @@ export const ConversationView = React.memo(ConversationViewComponent, (prevProps
   const staticKeySame = prevProps.staticRemountKey === nextProps.staticRemountKey;
   const configSame = prevProps.config === nextProps.config;
   const currentAgentSame = prevProps.currentAgent === nextProps.currentAgent;
+  const toggleSame = prevProps.onToggleToolCall === nextProps.onToggleToolCall;
   const integrationCountsSame =
     prevProps.activePluginCount === nextProps.activePluginCount &&
     prevProps.totalPluginCount === nextProps.totalPluginCount &&
     prevProps.activeMcpCount === nextProps.activeMcpCount &&
     prevProps.totalMcpCount === nextProps.totalMcpCount;
 
-  return messagesSame && streamingSame && toolCallsSame && compactionNoticesSame && rewindNoticesSame && statusMessagesSame && isThinkingSame && staticKeySame && configSame && currentAgentSame && integrationCountsSame;
+  return messagesSame && streamingSame && toolCallsSame && compactionNoticesSame && rewindNoticesSame && statusMessagesSame && isThinkingSame && staticKeySame && configSame && currentAgentSame && toggleSame && integrationCountsSame;
 });

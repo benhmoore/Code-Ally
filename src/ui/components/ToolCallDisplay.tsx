@@ -25,6 +25,8 @@ import { UI_COLORS } from '../constants/colors.js';
 import { ServiceRegistry } from '@services/ServiceRegistry.js';
 import { defaultSubtextFilePath, type BaseTool } from '@tools/BaseTool.js';
 import { linkFileNameIn, terminalHyperlinksEnabled } from '../utils/fileLinks.js';
+import { resolveToolVisibility } from '../utils/toolVisibility.js';
+import { Clickable } from './Clickable.js';
 import { getAgentType, getAgentDisplayName } from '@utils/agentTypeUtils.js';
 import { getToolCallTiming } from '@utils/toolTiming.js';
 
@@ -39,6 +41,8 @@ interface ToolCallDisplayProps {
   compactionNotices?: CompactionNotice[];
   /** Available width after the conversation-level indent. */
   width?: number;
+  /** Open or close the call; present only while the row is in the live region. */
+  onToggle?: (id: string) => void;
 }
 
 /**
@@ -231,8 +235,10 @@ const ToolCallDisplayComponent: React.FC<ToolCallDisplayProps> = ({
   config,
   compactionNotices = [],
   width,
+  onToggle,
 }) => {
   const isRunning = toolCall.status === 'executing' || toolCall.status === 'pending';
+  const visibility = resolveToolVisibility(toolCall, config);
 
   // Track interjections for this tool call
   const [interjections, setInterjections] = useState<Array<{ message: string; timestamp: number }>>([]);
@@ -389,7 +395,8 @@ const ToolCallDisplayComponent: React.FC<ToolCallDisplayProps> = ({
 
   return (
     <Box flexDirection="column" width={width}>
-      <Box>
+      {/* The header row opens or closes the call when clicked */}
+      <Clickable onPress={onToggle && (() => onToggle(toolCall.id))}>
         {/* Indentation */}
         <Text>{indent}</Text>
 
@@ -437,7 +444,7 @@ const ToolCallDisplayComponent: React.FC<ToolCallDisplayProps> = ({
         {!toolCall.hideToolName && (isAgentDelegation || duration > UI_DELAYS.TOOL_DURATION_DISPLAY_THRESHOLD) && (
           <Text dimColor> · {durationStr}</Text>
         )}
-      </Box>
+      </Clickable>
 
       {/* Agent subtext - displayed on indented lines below header */}
       {/* Once child tool calls exist, collapse to first line only */}
@@ -507,7 +514,7 @@ const ToolCallDisplayComponent: React.FC<ToolCallDisplayProps> = ({
       )}
 
       {/* Diff preview (hidden only if collapsed; always shown regardless of hideOutput) */}
-      {!toolCall.collapsed && toolCall.diffPreview && config?.diff_display_enabled !== false && (
+      {!visibility.collapsed && toolCall.diffPreview && config?.diff_display_enabled !== false && (
         <Box flexDirection="column" paddingLeft={indent.length + 4}>
           <DiffDisplay
             oldContent={toolCall.diffPreview.oldContent}
@@ -530,12 +537,10 @@ const ToolCallDisplayComponent: React.FC<ToolCallDisplayProps> = ({
       {/* Output as threaded child (hidden if collapsed or own hideOutput, unless show_full_tool_output is enabled) */}
       {/* For linked plugins (dev mode) or alwaysShowFullOutput tools, always show output - overrides all other settings */}
       {(() => {
-        const shouldShowOutput = toolCall.isLinkedPlugin || toolCall.alwaysShowFullOutput || (!toolCall.hideOutput || config?.show_full_tool_output);
-        if (toolCall.collapsed || !shouldShowOutput || !trimmedOutput) return null;
+        if (!visibility.showOutput || !trimmedOutput) return null;
 
         // Get the output text to display
-        // alwaysShowFullOutput tools never truncate
-        const displayOutput = config?.show_full_tool_output || toolCall.alwaysShowFullOutput || trimmedOutput.length <= TEXT_LIMITS.CONTENT_PREVIEW_MAX
+        const displayOutput = visibility.fullOutput || trimmedOutput.length <= TEXT_LIMITS.CONTENT_PREVIEW_MAX
           ? trimmedOutput
           : `${trimmedOutput.slice(0, TEXT_LIMITS.CONTENT_PREVIEW_MAX - 3)}...`;
 
@@ -588,7 +593,7 @@ const ToolCallDisplayComponent: React.FC<ToolCallDisplayProps> = ({
       {/* Error output */}
       {/* For linked plugins (dev mode), always show errors - overrides all other settings */}
       {(() => {
-        if (toolCall.collapsed || !toolCall.error) return null;
+        if (visibility.collapsed || !toolCall.error) return null;
         const errorMessage = toolCall.result?.error ?? toolCall.error;
         // For linked plugins, show last N lines; otherwise truncate to first line
         const isLinked = toolCall.isLinkedPlugin;
@@ -636,7 +641,7 @@ const ToolCallDisplayComponent: React.FC<ToolCallDisplayProps> = ({
 
       {/* Nested content: interleaved tool calls, interjections, and compaction notices sorted by timestamp */}
       {/* Render if: has interjections, has compaction notices, not collapsed, or show_full_tool_output enabled */}
-      {(interjections.length > 0 || compactionNotices.some(n => n.parentId === toolCall.id) || config?.show_full_tool_output || !toolCall.collapsed) && (() => {
+      {(interjections.length > 0 || compactionNotices.some(n => n.parentId === toolCall.id) || visibility.showChildren) && (() => {
         // Build combined list of children, interjections, and compaction notices
         type NestedItem =
           | { type: 'toolCall'; data: ToolCallState; timestamp: number }
@@ -648,7 +653,7 @@ const ToolCallDisplayComponent: React.FC<ToolCallDisplayProps> = ({
         // Add nested tool calls with conditional visibility
         if (toolCall.children) {
           toolCall.children.forEach(child => {
-            if (shouldShowChildTool(child, toolCall.collapsed, toolCall.hideOutput, config)) {
+            if (shouldShowChildTool(child, visibility.collapsed, toolCall.hideOutput, config)) {
               items.push({
                 type: 'toolCall',
                 data: child,
@@ -668,7 +673,7 @@ const ToolCallDisplayComponent: React.FC<ToolCallDisplayProps> = ({
         });
 
         // Add compaction notices for this tool call (visibility handled by final truncation)
-        if (!toolCall.collapsed || config?.show_full_tool_output) {
+        if (visibility.showChildren) {
           compactionNotices
             .filter(notice => notice.parentId === toolCall.id)
             .forEach(notice => {
@@ -760,6 +765,7 @@ const ToolCallDisplayComponent: React.FC<ToolCallDisplayProps> = ({
                     config={config}
                     compactionNotices={compactionNotices}
                     width={width}
+                    onToggle={onToggle}
                   />
                 );
               }
