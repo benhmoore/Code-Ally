@@ -15,8 +15,8 @@ import { reconstructToolCallsFromMessages } from '@services/conversationTools.js
 export { reconstructToolCallsFromMessages } from '@services/conversationTools.js';
 import { SessionSelectRequest } from './useModalState.js';
 import { setTerminalTitle } from '../../utils/terminal.js';
-import { recoverConversation } from '../../utils/conversationRecovery.js';
-import { isPersistentMessage } from '../../utils/messagePersistence.js';
+import { prepareConversationResume } from '@services/ConversationResume.js';
+export { supplementTranscriptToolResults } from '@services/ConversationResume.js';
 
 /**
  * Reconstruct USER_INTERJECTION events from message history
@@ -46,31 +46,6 @@ export function reconstructInterjectionsFromMessages(messages: Message[], activi
 }
 
 /**
- * Add results repaired in the active conversation to the full transcript used
- * for UI reconstruction. Session recovery repairs the provider-facing active
- * window, while the immutable transcript can still end at the interrupted call.
- */
-export function supplementTranscriptToolResults(
-  transcriptMessages: Message[],
-  recoveredMessages: Message[]
-): Message[] {
-  const transcriptResultIds = new Set(
-    transcriptMessages
-      .filter(message => message.role === 'tool' && message.tool_call_id)
-      .map(message => message.tool_call_id as string)
-  );
-  const missingResults = recoveredMessages.filter(message => (
-    message.role === 'tool'
-    && !!message.tool_call_id
-    && !transcriptResultIds.has(message.tool_call_id)
-  ));
-
-  return missingResults.length > 0
-    ? [...transcriptMessages, ...missingResults]
-    : transcriptMessages;
-}
-
-/**
  * Result of session resume operation
  */
 export interface SessionResumeResult {
@@ -90,33 +65,8 @@ export async function loadSessionData(
 ): Promise<void> {
   const serviceRegistry = ServiceRegistry.getInstance();
 
-  // Keep durable conversation events, then run the recovery pipeline
-  // to clean up artifacts from interrupted sessions (orphaned tool_use blocks,
-  // thinking-only messages, whitespace-only messages)
-  const persistentMessages = sessionData.messages.filter(isPersistentMessage);
-  const { messages: userMessages, interruption, changed: recoveryChanged } = recoverConversation(persistentMessages);
-  const canonicalTranscript = (sessionData.transcript ?? sessionData.messages).filter(isPersistentMessage);
-  const transcriptMessages = canonicalTranscript
-    .filter((m: Message) => m.role !== 'system');
-  const reconstructionMessages = supplementTranscriptToolResults(transcriptMessages, userMessages);
-  const restoredCheckpoint = sessionData.checkpoint
-    ? structuredClone(sessionData.checkpoint)
-    : null;
-  let restoredProviderState = sessionData.providerState
-    ?? restoredCheckpoint?.providerState
-    ?? { kind: 'chat' as const };
-  // Recovery rewrites the wire sequence. Opaque replay state can only be reused
-  // with the exact sequence that produced it, so fall back to the portable
-  // semantic checkpoint whenever interrupted-turn repair changed that sequence.
-  if (recoveryChanged && restoredProviderState.kind !== 'chat') {
-    restoredProviderState = { kind: 'chat' };
-    if (restoredCheckpoint) {
-      restoredCheckpoint.providerState = { kind: 'chat' };
-      restoredCheckpoint.strategy = restoredCheckpoint.portability === 'extractive'
-        ? 'local-extractive'
-        : 'local-structured';
-    }
-  }
+  const { state: restoredState, interruption } = prepareConversationResume(sessionData);
+  const transcriptMessages = restoredState.transcript.filter((m: Message) => m.role !== 'system');
 
   // Load todos if present
   const todoManager = serviceRegistry.get('todo_manager');
@@ -157,13 +107,7 @@ export async function loadSessionData(
   }
 
   // Bulk load messages into agent (doesn't trigger auto-save)
-  agent.loadConversationState(
-    userMessages,
-    canonicalTranscript,
-    restoredCheckpoint,
-    restoredProviderState,
-    sessionData.canonicalMessages ?? [],
-  );
+  agent.getSession().resume(restoredState);
 
   // If the session was interrupted mid-turn, inject a continuation prompt
   // so the model picks up where it left off on the next user message
@@ -183,7 +127,7 @@ export async function loadSessionData(
 
   // Reconstruct tool calls from message history
   // This populates activeToolCalls with completed tool calls so they appear in the timeline
-  const reconstructedToolCalls = reconstructToolCallsFromMessages(reconstructionMessages, serviceRegistry);
+  const reconstructedToolCalls = reconstructToolCallsFromMessages(transcriptMessages, serviceRegistry);
 
   // Restore the complete visible timeline in one state transaction. Enqueuing
   // one React update per historical tool call scales quadratically and can make

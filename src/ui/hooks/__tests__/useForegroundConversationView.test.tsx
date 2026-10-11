@@ -39,7 +39,7 @@ describe('useForegroundConversationView', () => {
     const child = {
       getMessages: () => messages,
       getActivityStream: () => stream,
-      getConversationView: () => store,
+      getSession: () => store,
     } as Agent;
     const observed: Array<ForegroundConversationView | null> = [];
 

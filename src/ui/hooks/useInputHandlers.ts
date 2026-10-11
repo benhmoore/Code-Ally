@@ -128,7 +128,7 @@ export const useInputHandlers = (
           agent.getToolManager(),
           activityStream
         );
-        await shortcutService.runBashShortcut(bashCommand, agent, shortcutMessageSink);
+        await shortcutService.runBashShortcut(bashCommand, agent, shortcutMessageSink, signal);
         return;
       }
     }
@@ -249,7 +249,8 @@ export const useInputHandlers = (
         const outcome = await createMentionService().attachFiles(
           readableFiles,
           agent,
-          addDisplayMessage
+          addDisplayMessage,
+          signal
         );
         if (outcome === 'aborted') {
           return;
@@ -261,7 +262,8 @@ export const useInputHandlers = (
         const outcome = await createMentionService().attachDirectories(
           filteredMentions.directories,
           agent,
-          addDisplayMessage
+          addDisplayMessage,
+          signal
         );
         if (outcome === 'aborted') {
           return;
@@ -375,7 +377,7 @@ export const useInputHandlers = (
 
   const handleFollowUp = useCallback((input: string, mentions?: { files?: string[]; images?: string[]; directories?: string[] }) => {
     if (!ensureRouteAvailable()) return Promise.resolve();
-    return route.agent.getInputQueue().enqueue(input, (text, signal) => executeInput(text, mentions, signal));
+    return route.agent.getSession().submit(input, { mode: 'follow_up', execute: (text, signal) => executeInput(text, mentions, signal) }).then(() => undefined);
   }, [ensureRouteAvailable, route, executeInput]);
 
   const handleInput = useCallback((input: string, mentions?: { files?: string[]; images?: string[]; directories?: string[] }) => {
@@ -397,8 +399,8 @@ export const useInputHandlers = (
     logger.debug('[APP] Handling interjection:', message);
 
     logger.debug('[APP] Routing interjection to selected conversation:', route.id);
-    agent.addUserInterjection(message);
-    agent.interrupt({ kind: 'user_interjection' });
+    const admission = await agent.getSession().submit(message);
+    if (admission.kind !== 'steered') return;
 
     const parentId = 'root';
     const targetAgent = route.kind === 'primary' ? 'main' : route.id;

@@ -724,7 +724,7 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
         timestamp: Date.now(),
         data: {},
       });
-      currentAgentRef.interrupt();
+      currentAgentRef.getSession().cancel();
       currentActivityStream?.emit({
         id: `interrupt-${Date.now()}`,
         type: ActivityEventType.INTERRUPT_ALL,

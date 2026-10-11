@@ -15,6 +15,7 @@ import type { CLIOptions } from '../cli/ArgumentParser.js';
 import { JsonlEventWriter } from './JsonlEventWriter.js';
 import { StreamJsonInput } from './StreamJsonInput.js';
 import { resultSubtype } from './wire.js';
+import { prepareConversationResume } from '../services/ConversationResume.js';
 
 const SAFE_SESSION_ID = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 
@@ -127,7 +128,16 @@ export class HeadlessSession {
     const opened = this.deps.session;
     this.sessionName = opened?.name ?? null;
     if (opened?.existed) {
-      this.deps.agent.setMessages(await this.deps.sessionManager.getSessionMessages(opened.name));
+      const { state, interruption } = prepareConversationResume(
+        await this.deps.sessionManager.getSessionData(opened.name));
+      this.deps.agent.getSession().resume(state);
+      if (interruption === 'interrupted_turn') {
+        this.deps.agent.addMessage({ role: 'user',
+          content: 'Continue from where you left off. The previous turn was interrupted.',
+          metadata: { ephemeral: true } });
+      }
+      this.deps.agent.removeEphemeralSystemReminders();
+      this.deps.agent.cleanupStaleReminders();
     }
     this.sessionId = this.sessionName
       ?? this.deps.sessionManager.getCurrentSession()
@@ -146,7 +156,14 @@ export class HeadlessSession {
     }
 
     try {
-      return streamedInput ? await this.runStreamed() : await this.runTurn(this.options.once!);
+      if (streamedInput) return await this.runStreamed();
+      const result = await this.deps.agent.getSession().submit(this.options.once!, {
+        mode: 'follow_up', execute: text => this.runTurn(text),
+      });
+      if (result.kind === 'completed') return result.value;
+      const cancelled = { kind: 'cancelled', reason: 'Submission cancelled before execution' } as const;
+      this.emitResult('', cancelled, 0, false);
+      return cancelled;
     } finally {
       this.writer?.detach();
     }
@@ -155,46 +172,33 @@ export class HeadlessSession {
   /** Read line-delimited commands from stdin until it closes and the last turn ends. */
   private async runStreamed(): Promise<RunOutcome> {
     const { agent } = this.deps;
+    const runtime = agent.getSession();
     let lastOutcome: RunOutcome | undefined;
-    let active: Promise<void> | null = null;
-    const pending: string[] = [];
-    let closed = false;
+    const submissions = new Set<Promise<void>>();
     let finish!: () => void;
     const finished = new Promise<void>(resolve => { finish = resolve; });
 
-    const drain = (): void => {
-      if (active) return;
-      const message = pending.shift();
-      if (message === undefined) {
-        if (closed) finish();
-        return;
-      }
-      active = this.runTurn(message)
-        .then(outcome => { lastOutcome = outcome; })
-        .finally(() => {
-          active = null;
-          drain();
-        });
+    const dispatch = (text: string, mode: 'auto' | 'follow_up' = 'auto'): void => {
+      if (!text.trim()) return;
+      const submission = runtime.submit(text, { mode, execute: message => this.runTurn(message) })
+        .then(result => {
+          if (result.kind === 'completed') lastOutcome = result.value;
+          else if (result.kind === 'not_sent') {
+            lastOutcome = { kind: 'cancelled', reason: 'Submission cancelled before execution' };
+            this.emitResult('', lastOutcome, 0, false);
+          }
+        }, error => {
+          lastOutcome = { kind: 'failed', error: formatError(error) };
+          this.emitResult('', lastOutcome, 0, false);
+        }).finally(() => { submissions.delete(submission); });
+      submissions.add(submission);
     };
 
     const input = new StreamJsonInput(this.deps.stdin ?? process.stdin, {
-      onUser: text => {
-        // A headless turn also owns persistence and result publication, after
-        // the agent has stopped accepting interjections. Keep that finalization
-        // serial, but queue new work rather than appending it to a finished turn.
-        if (active && agent.isProcessing()) {
-          agent.addUserInterjection(text);
-          agent.interrupt({ kind: 'user_interjection' });
-          return;
-        }
-        pending.push(text);
-        drain();
-      },
+      onUser: dispatch,
       onInterrupt: requestId => {
-        if (active && agent.isProcessing()) {
-          this.interruptedTurn = true;
-          agent.interrupt();
-        }
+        if (agent.isProcessing()) this.interruptedTurn = true;
+        runtime.cancel();
         this.writer?.write({
           type: 'control_response',
           session_id: this.sessionId,
@@ -203,15 +207,16 @@ export class HeadlessSession {
       },
       onError: error => { console.error('Error:', error.message); },
       onClose: () => {
-        closed = true;
-        drain();
+        void Promise.all([...submissions]).then(() => runtime.whenIdle()).then(finish);
       },
     });
 
     // Admit the initial prompt before attaching input: a buffered stream must
     // not start a competing turn ahead of --once.
-    if (this.options.once) pending.push(this.options.once);
-    drain();
+    if (this.options.once) {
+      dispatch(this.options.once);
+      await new Promise<void>(resolve => setImmediate(resolve));
+    }
     input.start();
     try {
       await finished;
@@ -257,7 +262,7 @@ export class HeadlessSession {
     if (!this.writer) console.log(`\n[Session: ${this.sessionName}]`);
   }
 
-  private emitResult(result: string, outcome: RunOutcome, durationMs: number): void {
+  private emitResult(result: string, outcome: RunOutcome, durationMs: number, includeStructuredOutput = true): void {
     if (!this.writer) return;
     const subtype = resultSubtype(outcome, this.interruptedTurn);
     this.writer.write({
@@ -265,7 +270,7 @@ export class HeadlessSession {
       subtype,
       session_id: this.sessionId,
       result,
-      ...(this.structuredOutput === undefined ? {} : { structured_output: this.structuredOutput }),
+      ...(!includeStructuredOutput || this.structuredOutput === undefined ? {} : { structured_output: this.structuredOutput }),
       outcome,
       duration_ms: durationMs,
       num_turns: this.turnCount,

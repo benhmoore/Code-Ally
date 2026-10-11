@@ -52,6 +52,8 @@ export interface ToolCallContext {
  * Optional metadata for messages
  */
 export interface MessageMetadata {
+  /** Original user text when hooks appended model-facing context. */
+  submittedContent?: string;
   /** Persist a system event as conversation history rather than request-only context. */
   persistent?: boolean;
   /** Whether this is a command response that should be styled in yellow */

@@ -121,7 +121,8 @@ export class MentionAttachmentService {
   async attachFiles(
     filePaths: string[],
     agent: MentionAgent,
-    addUiMessage: MentionMessageSink
+    addUiMessage: MentionMessageSink,
+    signal?: AbortSignal
   ): Promise<MentionOutcome> {
     for (const [index, filePath] of filePaths.entries()) {
       const outcome = await this.attach(agent, addUiMessage, {
@@ -131,7 +132,7 @@ export class MentionAttachmentService {
         executeArguments: { file_path: filePath, description: 'Read mentioned file' },
         beforeExecute: index === 0 ? () => this.promoteNextTodo() : undefined,
         throwMessagePrefix: 'Error reading mentioned file',
-      });
+      }, signal);
       if (outcome === 'aborted') return outcome;
     }
 
@@ -144,7 +145,8 @@ export class MentionAttachmentService {
   async attachDirectories(
     dirPaths: string[],
     agent: MentionAgent,
-    addUiMessage: MentionMessageSink
+    addUiMessage: MentionMessageSink,
+    signal?: AbortSignal
   ): Promise<MentionOutcome> {
     return this.attach(agent, addUiMessage, {
       toolName: 'tree',
@@ -155,7 +157,7 @@ export class MentionAttachmentService {
       streamOutputChunk: true,
       attachResultMetadata: true,
       throwMessagePrefix: 'Error showing directory structure',
-    });
+    }, signal);
   }
 
   /**
@@ -165,8 +167,10 @@ export class MentionAttachmentService {
   private async attach(
     agent: MentionAgent,
     addUiMessage: MentionMessageSink,
-    spec: AttachmentSpec
+    spec: AttachmentSpec,
+    signal?: AbortSignal
   ): Promise<MentionOutcome> {
+    if (signal?.aborted) return 'aborted';
     if (!this.toolManager) {
       addUiMessage({ role: 'assistant', content: 'Error: Tool manager not available' });
       return 'aborted';
@@ -229,7 +233,7 @@ export class MentionAttachmentService {
         spec.executeArguments,
         toolCallId,
         false, // isRetry
-        agent.getToolAbortSignal?.(),
+        signal ?? agent.getToolAbortSignal?.(),
         true, // isUserInitiated - the user typed this mention themselves
         false, // isContextFile
         agent.getAgentName?.(),
@@ -269,7 +273,7 @@ export class MentionAttachmentService {
           : toolResultMessage
       );
 
-      return 'attached';
+      return signal?.aborted ? 'aborted' : 'attached';
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Unknown error';
       const errorResult = createStructuredError(

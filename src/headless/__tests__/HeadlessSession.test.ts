@@ -90,7 +90,7 @@ function sessionManagerStub(): SessionManager {
     createSession: vi.fn().mockResolvedValue('created'),
     setCurrentSession: vi.fn(),
     getCurrentSession: vi.fn().mockReturnValue(null),
-    getSessionMessages: vi.fn().mockResolvedValue([]),
+    getSessionData: vi.fn().mockResolvedValue({ messages: [], transcript: [] }),
     saveSession: vi.fn().mockResolvedValue(undefined),
   } as unknown as SessionManager;
 }
@@ -271,6 +271,66 @@ describe('HeadlessSession', () => {
     const results = out.events().filter((e): e is Extract<WireEvent, { type: 'result' }> => e.type === 'result');
     expect(results.map(r => [r.result, r.num_turns, r.subtype]))
       .toEqual([['First.', 1, 'success'], ['Second.', 2, 'success']]);
+  });
+
+  it('keeps explicit follow-ups queued through active work and cancels them with a result', async () => {
+    const out = collector();
+    const stdin = new PassThrough();
+    const interject = vi.spyOn(agent, 'addUserInterjection');
+    replies = [signal => new Promise<LLMResponse>(resolve => {
+      signal.addEventListener('abort', () => resolve({ content: '', tool_calls: [], interrupted: true }), { once: true });
+    })];
+    const run = (await session({ once: 'start', inputFormat: 'stream-json', outputFormat: 'stream-json' },
+      { stdin, stdout: out.stream })).run();
+    await vi.waitFor(() => expect(modelClient.send).toHaveBeenCalledOnce());
+    stdin.write(`${JSON.stringify({ type: 'user', mode: 'follow_up', message: { role: 'user', content: 'later' } })}\n`);
+    await vi.waitFor(() => expect(agent.getSession().getSnapshot().pendingInputs).toHaveLength(1));
+    expect(interject).not.toHaveBeenCalled();
+    stdin.write(`${JSON.stringify({ type: 'control_request', request: { subtype: 'interrupt' } })}\n`);
+    stdin.end();
+    await run;
+    expect(modelClient.send).toHaveBeenCalledOnce();
+    expect(out.events()).toContainEqual(expect.objectContaining({ type: 'result',
+      outcome: { kind: 'cancelled', reason: 'Submission cancelled before execution' } }));
+  });
+
+  it('resumes the complete visible transcript and repairs interrupted tool outcomes', async () => {
+    const manager = sessionManagerStub();
+    vi.mocked(manager.sessionExists).mockResolvedValue(true);
+    const call: Message = { id: 'call', role: 'assistant', content: '', tool_calls: [
+      { id: 'lost', type: 'function', function: { name: 'read', arguments: '{}' } },
+    ] };
+    vi.mocked(manager.getSessionData).mockResolvedValue({ messages: [call],
+      transcript: [{ id: 'history', role: 'user', content: 'Earlier objective' }, call],
+      canonicalMessages: [], checkpoint: null, providerState: { kind: 'chat' },
+      todos: [], idleMessages: [], projectContext: null, metadata: null, additional_directories: [],
+    });
+    const out = collector();
+    await (await session({ once: 'continue', outputFormat: 'json', sessionId: 'resume' },
+      { stdout: out.stream, sessionManager: manager })).run();
+    expect(agent.getMessages()).toContainEqual(expect.objectContaining({ id: 'history' }));
+    expect(agent.getSession().getSnapshot().activeToolCalls).toContainEqual(expect.objectContaining({ id: 'lost', status: 'error' }));
+    expect(JSON.stringify(vi.mocked(modelClient.send).mock.calls[0]![0])).toContain('lost');
+  });
+
+  it('shutdown waits for the session-owned publication after model work ends', async () => {
+    const manager = sessionManagerStub();
+    let release!: () => void;
+    const held = new Promise<void>(resolve => { release = resolve; });
+    vi.mocked(manager.saveSession).mockImplementationOnce(() => held);
+    const out = collector();
+    const running = (await session({ once: 'one', outputFormat: 'json', sessionId: 'closing' },
+      { stdout: out.stream, sessionManager: manager })).run();
+    await vi.waitFor(() => expect(manager.saveSession).toHaveBeenCalledOnce());
+    expect(agent.isProcessing()).toBe(false);
+    const closed = vi.fn();
+    const closing = agent.getSession().close().then(closed);
+    await new Promise<void>(resolve => setImmediate(resolve));
+    expect(closed).not.toHaveBeenCalled();
+    release();
+    await Promise.all([running, closing]);
+    expect(closed).toHaveBeenCalledOnce();
+    expect(out.events()).toHaveLength(1);
   });
 
   it('interjects a user line that arrives during an active turn', async () => {

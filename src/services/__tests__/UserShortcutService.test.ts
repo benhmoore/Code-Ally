@@ -247,3 +247,23 @@ describe('UserShortcutService - memory shortcut', () => {
     ]);
   });
 });
+
+it('cancels a shortcut with its submission signal and records the terminal tool result', async () => {
+  const rec = createRecorder();
+  const controller = new AbortController();
+  rec.agent.getToolAbortSignal = () => AbortSignal.abort();
+  const execute = vi.fn(async (...args: any[]) => {
+    const signal = args[4] as AbortSignal;
+    expect(signal).toBe(controller.signal);
+    expect(signal.aborted).toBe(false);
+    await new Promise<void>(resolve => signal.addEventListener('abort', () => resolve(), { once: true }));
+    return { success: false, content: '', error: 'Cancelled', error_type: 'interrupted' };
+  });
+  const service = new UserShortcutService(createToolManager(execute), rec.activityStream);
+  const result = service.runBashShortcut('sleep 30', rec.agent, vi.fn(), controller.signal);
+  await vi.waitFor(() => expect(execute).toHaveBeenCalledOnce());
+  controller.abort();
+  await result;
+  expect(rec.agentMessages.map(message => message.role)).toEqual(['user', 'assistant', 'tool']);
+  expect(rec.agentMessages[2]?.is_error).toBe(true);
+});

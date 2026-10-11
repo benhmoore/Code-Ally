@@ -477,3 +477,24 @@ describe('MentionAttachmentService - directory mentions', () => {
     });
   });
 });
+
+it('cancels the current attachment with the submission signal and never starts later reads', async () => {
+  const rec = createRecorder();
+  const controller = new AbortController();
+  rec.agent.getToolAbortSignal = () => AbortSignal.abort(); // A previous turn's cancelled signal.
+  const execute = vi.fn(async (...args: any[]) => {
+    const signal = args[4] as AbortSignal;
+    expect(signal).toBe(controller.signal);
+    expect(signal.aborted).toBe(false);
+    await new Promise<void>(resolve => signal.addEventListener('abort', () => resolve(), { once: true }));
+    return { success: false, content: '', error: 'Cancelled', error_type: 'interrupted' };
+  });
+  const service = new MentionAttachmentService(createToolManager(execute), rec.activityStream);
+  const result = service.attachFiles(['first.ts', 'never.ts'], rec.agent, vi.fn(), controller.signal);
+  await vi.waitFor(() => expect(execute).toHaveBeenCalledOnce());
+  controller.abort();
+  expect(await result).toBe('aborted');
+  expect(execute).toHaveBeenCalledOnce();
+  expect(rec.agentMessages.map(message => message.role)).toEqual(['assistant', 'tool']);
+  expect(rec.agentMessages[1]?.is_error).toBe(true);
+});

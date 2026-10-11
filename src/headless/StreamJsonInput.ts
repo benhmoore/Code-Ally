@@ -8,12 +8,12 @@
 import readline from 'node:readline';
 
 export type StreamJsonCommand =
-  | { kind: 'user'; text: string }
+  | { kind: 'user'; text: string; mode?: 'auto' | 'follow_up' }
   | { kind: 'interrupt'; requestId?: string };
 
 export interface StreamJsonInputHandlers {
   /** A user message. The session decides between a new turn and an interjection. */
-  onUser(text: string): void;
+  onUser(text: string, mode?: 'auto' | 'follow_up'): void;
   onInterrupt(requestId?: string): void;
   /** A line that could not be parsed. Reported, never swallowed. */
   onError(error: Error): void;
@@ -44,6 +44,7 @@ export function parseStreamJsonLine(line: string): StreamJsonCommand {
 
   const message = parsed as {
     type?: unknown;
+    mode?: unknown;
     message?: { role?: unknown; content?: unknown };
     request?: { subtype?: unknown };
     request_id?: unknown;
@@ -53,7 +54,11 @@ export function parseStreamJsonLine(line: string): StreamJsonCommand {
     if (!message.message || message.message.role !== 'user') {
       throw new Error('A user line must carry message.role "user"');
     }
-    return { kind: 'user', text: textFromContent(message.message.content) };
+    if (message.mode !== undefined && message.mode !== 'auto' && message.mode !== 'follow_up') {
+      throw new Error('User mode must be auto or follow_up');
+    }
+    return { kind: 'user', text: textFromContent(message.message.content),
+      ...(message.mode === undefined ? {} : { mode: message.mode }) };
   }
 
   if (message.type === 'control_request') {
@@ -90,7 +95,10 @@ export class StreamJsonInput {
         this.handlers.onError(error instanceof Error ? error : new Error(String(error)));
         return;
       }
-      if (command.kind === 'user') this.handlers.onUser(command.text);
+      if (command.kind === 'user') {
+        if (command.mode === undefined) this.handlers.onUser(command.text);
+        else this.handlers.onUser(command.text, command.mode);
+      }
       else this.handlers.onInterrupt(command.requestId);
     });
 

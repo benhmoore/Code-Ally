@@ -225,7 +225,7 @@ const emptySubscribe = () => () => {};
 const emptySnapshot = () => null;
 
 export interface AppProviderProps {
-  conversationStore?: ConversationViewStore;
+  conversationStore?: Pick<ConversationViewStore, 'getSnapshot' | 'subscribe' | 'addDisplayMessage'>;
   initialConfig: Config;
   children: React.ReactNode;
 }

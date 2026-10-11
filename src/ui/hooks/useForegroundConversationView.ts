@@ -14,7 +14,7 @@ export function useForegroundConversationView(
   foregroundAgent: Agent | null,
   completedView?: ConversationViewSnapshot,
 ): ForegroundConversationView | null {
-  const store = completedView ? undefined : foregroundAgent?.getConversationView();
+  const store = completedView ? undefined : foregroundAgent?.getSession();
   const snapshot = useSyncExternalStore(store?.subscribe ?? emptySubscribe, store?.getSnapshot ?? emptySnapshot);
   const view = completedView ?? snapshot;
   return view ? { ...view, agentId: activeAgentId } : null;

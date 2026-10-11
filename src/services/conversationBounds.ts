@@ -14,7 +14,9 @@ function truncateMiddle(value: string | undefined, max = TOOL_TEXT_LIMIT): strin
 export function boundVisibleMessages(messages: Message[]): Message[] {
   const visible = messages
     .filter(message => message.role !== 'system' && message.role !== 'tool')
-    .map(message => ({ ...message, content: truncateMiddle(message.content, 1024 * 1024) ?? '' }));
+    .map(message => ({ ...message, content: truncateMiddle(
+      message.role === 'user' ? message.metadata?.submittedContent ?? message.content : message.content,
+      1024 * 1024) ?? '' }));
   const result: Message[] = [];
   let bytes = 0;
   for (let index = visible.length - 1; index >= 0 && result.length < LIVE_MESSAGE_LIMIT; index--) {

@@ -92,8 +92,10 @@ export class UserShortcutService {
   async runBashShortcut(
     command: string,
     agent: ShortcutAgent,
-    addUiMessage: ShortcutMessageSink
+    addUiMessage: ShortcutMessageSink,
+    signal?: AbortSignal
   ): Promise<void> {
+    if (signal?.aborted) return;
     if (!this.toolManager) {
       addUiMessage({ role: 'assistant', content: 'Error: Tool manager not available' });
       return;
@@ -153,7 +155,7 @@ export class UserShortcutService {
         args,
         toolCallId,
         false, // isRetry
-        agent.getToolAbortSignal?.(),
+        signal ?? agent.getToolAbortSignal?.(),
         true, // isUserInitiated - the user typed this command themselves
         false, // isContextFile
         agent.getAgentName?.(),

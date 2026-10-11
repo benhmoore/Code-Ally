@@ -29,7 +29,7 @@ describe('useInputHandlers interjection routing', () => {
     const interrupt = vi.fn();
     const injectUserMessage = vi.fn();
     const registry = ServiceRegistry.getInstance();
-    const mainAgent = { addUserInterjection, interrupt } as any;
+    const mainAgent = { getSession: () => ({ submit: async (text: string) => { addUserInterjection(text); interrupt({ kind: 'user_interjection' }); return { kind: 'steered' }; } }) } as any;
     registry.registerInstance('agent', mainAgent);
     registry.registerInstance('tool_manager', {
       getActiveInjectableTool: () => ({
@@ -80,7 +80,7 @@ describe('useInputHandlers interjection routing', () => {
     const addUserInterjection = vi.fn();
     const interrupt = vi.fn();
     const childStream = new ActivityStream('child-call');
-    const childAgent = { addUserInterjection, interrupt } as any;
+    const childAgent = { getSession: () => ({ submit: async (text: string) => { addUserInterjection(text); interrupt({ kind: 'user_interjection' }); return { kind: 'steered' }; } }) } as any;
     const addMessage = vi.fn();
     let completion: Promise<void> | undefined;
 

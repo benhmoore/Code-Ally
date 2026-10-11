@@ -184,6 +184,26 @@ describe('Agent - Interruption Handling', () => {
     });
   });
 
+  it('keeps hook context in model history while displaying the original user submission', async () => {
+    const registry = ServiceRegistry.getInstance();
+    const previous = registry.get('hook_runner');
+    registry.registerInstance('hook_runner', {
+      hasHooks: () => true,
+      run: async () => ({ kind: 'continue', additionalContext: ['Internal project context'] }),
+    } as any);
+    try {
+      await agent.sendMessage('Review the parser');
+      const user = agent.getContextMessages().find(message => message.role === 'user');
+      expect(user?.content).toBe('Review the parser\n\nInternal project context');
+      expect(agent.getSession().getSnapshot().messages.find(message => message.role === 'user')?.content)
+        .toBe('Review the parser');
+      const restored = structuredClone([...agent.getMessages()]);
+      agent.getSession().resume({ messages: restored, transcript: restored });
+      expect(agent.getSession().getSnapshot().messages.find(message => message.role === 'user')?.content)
+        .toBe('Review the parser');
+    } finally { registry.registerInstance('hook_runner', previous as any); }
+  });
+
   describe('System Reminder Injection', () => {
     it.each([
       { content: 'The answer.', rejectFirst: false },

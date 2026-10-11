@@ -1320,7 +1320,7 @@ export const App: React.FC<AppProps> = ({
   return (
     <TerminalProvider>
       <ActivityProvider activityStream={streamRef.current}>
-        <AppProvider initialConfig={config} conversationStore={routing.primaryAgent.getConversationView()}>
+        <AppProvider initialConfig={config} conversationStore={routing.primaryAgent.getSession()}>
           <AppContent
             foregroundAgent={routing.foregroundAgent}
             foregroundAgentId={routing.foregroundAgentId}
@@ -1381,7 +1381,7 @@ export const AppWithMessages: React.FC<AppWithMessagesProps> = ({
   return (
     <TerminalProvider>
       <ActivityProvider activityStream={streamRef.current}>
-        <AppProvider initialConfig={config} conversationStore={routing.primaryAgent.getConversationView()}>
+        <AppProvider initialConfig={config} conversationStore={routing.primaryAgent.getSession()}>
           <AppContentWithMessages
             foregroundAgent={routing.foregroundAgent}
             foregroundAgentId={routing.foregroundAgentId}

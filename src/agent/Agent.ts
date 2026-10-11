@@ -1,3 +1,4 @@
+import { SessionRuntime } from '../services/SessionRuntime.js';
 import { createHash } from 'node:crypto';
 import { decideContinuation } from './ContinuationPolicy.js';
 import { ConversationInputQueue } from '../services/ConversationInputQueue.js';
@@ -187,6 +188,7 @@ export class Agent {
   private toolManager: ToolManager;
   private activityStream: ActivityStream;
   private readonly conversationView: ConversationViewStore;
+  private sessionRuntime?: SessionRuntime;
   private inputQueue = new ConversationInputQueue(() => !!this.config?.isSpecializedAgent || this.isProcessing());
   private toolOrchestrator: ToolOrchestrator;
   private config: AgentConfig;
@@ -861,6 +863,8 @@ export class Agent {
    */
   resetForReuse(): void {
     if (this.turnAdmissionActive || this.conversationOperations.hasWork || this.closing) throw new Error('Cannot reuse an active or closing agent');
+    this.sessionRuntime?.dispose();
+    this.sessionRuntime = undefined;
     this.inputQueue.close();
     this.inputQueue = new ConversationInputQueue(() => !!this.config?.isSpecializedAgent || this.isProcessing());
     // Clear conversation history (includes checkpoint tracking and token count)
@@ -1008,6 +1012,7 @@ export class Agent {
     executionContext?: AgentExecutionContext,
     images?: string[]
   ): Promise<string> {
+    const submittedContent = message;
     if (this.closing) throw new Error('Agent is closing and cannot admit a new turn');
     if (this.turnAdmissionActive) {
       throw new Error('Agent is already processing a turn; submit this message as an interjection instead.');
@@ -1049,7 +1054,7 @@ export class Agent {
       this.interruptionManager.reset();
       this.invocationState.requestInProgress = true;
       this.invocationState.agentEndEmitted = false;
-      return await this.executeMessageTurn(message, executionContext, images);
+      return await this.executeMessageTurn(message, executionContext, images, submittedContent);
     } finally {
       // executeMessageTurn owns normal cleanup. This covers failures during its
       // preparation phase, before the existing lifecycle try/finally begins.
@@ -1067,7 +1072,8 @@ export class Agent {
   private async executeMessageTurn(
     message: string,
     executionContext?: AgentExecutionContext,
-    images?: string[]
+    images?: string[],
+    submittedContent = message
   ): Promise<string> {
     const { parentCallId, maxDuration, thoroughness } = executionContext ?? {};
     this.activeExecutionContext = { parentCallId, maxDuration, thoroughness };
@@ -1169,6 +1175,7 @@ export class Agent {
       content: message,
       timestamp: Date.now(),
       images,
+      ...(submittedContent === message ? {} : { metadata: { submittedContent } }),
     };
     this.conversationManager.addMessage(userMessage);
     if (objectiveReminder) this.conversationManager.addMessage(objectiveReminder);
@@ -2394,11 +2401,27 @@ export class Agent {
     this.autoSaveSession();
   }
 
-  /**
-   * Get the current conversation history (readonly reference)
-   *
-   * @returns Readonly reference to message array
-   */
+  /** Frontend-neutral control and observation for this conversation owner. */
+  getSession(): SessionRuntime {
+    this.sessionRuntime ??= new SessionRuntime({
+      view: this.conversationView,
+      input: this.inputQueue,
+      isProcessing: () => this.isProcessing(),
+      steer: text => {
+        if (!this.canAcceptSteering()) return false;
+        this.addUserInterjection(text);
+        this.interrupt({ kind: 'user_interjection' });
+        return true;
+      },
+      execute: (text, images) => this.sendMessage(text, undefined, images),
+      cancel: () => this.interrupt({ kind: 'user_cancel' }),
+      resume: state => this.loadConversationState(state.messages, state.transcript ?? state.messages,
+        state.checkpoint ?? null, state.providerState, state.canonicalMessages),
+      close: () => this.cleanup(),
+    });
+    return this.sessionRuntime;
+  }
+
   getInputQueue(): ConversationInputQueue {
     return this.inputQueue;
   }
@@ -3012,6 +3035,7 @@ export class Agent {
     await this.stopAndDrain();
 
     this.conversationView.close();
+    this.sessionRuntime?.dispose();
 
     // Stop activity monitoring
     this.stopActivityMonitoring();
@@ -3060,5 +3084,6 @@ export class Agent {
     this.interrupt({ kind: 'user_cancel' });
     await this.conversationOperations.close();
     await this.turnCompletion;
+    await this.inputQueue.whenIdle();
   }
 }

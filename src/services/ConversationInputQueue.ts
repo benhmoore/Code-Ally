@@ -27,6 +27,15 @@ export class ConversationInputQueue {
 
   isExecuting(): boolean { return this.active; }
 
+  whenIdle(): Promise<void> {
+    if (!this.active && !this.pending.length) return Promise.resolve();
+    return new Promise(resolve => {
+      const unsubscribe = this.subscribe(() => {
+        if (!this.active && !this.pending.length) { unsubscribe(); resolve(); }
+      });
+    });
+  }
+
   getSnapshot = (): readonly PendingConversationInput[] => this.snapshot;
   subscribe = (listener: () => void): (() => void) => {
     this.listeners.add(listener);
@@ -100,7 +109,13 @@ export class ConversationInputQueue {
         return operation.execute(operation.input.text, controller.signal);
       })
       .then(() => operation.settle(), error => operation.settle(error))
-      .finally(() => { this.active = false; this.activeController = undefined; this.activeOperation = undefined; this.drain(); });
+      .finally(() => {
+        this.active = false;
+        this.activeController = undefined;
+        this.activeOperation = undefined;
+        this.listeners.forEach(listener => listener());
+        this.drain();
+      });
   };
 
   close(): void {
