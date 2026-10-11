@@ -147,6 +147,7 @@ export class SessionPersistence {
     messages: readonly Message[],
     transcript: readonly Message[],
     providerState: ProviderCheckpointState,
+    retainBranchAt?: string,
   ): Promise<boolean> {
     if (this.agentDepth > 0) return true;
     const sessionManager = ServiceRegistry.getInstance().get('session_manager');
@@ -158,7 +159,9 @@ export class SessionPersistence {
       !(sessionManager as any).getCurrentSession()
     ) return true;
     if (typeof (sessionManager as any).replaceConversation !== 'function') return false;
-    return (sessionManager as any).replaceConversation(messages, transcript, providerState);
+    return retainBranchAt
+      ? sessionManager.replaceConversation(messages, transcript, providerState, retainBranchAt)
+      : sessionManager.replaceConversation(messages, transcript, providerState);
   }
 
   /** Critical checkpoint commit; returns only after the session manifest is durable. */

@@ -140,14 +140,14 @@ export const RewindOptionsSelector: React.FC<RewindOptionsSelectorProps> = ({
   // Define options with labels - only show "Restore Conversation and Code Changes" if files exist
   const options = [
     {
-      label: 'Restore Conversation',
+      label: 'Rewind conversation',
       description: hasFiles ? 'Rewind conversation only, keep files as-is' : 'Rewind conversation',
       choice: 'conversation-only' as RewindChoice,
     },
     // Only include code changes option if files exist
     ...(hasFiles ? [{
-      label: 'Restore Conversation and Code Changes',
-      description: `Rewind conversation and restore ${fileChanges.fileCount} file${fileChanges.fileCount === 1 ? '' : 's'}`,
+      label: 'Rewind conversation and tracked edits',
+      description: `Also restore tracked edits in ${fileChanges.fileCount} file${fileChanges.fileCount === 1 ? '' : 's'}`,
       choice: 'conversation-and-files' as RewindChoice,
     }] : []),
     {
@@ -157,10 +157,8 @@ export const RewindOptionsSelector: React.FC<RewindOptionsSelectorProps> = ({
     },
   ];
 
-  // Default selection:
-  // - If files exist: "conversation-and-files" (index 1) for backward compatibility
-  // - If no files: "conversation-only" (index 0)
-  const [selectedOption, setSelectedOption] = useState(hasFiles ? 1 : 0);
+  // History navigation preserves files unless the user selects tracked-edit restoration.
+  const [selectedOption, setSelectedOption] = useState(0);
 
   // Handle keyboard input
   useInput(
@@ -222,6 +220,8 @@ export const RewindOptionsSelector: React.FC<RewindOptionsSelectorProps> = ({
       description={<>Rewind to “<Text color={UI_COLORS.TEXT_DEFAULT}>{messagePreview}</Text>”</>}
       footer={<KeyboardHintFooter action="select" />}
     >
+
+      <Text dimColor>Saved sessions keep the previous conversation as a resumable branch. Files stay as-is unless you select tracked edits; shell commands and external effects cannot be undone here.</Text>
 
       {/* File changes preview with diff stats */}
       {fileChanges.fileCount > 0 && (

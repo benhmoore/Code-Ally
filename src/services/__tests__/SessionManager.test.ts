@@ -223,6 +223,36 @@ describe('SessionManager', () => {
   });
 
   describe('replaceConversation', () => {
+    it('retains the full pre-rewind branch independently of later source pruning', async () => {
+      await sessionManager.createSession('branch-source');
+      const original: Message[] = Array.from({ length: 450 }, (_, index) => ({
+        id: `message-${index}`, role: index % 2 ? 'assistant' : 'user', content: `content ${index}`,
+      }));
+      await sessionManager.saveSession('branch-source', original, original);
+      expect(await sessionManager.replaceConversation(original.slice(0, 2), original.slice(0, 2), { kind: 'chat' }, 'message-2')).toBe(true);
+      expect(sessionManager.getCurrentSession()).toBe('branch-source');
+      const files = (await fs.readdir(tempDir)).filter(file => file.endsWith('.json') && file !== 'branch-source.json');
+      expect(files).toHaveLength(1);
+      const branch = await sessionManager.loadSession(files[0]!.slice(0, -5));
+      expect(branch?.metadata?.branchParent).toBe('branch-source');
+      expect(branch?.metadata?.branchPointMessageId).toBe('message-2');
+      expect(branch?.transcript).toEqual(original);
+      expect((await sessionManager.loadSession('branch-source'))?.transcript).toEqual(original.slice(0, 2));
+      await sessionManager.deleteSession('branch-source');
+      expect((await sessionManager.loadSession(branch!.name))?.transcript).toEqual(original);
+    });
+
+    it('keeps the original history when the branch cannot be committed', async () => {
+      await sessionManager.createSession('branch-failure');
+      const original: Message[] = [{ id: 'u1', role: 'user', content: 'preserve me' }];
+      await sessionManager.saveSession('branch-failure', original, original);
+      const retain = vi.spyOn(sessionManager as any, 'retainConversationBranch').mockRejectedValueOnce(new Error('disk full'));
+      try {
+        expect(await sessionManager.replaceConversation([], [], { kind: 'chat' }, 'u1')).toBe(false);
+        expect((await sessionManager.loadSession('branch-failure'))?.transcript).toEqual(original);
+      } finally { retain.mockRestore(); }
+    });
+
     it('durably truncates both the model window and full transcript', async () => {
       await sessionManager.createSession('replace-test');
       const original: Message[] = [

@@ -2704,6 +2704,7 @@ export class Agent {
       nextMessages,
       truncatedMessages,
       nextProviderState,
+      targetMessage.id,
     );
     if (!persisted) {
       throw new Error('Could not persist rewound conversation; no history was changed');

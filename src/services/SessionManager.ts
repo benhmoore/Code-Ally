@@ -582,7 +582,8 @@ export class SessionManager implements IService {
   private async mutateSession<T>(
     sessionName: string,
     input: T,
-    update: (session: Session, snapshot: T) => void
+    update: (session: Session, snapshot: T) => void,
+    beforeCommit?: (manifest: Session) => Promise<void>,
   ): Promise<boolean> {
     const snapshot = structuredClone(input);
     await this.flushPendingAutoSave(sessionName);
@@ -599,6 +600,7 @@ export class SessionManager implements IService {
           await this.readTranscriptSegment(sessionName, ref);
         }
       }
+      await beforeCommit?.(manifest);
       session.updated_at = new Date().toISOString();
       await this.writeSessionFile(sessionName, session);
       return true;
@@ -1271,10 +1273,26 @@ export class SessionManager implements IService {
    * stale transcript segments and compaction state must be replaced atomically
    * so a later resume cannot resurrect discarded messages.
    */
+  private async retainConversationBranch(sourceName: string, source: Session, branchPointId: string): Promise<void> {
+    const name = this.generateSessionName();
+    // Copy verified immutable chunks one at a time, without hydrating long history.
+    for (const ref of source.transcript_segments ?? []) {
+      await this.storeTranscriptSegment(name, await this.readTranscriptSegment(sourceName, ref));
+    }
+    const now = new Date().toISOString();
+    const title = `Before rewind: ${source.metadata?.title ?? source.title ?? sourceName}`;
+    const branch: Session = {
+      ...structuredClone(source), id: name, name, title, created_at: now, updated_at: now,
+      metadata: { ...source.metadata, title, userSetTitle: true, branchParent: sourceName, branchPointMessageId: branchPointId },
+    };
+    await this.writeSessionFile(name, branch, false);
+  }
+
   async replaceConversation(
     messages: readonly Message[],
     transcript: readonly Message[] = messages,
     providerState: ProviderCheckpointState = { kind: 'chat' },
+    retainBranchAt?: string,
   ): Promise<boolean> {
     const name = this.currentSession;
     if (!name || this.isShuttingDown) return false;
@@ -1287,7 +1305,7 @@ export class SessionManager implements IService {
         delete session.conversation_checkpoint;
         delete session.transcript_segments;
         delete session.transcript_tail;
-      });
+      }, retainBranchAt ? manifest => this.retainConversationBranch(name, manifest, retainBranchAt) : undefined);
     } catch (error) {
       logger.error(`[SESSION] Failed to replace conversation for ${name}:`, error);
       return false;

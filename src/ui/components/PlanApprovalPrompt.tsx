@@ -9,12 +9,12 @@
  * Follows PermissionPrompt patterns (keyboard nav, SelectionIndicator, KeyboardHintFooter).
  */
 
-import React from 'react';
-import { Box, Text } from 'ink';
+import React, { useEffect, useState } from 'react';
+import { Box, Text, useInput, useStdout } from 'ink';
 import { SelectionIndicator } from './SelectionIndicator.js';
 import { Clickable } from './Clickable.js';
 import { KeyboardHintFooter } from './KeyboardHintFooter.js';
-import { MarkdownText } from './MarkdownText.js';
+import { wrapAnsiText } from '@utils/terminalText.js';
 import { UI_COLORS } from '../constants/colors.js';
 import { UI_SYMBOLS } from '@config/uiSymbols.js';
 import { TextInput } from './TextInput.js';
@@ -49,7 +49,7 @@ export interface PlanApprovalPromptProps {
 /** Plan approval option labels */
 const APPROVAL_OPTIONS = [
   'Approve',
-  'Approve + clear context',
+  'Approve + compact context',
   'Provide feedback...',
 ];
 
@@ -67,13 +67,21 @@ export const PlanApprovalPrompt: React.FC<PlanApprovalPromptProps> = ({
 }) => {
   const terminalRows = useTerminalRows();
 
-  // The preview yields to controls on short terminals; the full plan remains on disk.
-  const planLines = request.planContent.split('\n');
-  const previewLines = Math.max(3, Math.min(12, terminalRows - 12));
-  const truncated = planLines.length > previewLines;
-  const displayContent = truncated
-    ? planLines.slice(0, previewLines).join('\n') + '\n…'
-    : request.planContent;
+  const { stdout } = useStdout();
+  const [offset, setOffset] = useState(0);
+  const width = Math.max(10, (stdout.columns || 80) - 8);
+  const planLines = request.planContent.split('\n').flatMap(line => wrapAnsiText(line, width, { preserveWhitespace: true }));
+  const previewLines = Math.max(1, terminalRows - 14);
+  const maximum = Math.max(0, planLines.length - previewLines);
+  const start = Math.min(offset, maximum);
+  const displayContent = planLines.slice(start, start + previewLines).join('\n');
+  useEffect(() => { setOffset(0); }, [request.planContent, request.planFilePath]);
+  useInput((_input, key) => {
+    if (key.pageUp) setOffset(current => Math.max(0, Math.min(current, maximum) - previewLines));
+    if (key.pageDown) setOffset(current => Math.min(maximum, current + previewLines));
+    if (selectedIndex !== 2 && key.ctrl && _input === 'a') setOffset(0);
+    if (selectedIndex !== 2 && key.ctrl && _input === 'e') setOffset(maximum);
+  });
 
   return (
     <InteractiveSurface
@@ -83,7 +91,8 @@ export const PlanApprovalPrompt: React.FC<PlanApprovalPromptProps> = ({
       footer={<KeyboardHintFooter action="confirm" />}
     >
       <Box flexDirection="column">
-        <MarkdownText content={displayContent} />
+        <Text>{displayContent}</Text>
+        <Text dimColor>Lines {start + 1}–{Math.min(start + previewLines, planLines.length)} of {planLines.length} · PgUp/PgDn to scroll · Ctrl+A/E first/last</Text>
       </Box>
 
       {/* Options */}

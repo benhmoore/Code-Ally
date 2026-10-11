@@ -577,6 +577,9 @@ export interface BackgroundTask {
 // ===========================
 
 export interface SessionMetadata {
+  /** Conversation branch provenance; restoring history does not restore files. */
+  branchParent?: string;
+  branchPointMessageId?: string;
   title?: string;
   tags?: string[];
   model?: string;
