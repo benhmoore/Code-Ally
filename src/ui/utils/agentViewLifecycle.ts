@@ -2,14 +2,14 @@ import type { BackgroundAgentStatus } from '@services/BackgroundAgentManager.js'
 import type { Message, ToolCallState } from '@shared/index.js';
 
 /**
- * An entered child is only interactive while its tracked run is alive. Once
- * it settles (or is removed), the UI must stop routing input to that child.
+ * Completed children remain inspectable. A removed task has no retained view
+ * and returns navigation to the primary conversation.
  */
 export function shouldRestoreMainView(
   activeAgentId: string,
   taskStatus: BackgroundAgentStatus | null,
 ): boolean {
-  return activeAgentId !== 'main' && taskStatus !== 'running';
+  return activeAgentId !== 'main' && taskStatus === null;
 }
 
 /**

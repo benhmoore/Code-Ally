@@ -41,6 +41,9 @@ interface InputPromptProps {
   onSubmit: (input: string, mentions?: { files?: string[]; images?: string[]; directories?: string[] }) => void;
   /** Callback when user interjections (submits mid-response) */
   onInterjection?: (message: string) => void;
+  onFollowUp?: InputPromptProps['onSubmit'];
+  onRecallFollowUp?: () => string | undefined;
+  conversationReadOnly?: boolean;
   /** Whether input is currently active/enabled */
   isActive?: boolean;
 
@@ -175,6 +178,9 @@ interface InputPromptProps {
 export const InputPrompt: React.FC<InputPromptProps> = ({
   onSubmit,
   onInterjection,
+  onFollowUp,
+  onRecallFollowUp,
+  conversationReadOnly = false,
   isActive = true,
   fleetFocused = false,
   fleetCount = 0,
@@ -552,7 +558,8 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
     dismissCompletions(false);
   };
 
-  const handleSubmit = (inputValue = buffer) => {
+  const handleSubmit = (inputValue = buffer, followUp = false) => {
+    if (conversationReadOnly) return;
     const trimmed = inputValue.trim();
     if (!trimmed) return;
 
@@ -582,7 +589,7 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
       ...(extractedFiles.length > 0 && { files: extractedFiles }),
       ...(extractedImages.length > 0 && { images: extractedImages }),
     };
-    onSubmit(trimmed, Object.keys(mentions).length > 0 ? mentions : undefined);
+    (followUp && onFollowUp ? onFollowUp : onSubmit)(trimmed, Object.keys(mentions).length > 0 ? mentions : undefined);
   };
 
   // Track whether TextInput is active (inactive when modals are open)
@@ -626,6 +633,7 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
    * Handle submit from TextInput
    */
   const handleTextInputSubmit = (value: string) => {
+    if (conversationReadOnly) return;
     const message = value.trim();
     if (!message) return;
 
@@ -690,6 +698,11 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
       return;
     }
 
+    if (conversationReadOnly) {
+      onExitAgent?.();
+      return;
+    }
+
     const currentAgentRef = agentRef.current;
     const currentActivityStream = activityStreamRef.current;
 
@@ -703,7 +716,7 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
       return;
     }
 
-    if (currentAgentRef?.isProcessing()) {
+    if (currentAgentRef?.isProcessing() || currentAgentRef?.getInputQueue?.().isExecuting()) {
       logger.debug('[INPUT] Escape - interrupting main agent');
       currentActivityStream?.emit({
         id: `user-interrupt-${Date.now()}`,
@@ -752,6 +765,19 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
    * TextInput will not also move its cursor or mutate its buffer for this key.
    */
   const handleEditorKeyCapture = (_input: string, key: Key): boolean => {
+    // Ink 4 strips the ESC prefix from Alt+Enter but leaves return=false.
+    if ((key.meta && key.return) || (_input === '\r' && !key.return)) {
+      if (onFollowUp) handleSubmit(bufferRef.current, true);
+      return true;
+    }
+    if (key.meta && key.upArrow && onRecallFollowUp && !bufferRef.current) {
+      const recalled = onRecallFollowUp();
+      if (recalled !== undefined) {
+        updateBuffer(recalled);
+        setCursorPosition(recalled.length);
+      }
+      return true;
+    }
     if (showCompletions) {
       if (key.upArrow) {
         updateCompletionIndex(index => moveCompletionSelection(index, completions.length, -1));

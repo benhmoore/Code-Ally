@@ -114,3 +114,15 @@ describe('delegation settlement ownership', () => {
     await params.manager.shutdown();
   });
 });
+
+it('captures a completed view before release can reset a pooled agent', async () => {
+  const params = fixture();
+  const view = { messages: [{ role: 'assistant', content: 'original result' }], activeToolCalls: [], isThinking: false, isCompacting: false, contextUsage: 7, statusMessages: [], compactionNotices: [] };
+  const close = vi.fn();
+  params.subAgent = { getConversationView: () => ({ getSnapshot: () => view }), getInputQueue: () => ({ close }) } as any;
+  params.cleanup = vi.fn(async () => { view.messages[0]!.content = 'reused conversation'; });
+  await runFleetDelegation(params);
+  const task = params.manager.listTasks()[0]!;
+  expect(close).toHaveBeenCalledOnce();
+  expect(task.completedView?.messages[0]?.content).toBe('original result');
+});

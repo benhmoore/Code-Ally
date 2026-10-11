@@ -8,14 +8,17 @@ import {
 } from '../agentViewLifecycle.js';
 
 describe('shouldRestoreMainView', () => {
+  it('returns to main when the task has been removed', () => {
+    expect(shouldRestoreMainView('agent-1', null)).toBe(true);
+  });
   it('keeps the primary and running child views stable', () => {
     expect(shouldRestoreMainView('main', null)).toBe(false);
     expect(shouldRestoreMainView('agent-1', 'running')).toBe(false);
   });
 
-  it.each(['done', 'error', 'cancelled', null] as const)(
-    'restores main when an entered child is %s',
-    (status) => expect(shouldRestoreMainView('agent-1', status)).toBe(true),
+  it.each(['done', 'error', 'cancelled'] as const)(
+    'keeps completed child %s available for inspection',
+    (status) => expect(shouldRestoreMainView('agent-1', status)).toBe(false),
   );
 });
 

@@ -78,6 +78,13 @@ export async function runFleetDelegation(p: FleetDelegationParams): Promise<Flee
       task.error = formatError(error);
       status = 'error';
     }
+    // Freeze the completed conversation before a pooled agent can be reused.
+    // Pending follow-ups remain visible as unsent and can be recalled by the user.
+    task.inputQueue?.close();
+    const view = p.subAgent.getConversationView?.().getSnapshot();
+    if (view) task.completedView = structuredClone(view);
+    task.completedModel = p.subAgent.getModelClient?.().modelName;
+    task.completedTokens = p.subAgent.getTokenManager?.().getCurrentTokenCount();
     const cleanupFailures: unknown[] = [];
     try { await p.cleanup(); }
     catch (error) {
@@ -138,7 +145,8 @@ export async function runFleetDelegation(p: FleetDelegationParams): Promise<Flee
 
   // Foreground ownership may be dropped only after complete finalization.
   await task.promise;
-  p.manager.removeTask(task.id);
+  // The foreground caller consumes the result; retain the bounded task for inspection.
+  task.consumed = true;
   return { backgrounded: false, status: task.status, result: task.result ?? '', error: task.error };
 }
 

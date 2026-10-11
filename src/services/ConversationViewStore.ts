@@ -33,6 +33,7 @@ export class ConversationViewStore {
     private readonly stream: ActivityStream,
     private readonly readMessages: () => readonly Message[],
     private readonly reconstruct: (messages: Message[]) => ToolCallState[],
+    private readonly ownerId?: string,
   ) {
     this.unsubscribe = stream.subscribe('*', event => this.onEvent(event));
     this.refresh();
@@ -101,7 +102,8 @@ export class ConversationViewStore {
   private onEvent(event: ActivityEvent): void {
     const data = event.data;
     const own = !event.parentId || event.parentId === this.stream.getParentId();
-    const ownLifecycle = own && (!data.isSpecializedAgent || !!this.stream.getParentId());
+    const ownLifecycle = this.ownerId ? data.instanceId === this.ownerId
+      : own && (!data.isSpecializedAgent || !!this.stream.getParentId());
     switch (event.type) {
       case ActivityEventType.CONVERSATION_MESSAGE_ADDED:
         this.refresh();

@@ -12,8 +12,10 @@ const emptySnapshot = () => null;
 export function useForegroundConversationView(
   activeAgentId: string,
   foregroundAgent: Agent | null,
+  completedView?: ConversationViewSnapshot,
 ): ForegroundConversationView | null {
-  const store = foregroundAgent?.getConversationView();
+  const store = completedView ? undefined : foregroundAgent?.getConversationView();
   const snapshot = useSyncExternalStore(store?.subscribe ?? emptySubscribe, store?.getSnapshot ?? emptySnapshot);
-  return snapshot ? { ...snapshot, agentId: activeAgentId } : null;
+  const view = completedView ?? snapshot;
+  return view ? { ...view, agentId: activeAgentId } : null;
 }

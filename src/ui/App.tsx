@@ -164,6 +164,20 @@ const AppContentComponent: React.FC<{
 
   // Manage all modal and selector state
   const modal = useModalState();
+  const [drafts, setDrafts] = React.useState<Record<string, string>>({});
+  const inputBuffer = drafts[state.activeAgentId] ?? '';
+  const setInputBuffer = React.useCallback((text: string) => {
+    setDrafts(current => ({ ...current, [state.activeAgentId]: text }));
+  }, [state.activeAgentId]);
+  const selectedTask = state.activeAgentId === 'main' ? undefined
+    : ServiceRegistry.getInstance().get('background_agent_manager')?.getTask(state.activeAgentId);
+  const completedChild = !!selectedTask && selectedTask.status !== 'running';
+  const queue = selectedTask?.inputQueue ?? foregroundAgent.getInputQueue();
+  const pendingInput = React.useSyncExternalStore(queue.subscribe, queue.getSnapshot);
+  const recallFollowUp = React.useCallback(() => {
+    const last = queue.getSnapshot().at(-1);
+    return last ? queue.remove(last.id)?.text : undefined;
+  }, [queue]);
 
   // Track background processes for status line
   const backgroundProcessCount = useBackgroundProcesses();
@@ -249,7 +263,7 @@ const AppContentComponent: React.FC<{
 
   // Get input handler functions. The immutable route is captured per submit,
   // so navigation cannot redirect an already-running operation.
-  const { handleInput, handleInterjection } = useInputHandlers(
+  const { handleInput, handleInterjection, handleFollowUp } = useInputHandlers(
     commandHandler,
     conversationRoute,
     actions,
@@ -267,6 +281,7 @@ const AppContentComponent: React.FC<{
   const foregroundView = useForegroundConversationView(
     state.activeAgentId,
     foregroundAgentId === state.activeAgentId ? foregroundAgent : null,
+    selectedTask?.completedView,
   );
   const previousConversationViewRef = useRef(state.activeAgentId);
 
@@ -343,11 +358,8 @@ const AppContentComponent: React.FC<{
     }
   }, [backgroundAgents.length, modal]);
 
-  // Entered children are transient interactive views. Completion, failure, or
-  // interruption can remove a foreground task without a fleet-row action, so
-  // restore the primary conversation whenever that tracked run is no longer
-  // alive. The agent-list refresh is driven by lifecycle events and also has a
-  // low-frequency safety tick for missed/late events.
+  // Completed conversations remain inspectable. Only removal of the tracked
+  // task returns the user to main; its frozen view cannot follow pool reuse.
   React.useEffect(() => {
     if (state.activeAgentId === 'main') return;
     const manager = ServiceRegistry.getInstance().get('background_agent_manager');
@@ -580,15 +592,15 @@ const AppContentComponent: React.FC<{
   const displayedIsCompacting = isChildSelected ? selectedChildView?.isCompacting ?? false : state.isCompacting;
   const displayedAgentName = !isChildSelected
     ? state.currentAgent
-    : selectedChildView ? foregroundAgent.getAgentName() || state.activeAgentId : state.activeAgentId;
+    : selectedTask?.agentType ?? state.activeAgentId;
   const displayedContextUsage = !isChildSelected
     ? state.contextUsage
-    : selectedChildView ? foregroundAgent.getContextUsagePercentage() : 0;
+    : selectedChildView?.contextUsage ?? 0;
   const displayedModel = !isChildSelected
     ? state.currentAgentModel || state.config.model
-    : selectedChildView ? foregroundAgent.getModelClient().modelName : state.config.model;
+    : selectedTask?.completedModel ?? (selectedChildView ? foregroundAgent.getModelClient().modelName : state.config.model);
 
-  const statusIndicator = (
+  const statusIndicator = completedChild ? null : (
     <StatusIndicator
       isProcessing={displayedIsThinking}
       isCompacting={displayedIsCompacting}
@@ -685,8 +697,12 @@ const AppContentComponent: React.FC<{
   const renderKeyboardInput = (extra: Partial<React.ComponentProps<typeof InputPrompt>>) => (
     <Box height={0} overflow="hidden">
       <InputPrompt
+            key={state.activeAgentId}
         onSubmit={handleInput}
         onInterjection={handleInterjection}
+            conversationReadOnly={completedChild}
+            onFollowUp={state.activeAgentId === 'main' ? handleFollowUp : undefined}
+            onRecallFollowUp={recallFollowUp}
         isActive={true}
         commandHistory={commandHistory || undefined}
         completionProvider={completionProvider || undefined}
@@ -694,8 +710,8 @@ const AppContentComponent: React.FC<{
         agent={foregroundAgent}
         prefillText={modal.inputPrefillText}
         onPrefillConsumed={() => modal.setInputPrefillText(undefined)}
-        bufferValue={modal.inputBuffer}
-        onBufferChange={modal.setInputBuffer}
+        bufferValue={inputBuffer}
+        onBufferChange={setInputBuffer}
         modalActivation={modalActivation}
         {...extra}
       />
@@ -736,6 +752,15 @@ const AppContentComponent: React.FC<{
         </ErrorBoundary>
       </Box>
 
+
+      {completedChild && <Text dimColor>Completed conversation · Esc returns to main · queued text can be recalled with Alt+↑</Text>}
+      {displayedIsThinking && <Text dimColor>{isChildSelected ? 'Enter steers this agent · Esc stops' : 'Enter steers · Alt+Enter queues a follow-up · Esc stops'}</Text>}
+      {pendingInput.length > 0 && (
+        <Box flexDirection="column" marginTop={1}>
+          <Text dimColor>Queued follow-ups ({pendingInput.length}) · Alt+↑ recalls the last message to edit or discard</Text>
+          {pendingInput.slice(-3).map(input => <Text key={input.id} dimColor wrap="truncate">{input.status === 'not_sent' ? 'Not sent (conversation closed): ' : ''}{input.text}</Text>)}
+        </Box>
+      )}
 
       {/*
         Modal render chain. Exactly one exclusive modal can be open at a time
@@ -1170,8 +1195,12 @@ const AppContentComponent: React.FC<{
 
           {/* Input Prompt */}
           <InputPrompt
+            key={state.activeAgentId}
             onSubmit={handleInput}
             onInterjection={handleInterjection}
+            conversationReadOnly={completedChild}
+            onFollowUp={state.activeAgentId === 'main' ? handleFollowUp : undefined}
+            onRecallFollowUp={recallFollowUp}
             isActive={true}
             commandHistory={commandHistory || undefined}
             completionProvider={completionProvider || undefined}
@@ -1187,8 +1216,8 @@ const AppContentComponent: React.FC<{
             promptPrefilled={modal.promptPrefilled}
             onPromptPrefilledClear={() => modal.setPromptPrefilled(false)}
             onExitConfirmationChange={modal.setIsWaitingForExitConfirmation}
-            bufferValue={modal.inputBuffer}
-            onBufferChange={modal.setInputBuffer}
+            bufferValue={inputBuffer}
+            onBufferChange={setInputBuffer}
             fleetFocused={modal.fleetFocused}
             fleetCount={backgroundAgents.length}
             fleetSelectedIndex={modal.fleetSelectedIndex}

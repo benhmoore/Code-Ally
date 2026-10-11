@@ -14,7 +14,7 @@ import { ServiceRegistry } from '@services/ServiceRegistry.js';
 import { BackgroundAgentStatus } from '@services/BackgroundAgentManager.js';
 import { useActivityStreamContext } from '../contexts/ActivityContext.js';
 import { ActivityEventType } from '@shared/index.js';
-import { POLLING_INTERVALS, BACKGROUND_AGENT } from '@config/constants.js';
+import { POLLING_INTERVALS } from '@config/constants.js';
 
 export interface BackgroundAgentInfo {
   id: string;
@@ -33,13 +33,7 @@ function readAgents(): BackgroundAgentInfo[] {
   const manager = registry.get('background_agent_manager');
   if (!manager) return [];
 
-  const now = Date.now();
   return manager.listTasks()
-    // Auto-dismiss: drop completed agents from the fleet after a short window.
-    .filter((task) =>
-      task.status === 'running' ||
-      (task.endTime != null && now - task.endTime < BACKGROUND_AGENT.FLEET_DISMISS_MS)
-    )
     .map((task) => ({
       id: task.id,
       agentType: task.agentType,
@@ -48,7 +42,7 @@ function readAgents(): BackgroundAgentInfo[] {
       status: task.status,
       startTime: task.startTime,
       endTime: task.endTime,
-      tokens: task.subAgent?.getTokenManager?.()?.getCurrentTokenCount?.() ?? 0,
+      tokens: task.completedTokens ?? task.subAgent?.getTokenManager?.()?.getCurrentTokenCount?.() ?? 0,
     }));
 }
 

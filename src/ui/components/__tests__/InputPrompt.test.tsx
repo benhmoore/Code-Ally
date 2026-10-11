@@ -560,3 +560,60 @@ describe('InputPrompt controlled buffer', () => {
     instance.unmount();
   });
 });
+
+test('Alt+Enter queues while Enter steers, and Alt+Up recalls without submitting', async () => {
+  const stdout = new FakeStdout();
+  const stdin = new FakeStdin();
+  const onFollowUp = vi.fn();
+  const onInterjection = vi.fn();
+  const onSubmit = vi.fn();
+  const recall = vi.fn(() => 'editable follow-up');
+  const agent = { isProcessing: () => true } as Agent;
+  const instance = render(<InputPrompt agent={agent} onSubmit={onSubmit} onFollowUp={onFollowUp} onInterjection={onInterjection} onRecallFollowUp={recall} />, {
+    stdout: stdout as unknown as NodeJS.WriteStream, stdin: stdin as unknown as NodeJS.ReadStream,
+    debug: true, exitOnCtrlC: false, patchConsole: false,
+  });
+  try {
+    await settle();
+    stdin.write('later');
+    await settle();
+    stdin.write('\x1b\r');
+    await settle();
+    expect(onFollowUp).toHaveBeenCalledWith('later', undefined);
+    expect(onInterjection).not.toHaveBeenCalled();
+    stdin.write('now');
+    await settle();
+    stdin.write('\r');
+    await settle();
+    expect(onInterjection).toHaveBeenCalledWith('now');
+    stdin.write('\x1b[1;3A');
+    await settle();
+    expect(recall).toHaveBeenCalledOnce();
+    expect(stdout.frames.join('')).toContain('editable follow-up');
+    expect(onSubmit).not.toHaveBeenCalled();
+  } finally { instance.unmount(); }
+});
+
+test('completed conversations cannot submit or interrupt a reused agent', async () => {
+  const stdin = new FakeStdin();
+  const interrupt = vi.fn();
+  const onSubmit = vi.fn();
+  const onExitAgent = vi.fn();
+  const instance = render(<InputPrompt conversationReadOnly agent={{ isProcessing: () => true, interrupt } as unknown as Agent}
+    onSubmit={onSubmit} onExitAgent={onExitAgent} />, {
+    stdout: new FakeStdout() as unknown as NodeJS.WriteStream, stdin: stdin as unknown as NodeJS.ReadStream,
+    debug: true, exitOnCtrlC: false, patchConsole: false,
+  });
+  try {
+    await settle();
+    stdin.write('draft');
+    await settle();
+    stdin.write('\r');
+    await settle();
+    stdin.write('\x1b');
+    await settle();
+    expect(onSubmit).not.toHaveBeenCalled();
+    expect(interrupt).not.toHaveBeenCalled();
+    expect(onExitAgent).toHaveBeenCalledOnce();
+  } finally { instance.unmount(); }
+});

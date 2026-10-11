@@ -1,3 +1,4 @@
+import { ConversationInputQueue } from '../services/ConversationInputQueue.js';
 import { ConversationViewStore } from '../services/ConversationViewStore.js';
 import { reconstructToolCallsFromMessages } from '../services/conversationTools.js';
 /**
@@ -184,6 +185,7 @@ export class Agent {
   private toolManager: ToolManager;
   private activityStream: ActivityStream;
   private readonly conversationView: ConversationViewStore;
+  private inputQueue = new ConversationInputQueue(() => !!this.config?.isSpecializedAgent || this.isProcessing());
   private toolOrchestrator: ToolOrchestrator;
   private config: AgentConfig;
   private readonly appConfig: Config; // Unwrapped application config for cleaner access
@@ -330,6 +332,7 @@ export class Agent {
       activityStream,
       () => this.getMessages(),
       messages => reconstructToolCallsFromMessages(messages, { get: () => this.toolManager }),
+      this.instanceId,
     );
     this.conversationManager.setTranscriptReplacedObserver(() => this.conversationView.refresh(true));
 
@@ -855,6 +858,8 @@ export class Agent {
    */
   resetForReuse(): void {
     if (this.turnAdmissionActive || this.conversationOperations.hasWork || this.closing) throw new Error('Cannot reuse an active or closing agent');
+    this.inputQueue.close();
+    this.inputQueue = new ConversationInputQueue(() => !!this.config?.isSpecializedAgent || this.isProcessing());
     // Clear conversation history (includes checkpoint tracking and token count)
     this.clearConversationHistory();
 
@@ -1051,6 +1056,7 @@ export class Agent {
       } finally {
         this.turnAdmissionActive = false;
         finishTurn();
+        this.inputQueue.drain();
       }
     }
   }
@@ -1389,6 +1395,7 @@ export class Agent {
    * @param cause - User action that stopped generation
    */
   interrupt(cause: UserInterruptionCause = { kind: 'user_cancel' }): void {
+    if (cause.kind === 'user_cancel' && !this.closing) this.inputQueue.cancel();
     if (this.turnAdmissionActive || this.conversationOperations.active) {
       // Set interruption state and abort this agent's request signal. Because the
       // signal handed to ModelClient.send() is owned by this agent's
@@ -1409,6 +1416,10 @@ export class Agent {
   /**
    * Check if a request is currently in progress
    */
+  canAcceptSteering(): boolean {
+    return this.turnAdmissionActive && this.invocationState.requestInProgress && !this.invocationState.agentEndEmitted;
+  }
+
   isProcessing(): boolean {
     return this.turnAdmissionActive;
   }
@@ -2363,6 +2374,10 @@ export class Agent {
    *
    * @returns Readonly reference to message array
    */
+  getInputQueue(): ConversationInputQueue {
+    return this.inputQueue;
+  }
+
   getConversationView(): ConversationViewStore {
     return this.conversationView;
   }
@@ -3015,6 +3030,7 @@ export class Agent {
   /** Stop admission and await the entire admitted turn, including final bookkeeping. */
   async stopAndDrain(): Promise<void> {
     this.closing = true;
+    this.inputQueue.close();
     this.interrupt({ kind: 'user_cancel' });
     await this.conversationOperations.close();
     await this.turnCompletion;

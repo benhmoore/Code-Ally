@@ -1,3 +1,5 @@
+import type { ConversationViewSnapshot } from './ConversationViewStore.js';
+import type { ConversationInputQueue } from './ConversationInputQueue.js';
 /**
  * BackgroundAgentManager - Manages backgrounded (non-blocking) agent runs
  *
@@ -63,6 +65,10 @@ export interface BackgroundAgentTask {
   promise: Promise<void>;
   /** The sub-agent instance — used for cancellation, transcript + token reads */
   subAgent: Agent;
+  completedView?: ConversationViewSnapshot;
+  completedModel?: string;
+  completedTokens?: number;
+  inputQueue?: ConversationInputQueue;
   /** Pooled-agent handle so the agent is released on completion/cancel */
   pooledAgent: PooledAgent | null;
   /** The tool call id that spawned this run (event nesting / pool key) */
@@ -135,6 +141,7 @@ export class BackgroundAgentManager {
       consumed: false,
       promise: Promise.resolve(),
       subAgent: meta.subAgent,
+      inputQueue: meta.subAgent.getInputQueue?.(),
       pooledAgent: meta.pooledAgent,
       callId: meta.callId,
       detachPromise,

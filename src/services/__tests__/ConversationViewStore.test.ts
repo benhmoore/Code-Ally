@@ -86,3 +86,14 @@ it('releases stream subscriptions and pending notifications on close', () => {
   emit(E.ASSISTANT_CHUNK, { chunk: 'ignored' });
   expect(store.getSnapshot().streamingContent).toBe('retained');
 });
+
+it('binds lifecycle to the owner even when an unscoped background completion omits its kind', () => {
+  const stream = new ActivityStream();
+  const store = new ConversationViewStore(stream, () => [], () => [], 'primary');
+  stores.push(store);
+  stream.emit({ type: E.AGENT_START, id: 'start', timestamp: 1, data: { instanceId: 'primary' } });
+  stream.emit({ type: E.AGENT_END, id: 'child-call', timestamp: 2, data: { agentName: 'explore', result: 'done' } });
+  expect(store.getSnapshot().isThinking).toBe(true);
+  stream.emit({ type: E.AGENT_END, id: 'end', timestamp: 3, data: { instanceId: 'primary' } });
+  expect(store.getSnapshot().isThinking).toBe(false);
+});

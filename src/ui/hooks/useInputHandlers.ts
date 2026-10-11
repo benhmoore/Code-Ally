@@ -39,6 +39,7 @@ export interface InputHandlers {
   handleInput: (input: string, mentions?: { files?: string[]; images?: string[]; directories?: string[] }) => Promise<void>;
   /** Handle user interjection (submitting message mid-response) */
   handleInterjection: (message: string) => Promise<void>;
+  handleFollowUp: (input: string, mentions?: { files?: string[]; images?: string[]; directories?: string[] }) => Promise<void>;
 }
 
 /**
@@ -92,38 +93,10 @@ export const useInputHandlers = (
   }, [actions, route]);
 
   /**
-   * Handle user interjection (submitting message mid-response)
-   */
-  const handleInterjection = useCallback(async (message: string) => {
-    if (!ensureRouteAvailable()) return;
-    const { agent, activityStream } = route;
-
-    logger.debug('[APP] Handling interjection:', message);
-
-    logger.debug('[APP] Routing interjection to selected conversation:', route.id);
-    agent.addUserInterjection(message);
-    agent.interrupt({ kind: 'user_interjection' });
-
-    const parentId = 'root';
-    const targetAgent = route.kind === 'primary' ? 'main' : route.id;
-
-    // Emit event for UI
-    activityStream.emit({
-      id: `interjection-${Date.now()}`,
-      type: ActivityEventType.USER_INTERJECTION,
-      timestamp: Date.now(),
-      parentId: parentId,
-      data: {
-        message,
-        targetAgent,
-      },
-    });
-  }, [ensureRouteAvailable, route]);
-
-  /**
    * Handle user input (messages, commands, bash shortcuts)
    */
-  const handleInput = useCallback(async (input: string, mentions?: { files?: string[]; images?: string[]; directories?: string[] }) => {
+  const executeInput = useCallback(async (input: string, mentions?: { files?: string[]; images?: string[]; directories?: string[] }, signal?: AbortSignal) => {
+    if (signal?.aborted) return;
     if (!ensureRouteAvailable()) return;
     const serviceRegistry = ServiceRegistry.getInstance();
     const { agent, activityStream } = route;
@@ -295,6 +268,8 @@ export const useInputHandlers = (
         }
       }
 
+      if (signal?.aborted) return;
+
       // Set thinking state
       if (route.kind === 'primary') actions.setIsThinking(true);
 
@@ -398,8 +373,52 @@ export const useInputHandlers = (
     }
   }, [addDisplayMessage, commandHandler, ensureRouteAvailable, route, actions]);
 
+  const handleFollowUp = useCallback((input: string, mentions?: { files?: string[]; images?: string[]; directories?: string[] }) => {
+    if (!ensureRouteAvailable()) return Promise.resolve();
+    return route.agent.getInputQueue().enqueue(input, (text, signal) => executeInput(text, mentions, signal));
+  }, [ensureRouteAvailable, route, executeInput]);
+
+  const handleInput = useCallback((input: string, mentions?: { files?: string[]; images?: string[]; directories?: string[] }) => {
+    return input.trim().startsWith('/') ? executeInput(input, mentions) : handleFollowUp(input, mentions);
+  }, [executeInput, handleFollowUp]);
+
+  /**
+   * Handle user interjection (submitting message mid-response)
+   */
+  const handleInterjection = useCallback(async (message: string) => {
+    if (!ensureRouteAvailable()) return;
+    const { agent, activityStream } = route;
+
+    if (agent.canAcceptSteering?.() === false) {
+      await handleFollowUp(message);
+      return;
+    }
+
+    logger.debug('[APP] Handling interjection:', message);
+
+    logger.debug('[APP] Routing interjection to selected conversation:', route.id);
+    agent.addUserInterjection(message);
+    agent.interrupt({ kind: 'user_interjection' });
+
+    const parentId = 'root';
+    const targetAgent = route.kind === 'primary' ? 'main' : route.id;
+
+    // Emit event for UI
+    activityStream.emit({
+      id: `interjection-${Date.now()}`,
+      type: ActivityEventType.USER_INTERJECTION,
+      timestamp: Date.now(),
+      parentId: parentId,
+      data: {
+        message,
+        targetAgent,
+      },
+    });
+  }, [ensureRouteAvailable, route, handleFollowUp]);
+
   return {
     handleInput,
     handleInterjection,
+    handleFollowUp,
   };
 };
