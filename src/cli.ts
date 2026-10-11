@@ -33,7 +33,7 @@ import { logger } from './services/Logger.js';
 import { formatRelativeTime } from './ui/utils/timeUtils.js';
 import { AGENT_CONFIG } from './config/constants.js';
 import { ActivityEventType } from './types/index.js';
-import { runStartupValidation, needsSetup } from './cli/validation.js';
+import { needsSetup } from './cli/validation.js';
 import { ProfileManager } from './services/ProfileManager.js';
 import { setActiveProfile } from './config/paths.js';
 import { initializePrimaryColor } from './ui/constants/colors.js';
@@ -1063,27 +1063,6 @@ async function main() {
     /** Provider warnings and SessionStart messages, rendered with the startup header. */
     const startupStatusMessages: string[] = [];
 
-    // Provider availability is advisory: keep configuration commands accessible
-    // even when the endpoint is offline or speaks a different API.
-    // Skip validation in setup/non-interactive paths.
-    let forceModelSelector = false;
-    let availableModels: any[] | undefined;
-    if (!isHeadlessRun(options) && !forceSetup && !options.init) {
-      const validationResult = await runStartupValidation(config);
-
-      if (!validationResult.providerConnected) {
-        startupStatusMessages.push(
-          `Cannot connect to ${config.provider ?? 'ollama'} endpoint ${config.endpoint}: ${validationResult.error ?? 'Connection failed'}.`,
-          'Use /config setup to configure the provider, or start the server and try again.',
-        );
-      }
-
-      if (validationResult.modelStatus === 'missing') {
-        forceModelSelector = true;
-        availableModels = validationResult.availableModels;
-      }
-    }
-
     // Initialize service registry
     const registry = ServiceRegistry.getInstance();
     registry.registerInstance('config_manager', configManager);
@@ -1715,8 +1694,7 @@ async function main() {
         terminalInput,
         resumeSession,
         showSetupWizard: options.init || forceSetup, // Show setup wizard if --init flag or missing critical config
-        showModelSelector: forceModelSelector, // Show model selector if model not found
-        availableModels, // Pass available models from validation
+        validateProviderOnStartup: !forceSetup && !options.init,
         activePluginCount,
         totalPluginCount: pluginCount,
         activeMcpCount,

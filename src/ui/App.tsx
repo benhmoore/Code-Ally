@@ -14,6 +14,7 @@ import { AppProvider, useAppContext } from './contexts/AppContext.js';
 import { TerminalProvider } from './contexts/TerminalContext.js';
 import { ActivityEventType, Config, Message } from '../types/index.js';
 import { BottomAlignedLayout } from './components/BottomAlignedLayout.js';
+import { useProviderDiagnostics } from './hooks/useProviderDiagnostics.js';
 import { useTerminalRows } from './hooks/useTerminalRows.js';
 import { InputPrompt } from './components/InputPrompt.js';
 import { AgentFleetView } from './components/AgentFleetView.js';
@@ -110,6 +111,7 @@ export interface AppProps {
 
   /** One-off notices from session startup, shown with the header. */
   startupNotices?: string[];
+  validateProviderOnStartup?: boolean;
 }
 
 /**
@@ -136,6 +138,7 @@ const AppContentComponent: React.FC<{
   onInteractiveReady?: () => void;
   startupNotices?: string[];
   terminalInput?: TerminalInputStream;
+  validateProviderOnStartup?: boolean;
 }> = ({
   foregroundAgent,
   foregroundAgentId,
@@ -153,9 +156,11 @@ const AppContentComponent: React.FC<{
   onInteractiveReady,
   startupNotices,
   terminalInput,
+  validateProviderOnStartup,
 }) => {
   const { state, actions } = useAppContext();
   const activityStream = useActivityStreamContext();
+  useProviderDiagnostics(validateProviderOnStartup === true, state.config, activityStream);
 
   // Initialize services (command history, completion provider, command handler)
   const { commandHistory, completionProvider, commandHandler, shouldShowSetupWizard } = useServiceInitialization(
@@ -1328,6 +1333,7 @@ export const App: React.FC<AppProps> = ({
   totalMcpCount,
   onInteractiveReady,
   startupNotices,
+  validateProviderOnStartup,
 }) => {
   // Create activity stream if not provided
   const streamRef = useRef(activityStream || new ActivityStream());
@@ -1355,6 +1361,7 @@ export const App: React.FC<AppProps> = ({
             onInteractiveReady={onInteractiveReady}
             startupNotices={startupNotices}
             terminalInput={terminalInput}
+            validateProviderOnStartup={validateProviderOnStartup}
           />
         </AppProvider>
       </ActivityProvider>

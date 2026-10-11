@@ -18,8 +18,9 @@ export interface StartupValidationResult {
   similarModels?: string[];
 }
 
-export async function runStartupValidation(config: Config): Promise<StartupValidationResult> {
-  const result = await validateProvider(config);
+export async function runStartupValidation(config: Config, signal?: AbortSignal): Promise<StartupValidationResult> {
+  const result = await validateProvider(config, signal);
+  signal?.throwIfAborted();
   const providerName = config.provider ?? 'ollama';
 
   if (!result.connected) {
@@ -39,7 +40,7 @@ export async function runStartupValidation(config: Config): Promise<StartupValid
       .map((model) => model.name)
       .filter((name) => prefix && name.includes(prefix))
       .slice(0, 3);
-    logger.error(`Model '${config.model}' was not reported by ${providerName}`);
+    logger.warn(`Model '${config.model}' was not reported by ${providerName}`);
     return {
       ok: false,
       providerConnected: true,

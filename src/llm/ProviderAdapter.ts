@@ -43,7 +43,8 @@ function headers(config: Pick<Config, 'api_key'>): Record<string, string> {
 
 export async function listProviderModels(
   config: Pick<Config, 'provider' | 'endpoint' | 'api_key'>,
-  timeoutMs = 5000
+  timeoutMs = 5000,
+  signal?: AbortSignal,
 ): Promise<{ supported: boolean; models: ProviderModel[]; error?: string }> {
   const kind = provider(config);
   const url = kind === 'ollama' ? `${config.endpoint.replace(/\/+$/, '')}/api/tags` : `${apiBase(config.endpoint)}/models`;
@@ -51,7 +52,7 @@ export async function listProviderModels(
     const response = await fetch(url, {
       method: 'GET',
       headers: headers(config),
-      signal: AbortSignal.timeout(timeoutMs),
+      signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(timeoutMs)]) : AbortSignal.timeout(timeoutMs),
     });
     if (!response.ok) {
       if (kind === 'openai-compat' && [404, 405, 501].includes(response.status)) {
@@ -87,9 +88,10 @@ export async function listProviderModels(
 }
 
 export async function validateProvider(
-  config: Pick<Config, 'provider' | 'endpoint' | 'api_key' | 'model'>
+  config: Pick<Config, 'provider' | 'endpoint' | 'api_key' | 'model'>,
+  signal?: AbortSignal,
 ): Promise<ProviderValidation> {
-  const discovery = await listProviderModels(config);
+  const discovery = await listProviderModels(config, 5000, signal);
   if (discovery.error) {
     return {
       connected: false,

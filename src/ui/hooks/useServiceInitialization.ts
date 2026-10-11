@@ -98,7 +98,6 @@ export const useServiceInitialization = (
         // Use the AgentManager from the registry (which has plugin agents registered)
         const agentManager = serviceRegistry.get('agent_manager') || new AgentManager();
         const provider = new CompletionProvider(agentManager, configManager || undefined);
-        setCompletionProvider(provider);
 
         // Create command handler with service registry
         if (configManager) {
@@ -112,6 +111,11 @@ export const useServiceInitialization = (
           const initialContextUsage = (tokenManager as any).getContextUsagePercentage();
           actions.setContextUsage(initialContextUsage);
         }
+
+        // Publish readiness only after every input dependency exists. Ink can
+        // render a state update synchronously; assigning the handler ref after
+        // this update leaves input waiting for an unrelated future render.
+        setCompletionProvider(provider);
       } catch (error) {
         // Continue without services - initialization is optional
       }
