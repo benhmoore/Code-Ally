@@ -26,7 +26,7 @@ import {
 } from '../llm/ModelClient.js';
 import { ToolManager } from '../tools/ToolManager.js';
 import { ConversationOperationQueue } from './ConversationOperationQueue.js';
-import { getRuntimeToolExclusions, needsTemporalContext } from '../tools/runtimeToolSelection.js';
+import { DURABLE_OBJECTIVE_TOOLS, getRuntimeToolExclusions, needsTemporalContext } from '../tools/runtimeToolSelection.js';
 import { ActivityStream } from '../services/ActivityStream.js';
 import { ServiceRegistry } from '../services/ServiceRegistry.js';
 import { ToolOrchestrator } from './ToolOrchestrator.js';
@@ -1598,7 +1598,7 @@ export class Agent {
     const runtimeRegistry = ServiceRegistry.getInstance();
     const runPolicyManager = runtimeRegistry.get('run_policy_manager');
     if (runPolicyManager?.getPolicy().completion !== 'durable_objective') {
-      excludeTools.push('complete-objective', 'block-objective', 'reconcile-effect');
+      excludeTools.push(...DURABLE_OBJECTIVE_TOOLS);
     }
     if (runPolicyManager && !runPolicyManager.isInteractionAvailable()) {
       excludeTools.push(

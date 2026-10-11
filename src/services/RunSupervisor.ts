@@ -1,3 +1,4 @@
+import { inspectArchitecture, updateArchitecture, type ArchitectureUpdate, type ObjectiveArchitecture } from './ObjectiveArchitecture.js';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
@@ -36,6 +37,7 @@ export interface RunSnapshot {
   startedAt: number;
   updatedAt: number;
   nextAction?: string;
+  architecture?: ObjectiveArchitecture;
   outcome?: RunOutcome;
 }
 
@@ -63,7 +65,7 @@ export class RunSupervisor {
 
   private readonly journals: RunJournalStore;
 
-  constructor(private readonly runsDir = getProjectRunsDir()) {
+  constructor(private readonly runsDir = getProjectRunsDir(), private readonly workspaceRoot = process.cwd()) {
     this.journals = new RunJournalStore(runsDir);
   }
 
@@ -187,6 +189,8 @@ export class RunSupervisor {
         run.executions -= 1;
         if (run.retired && run.executions === 0) await this.closeOwnedRun(run);
       }),
+      () => run.state?.snapshot.architecture,
+      this.workspaceRoot,
     );
   }
   async rolloverEpoch(reason: string): Promise<void> {
@@ -194,6 +198,19 @@ export class RunSupervisor {
       if (this.isRunning()) await this.commit('epoch_rolled_over', { reason, epoch: this.active!.state!.snapshot.epoch + 1 });
     });
   }
+  async updateArchitecture(update: ArchitectureUpdate): Promise<void> {
+    return this.serialize(async () => {
+      if (!this.isRunning()) throw new Error('No active durable objective');
+      updateArchitecture(this.active!.state!.snapshot.architecture, update);
+      await this.commit('objective_state_updated', { update });
+    });
+  }
+
+  async inspectArchitecture() {
+    const state = this.getActiveRun()?.architecture;
+    return state ? { ...state, criteria: await inspectArchitecture(this.workspaceRoot, state) } : undefined;
+  }
+
   async recordProgress(summary: string): Promise<void> {
     return this.serialize(async () => {
       if (this.isRunning()) await this.commit('assistant_progress', { summary: summary.slice(0, 4000) });
@@ -215,6 +232,13 @@ export class RunSupervisor {
       if (!this.isRunning()) return { accepted: false, blockers: ['No active durable objective'] };
       const registry = ServiceRegistry.getInstance();
       const blockers: string[] = [];
+      const architecture = this.active!.state!.snapshot.architecture;
+      if (architecture) {
+        const criteria = await inspectArchitecture(this.workspaceRoot, architecture);
+        for (const criterion of criteria) {
+          if (criterion.status !== 'verified') blockers.push(`Acceptance criterion ${criterion.id} is ${criterion.status}: ${criterion.description}`);
+        }
+      }
       const incompleteTodos = registry.get('todo_manager')?.getTodos().filter(todo => todo.status !== 'completed') ?? [];
       if (incompleteTodos.length) blockers.push(`${incompleteTodos.length} todo item(s) remain incomplete`);
       const backgroundTasks = registry.get('background_task_registry')?.list() ?? [];

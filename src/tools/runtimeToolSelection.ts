@@ -1,3 +1,5 @@
+export const DURABLE_OBJECTIVE_TOOLS = ['objective-state', 'complete-objective', 'block-objective', 'reconcile-effect'] as const;
+
 import type { BackgroundTask } from '../services/BackgroundTaskRegistry.js';
 
 const SCHEDULE_INTENT = /\b(schedule(?:d|s|ing)?|recurr(?:ing|ence)?|cron|daily|weekly|monthly|every\s+(?:day|morning|evening|night|week|month)|remind\s+me)\b/i;

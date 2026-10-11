@@ -36,13 +36,15 @@ export function createSystemReminder(
 
 /** Identify the run whose completion is currently required, independently of prior turns. */
 export function createActiveObjectiveReminder(
-  run: { runId: string; objective: string },
+  run: { runId: string; objective: string; architecture?: import('../services/ObjectiveArchitecture.js').ObjectiveArchitecture },
   persist: boolean = false,
 ): Message {
   return createSystemReminder(
     `Active durable run: ${run.runId}\nObjective: ${JSON.stringify(run.objective)}\n`
       + 'This run is active. Completion of an earlier run does not complete this objective. '
       + 'Continue only work required by this objective and the current user constraints. '
+      + 'For substantial multi-step work, use objective-state to retain acceptance criteria, constraints, decisions and assumptions. Configure exact verification commands and relevant source/test artifact paths before running checks. '
+      + (run.architecture ? `Durable task state exists with ${run.architecture.criteria.length} acceptance criteria. Inspect objective-state after context recovery; re-run stale verification after editing its artifacts. ` : '')
       + 'When its required work, background tasks, and verification are finished, call complete-objective with concise evidence for this run. '
       + 'If no safe automatic path remains, call block-objective with the concrete blocker.',
     persist,

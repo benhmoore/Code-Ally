@@ -1,3 +1,4 @@
+import { ObjectiveStateTool } from './ObjectiveStateTool.js';
 import type { Config } from '../types/index.js';
 import type { ActivityStream } from '../services/ActivityStream.js';
 import type { BaseTool } from './BaseTool.js';
@@ -65,6 +66,7 @@ export function createBuiltInTools(
     new WaitTool(activityStream),
     new WatchTool(activityStream),
     new CompleteObjectiveTool(activityStream),
+    new ObjectiveStateTool(activityStream),
     new BlockObjectiveTool(activityStream),
     new ReconcileEffectTool(activityStream),
     new ReadTool(activityStream),

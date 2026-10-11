@@ -5,17 +5,14 @@ import { tokenCounter } from '../services/TokenCounter.js';
 import { createBuiltInTools } from '../tools/createBuiltInTools.js';
 import {
   getRuntimeToolExclusions,
+  DURABLE_OBJECTIVE_TOOLS,
   type RuntimeToolSelectionContext,
 } from '../tools/runtimeToolSelection.js';
 import { ToolManager } from '../tools/ToolManager.js';
 import type { Config, FunctionDefinition } from '../types/index.js';
 
 /** Tools hidden from an interactive root agent by the durable-run policy. */
-const DURABLE_ROOT_EXCLUSIONS = [
-  'complete-objective',
-  'block-objective',
-  'reconcile-effect',
-] as const;
+const DURABLE_ROOT_EXCLUSIONS = DURABLE_OBJECTIVE_TOOLS;
 
 export const INTERACTIVE_ROOT_EXCLUSIONS = [
   ...DURABLE_ROOT_EXCLUSIONS,

@@ -10,7 +10,7 @@ describe('createBuiltInTools', () => {
 
     expect(tools.map(tool => tool.name)).toEqual([
       'bash', 'bash-output', 'kill-shell', 'cancel-agent', 'wait', 'watch',
-      'complete-objective', 'block-objective', 'reconcile-effect', 'read', 'read-checkpoint', 'read-history', 'write',
+      'complete-objective', 'objective-state', 'block-objective', 'reconcile-effect', 'read', 'read-checkpoint', 'read-history', 'write',
       'write-agent', 'edit-agent', 'delete-agent', 'list-agents', 'write-temp',
       'apply-patch', 'glob', 'grep', 'ls', 'tool-search', 'tree', 'agent', 'manage-agents',
       'explore', 'plan', 'agent-ask', 'cleanup-call', 'todo-write', 'sessions',
@@ -23,7 +23,7 @@ describe('createBuiltInTools', () => {
   it('produces the expected interactive Ally schema surface', () => {
     const manager = new ToolManager(createBuiltInTools(new ActivityStream(), DEFAULT_CONFIG));
     const definitions = manager.getFunctionDefinitions(
-      ['complete-objective', 'block-objective', 'reconcile-effect'],
+      ['complete-objective', 'objective-state', 'block-objective', 'reconcile-effect'],
       'ally',
     );
 

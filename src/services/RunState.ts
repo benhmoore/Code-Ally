@@ -1,3 +1,4 @@
+import { updateArchitecture, applyVerification, type ArchitectureUpdate } from './ObjectiveArchitecture.js';
 import type { RunSnapshot, RunStatus } from './RunSupervisor.js';
 
 export function isResumableRunStatus(status: RunStatus): boolean {
@@ -53,6 +54,14 @@ export function reduceRunEvent(previous: RunState | undefined, event: RunJournal
   const snapshot = state.snapshot;
   const running = snapshot.status === 'running' || snapshot.status === 'waiting_retry';
   const requireRunning = () => { if (!running) throw new Error(`Run is ${snapshot.status}`); };
+  if (['tool_succeeded', 'tool_failed', 'tool_unknown'].includes(event.type) && data.verification !== undefined) {
+    if (!snapshot.architecture) throw new Error('Verification lacks architecture state');
+    if (!Array.isArray(data.verification) || data.verification.some(record => record?.callId !== data.callId)) throw new Error('Verification belongs to another tool call');
+    applyVerification(snapshot.architecture, data.verification);
+    for (const record of snapshot.architecture.evidence.filter(item => item.callId === data.callId)) {
+      if (record.success && event.type !== 'tool_succeeded') throw new Error('Failed execution cannot verify a criterion');
+    }
+  }
   switch (event.type) {
     case 'run_resumed':
       if (!isResumableRunStatus(snapshot.status)) throw new Error(`Run is ${snapshot.status}, not resumable`);
@@ -63,6 +72,10 @@ export function reduceRunEvent(previous: RunState | undefined, event: RunJournal
       requireRunning();
       if (data.epoch !== snapshot.epoch + 1) throw new Error('Invalid run epoch');
       snapshot.epoch++;
+      break;
+    case 'objective_state_updated':
+      requireRunning();
+      snapshot.architecture = updateArchitecture(snapshot.architecture, data.update as ArchitectureUpdate);
       break;
     case 'assistant_progress':
       requireRunning();
