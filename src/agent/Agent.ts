@@ -1,3 +1,5 @@
+import { ConversationViewStore } from '../services/ConversationViewStore.js';
+import { reconstructToolCallsFromMessages } from '../services/conversationTools.js';
 /**
  * Agent - Main orchestrator for LLM conversation and tool execution
  *
@@ -181,6 +183,7 @@ export class Agent {
   private modelClient: ModelClient;
   private toolManager: ToolManager;
   private activityStream: ActivityStream;
+  private readonly conversationView: ConversationViewStore;
   private toolOrchestrator: ToolOrchestrator;
   private config: AgentConfig;
   private readonly appConfig: Config; // Unwrapped application config for cleaner access
@@ -323,6 +326,12 @@ export class Agent {
       initialMessages: [], // Will add system prompt and initial messages below
     });
     logger.debug('[AGENT_CONTEXT]', this.instanceId, 'ConversationManager created');
+    this.conversationView = new ConversationViewStore(
+      activityStream,
+      () => this.getMessages(),
+      messages => reconstructToolCallsFromMessages(messages, { get: () => this.toolManager }),
+    );
+    this.conversationManager.setTranscriptReplacedObserver(() => this.conversationView.refresh(true));
 
     // Create turn manager
     this.turnManager = new TurnManager({
@@ -2354,6 +2363,10 @@ export class Agent {
    *
    * @returns Readonly reference to message array
    */
+  getConversationView(): ConversationViewStore {
+    return this.conversationView;
+  }
+
   getMessages(): readonly Message[] {
     return this.conversationManager.getTranscript().filter(message => message.role !== 'system');
   }
@@ -2956,6 +2969,8 @@ export class Agent {
   private async performCleanup(): Promise<void> {
     logger.debug('[AGENT_CLEANUP]', this.instanceId, 'Cleanup started');
     await this.stopAndDrain();
+
+    this.conversationView.close();
 
     // Stop activity monitoring
     this.stopActivityMonitoring();

@@ -79,6 +79,12 @@ export class ConversationManager {
   private readonly instanceId: string;
 
   /** Notified for each appended message; see setMessageAddedObserver. */
+  private transcriptReplacedObserver?: () => void;
+
+  setTranscriptReplacedObserver(observer: () => void): void {
+    this.transcriptReplacedObserver = observer;
+  }
+
   private messageAddedObserver: ((message: Message) => void) | null = null;
 
   /**
@@ -278,6 +284,7 @@ export class ConversationManager {
     this.rebuildCanonicalActiveMessages();
     // Rebuild tool result index from scratch
     this.rebuildToolResultIndex();
+    this.transcriptReplacedObserver?.();
     logger.debug('[CONVERSATION_MANAGER]', this.instanceId, 'Messages set, count:', this.messages.length);
   }
 
@@ -309,6 +316,7 @@ export class ConversationManager {
     this.providerState = structuredClone(providerState);
     this.rebuildCanonicalActiveMessages([...transcript, ...canonicalMessages]);
     this.rebuildToolResultIndex();
+    this.transcriptReplacedObserver?.();
   }
 
   /**
@@ -330,6 +338,7 @@ export class ConversationManager {
     this.checkpoint = null;
     this.providerState = { kind: 'chat' };
     this.toolResultIndex.clear();
+    this.transcriptReplacedObserver?.();
     logger.debug('[CONVERSATION_MANAGER]', this.instanceId, 'Messages cleared');
   }
 

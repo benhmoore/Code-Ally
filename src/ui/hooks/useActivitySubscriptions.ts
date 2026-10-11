@@ -7,7 +7,7 @@
  */
 
 import { useRef, useEffect, useState, useMemo } from 'react';
-import { ActivityEventType, ToolCallState, FormRequest } from '@shared/index.js';
+import { ActivityEventType, FormRequest } from '@shared/index.js';
 import { useActivityEvent } from './useActivityEvent.js';
 import { AppState, AppActions } from '../contexts/AppContext.js';
 import { ModalState } from './useModalState.js';
@@ -20,13 +20,9 @@ import { UndoCoordinator } from '@services/UndoCoordinator.js';
 import { ModelConfigCoordinator } from '@services/ModelConfigCoordinator.js';
 import { SessionRestoreCoordinator } from '@services/SessionRestoreCoordinator.js';
 import { logger } from '@services/Logger.js';
-import { UI_DELAYS } from '@config/constants.js';
 import { sendTerminalNotification } from '../../utils/terminal.js';
 import { resolveDisplayContent } from '../../utils/toolResultContent.js';
 import { probeModelCapabilities } from '@llm/ProviderAdapter.js';
-import { ThinkingClock } from '../utils/thinkingClock.js';
-import { finalizeToolCallsAtAgentEnd, reconcileRecordedToolCalls } from '../utils/agentViewLifecycle.js';
-import { appendBoundedText } from '../utils/boundedText.js';
 
 /**
  * Activity subscriptions state
@@ -68,15 +64,7 @@ export const useActivitySubscriptions = (
   agent: Agent,
   activityStream: ActivityStream
 ): ActivitySubscriptionsState => {
-  // Streaming content accumulator (use ref to avoid stale closure in event handlers)
-  const streamingContentRef = useRef<string>('');
-
-  // Tracks whether the hook is still mounted, so deferred callbacks
-  // (e.g. setImmediate) can bail out instead of updating unmounted state.
   const isMountedRef = useRef(true);
-
-  // Tracks what "Thought for Ns" measures (keyed by parentId, 'root' for main)
-  const thinkingClock = useRef<ThinkingClock>(new ThinkingClock());
 
   // Track cancellation state for immediate visual feedback
   const [isCancelling, setIsCancelling] = useState(false);
@@ -139,351 +127,18 @@ export const useActivitySubscriptions = (
     }
   }, [state.isThinking, isCancelling]);
 
-  // Chunk batching: Accumulate tool output chunks to reduce render frequency
-  // Maps tool call ID -> byte-bounded pending text. Keeping one bounded string
-  // avoids O(n²) repeated reduce/shift work for millions of tiny chunks.
-  const pendingChunks = useRef<Map<string, string>>(new Map());
-
-  // Timer reference for debounced flush
-  const flushTimerRef = useRef<NodeJS.Timeout | null>(null);
-
-  // Streaming content batching: Accumulate assistant streaming chunks to reduce render frequency
-  const pendingStreamingChunks = useRef<string>('');
-
-  // Timer reference for streaming content flush
-  const streamingFlushTimerRef = useRef<NodeJS.Timeout | null>(null);
-
-  // Remove setImmediate batching - AppContext already batches with setTimeout(16ms)
-  // Double batching was causing unnecessary delays
-  const scheduleToolUpdate = useRef((id: string, update: Partial<ToolCallState>) => {
-    // All updates go directly to AppContext, which handles batching
-    if (update.status === 'executing' && update.startTime) {
-      actions.addToolCall(update as ToolCallState);
-    } else {
-      actions.updateToolCall(id, update);
-    }
-  });
-
-  // Flush accumulated chunks for a specific tool (or all tools if no ID provided)
-  const flushChunks = useRef((toolId?: string) => {
-    if (toolId) {
-      // Flush specific tool
-      const chunks = pendingChunks.current.get(toolId);
-      if (chunks && chunks.length > 0) {
-        scheduleToolUpdate.current(toolId, { output: chunks });
-        // Clear this tool's chunks
-        pendingChunks.current.delete(toolId);
-      }
-    } else {
-      // Flush all tools
-      pendingChunks.current.forEach((chunks, id) => {
-        if (chunks.length > 0) scheduleToolUpdate.current(id, { output: chunks });
-      });
-      pendingChunks.current.clear();
-    }
-  });
-
-  // Debounced flush - batches chunks over 100ms window
-  const scheduleDebouncedFlush = useRef(() => {
-    // Cancel existing timer
-    if (flushTimerRef.current) {
-      clearTimeout(flushTimerRef.current);
-    }
-
-    // Schedule new flush after 100ms
-    flushTimerRef.current = setTimeout(() => {
-      flushChunks.current(); // Flush all pending chunks
-      flushTimerRef.current = null;
-    }, 100);
-  });
-
-  // Flush accumulated streaming content to state
-  const flushStreamingContent = useRef(() => {
-    const pending = pendingStreamingChunks.current;
-    if (pending) {
-      actions.setStreamingContent(streamingContentRef.current);
-      pendingStreamingChunks.current = '';
-    }
-  });
-
-  // Throttled flush for streaming content updates
-  // Flushes at most once per interval; doesn't reset timer on new chunks
-  const scheduleStreamingFlush = useRef(() => {
-    // If timer already running, let it complete (throttle behavior)
-    if (streamingFlushTimerRef.current) {
-      return;
-    }
-
-    streamingFlushTimerRef.current = setTimeout(() => {
-      flushStreamingContent.current();
-      streamingFlushTimerRef.current = null;
-    }, UI_DELAYS.STREAMING_CONTENT_BATCH_FLUSH);
-  });
-
-  // A retry replaces the failed attempt. Clear its transient text and timing
-  // before replacement chunks arrive so attempts never merge in presentation.
-  useActivityEvent(ActivityEventType.MODEL_STREAM_RESET, (event) => {
-    if (streamingFlushTimerRef.current) {
-      clearTimeout(streamingFlushTimerRef.current);
-      streamingFlushTimerRef.current = null;
-    }
-    pendingStreamingChunks.current = '';
-    streamingContentRef.current = '';
-    actions.setStreamingContent(undefined);
-    thinkingClock.current.clear(event.parentId || 'root');
-  });
-
-  const reconcileTranscriptToolResults = () => {
-    const messages = agent.getMessages().filter((message) => message.role !== 'system');
-    const reconciled = reconcileRecordedToolCalls(
-      messages,
-      state.activeToolCalls,
-      reconstructToolCallsFromMessages(messages, ServiceRegistry.getInstance()),
-    );
-    reconciled.forEach((call, index) => {
-      if (call !== state.activeToolCalls[index]) actions.updateToolCall(call.id, call);
-    });
-  };
-
-  useActivityEvent(ActivityEventType.CONVERSATION_MESSAGE_ADDED, (event) => {
-    if (event.data?.message?.role === 'tool') reconcileTranscriptToolResults();
-  });
-
-  // Tool call start events
-  useActivityEvent(ActivityEventType.TOOL_CALL_START, (event) => {
-    if (event.data?.groupExecution) return;
-
-    if (!event.id) {
-      throw new Error(`TOOL_CALL_START event missing required 'id' field. Tool: ${event.data?.toolName || 'unknown'}, Timestamp: ${event.timestamp}`);
-    }
-    if (!event.data?.toolName) {
-      throw new Error(`TOOL_CALL_START event missing required 'toolName' field. ID: ${event.id}`);
-    }
-    if (!event.timestamp) {
-      throw new Error(`TOOL_CALL_START event missing required 'timestamp' field. ID: ${event.id}, Tool: ${event.data.toolName}`);
-    }
-
-    // Reconcile any earlier call whose terminal event was lost. The Agent's
-    // transcript is durable and authoritative; activity events are only a live
-    // projection and must never strand an executing row indefinitely.
-    reconcileTranscriptToolResults();
-
-    const toolCall: ToolCallState = {
-      id: event.id,
-      status: 'pending',
-      toolName: event.data.toolName,
-      arguments: event.data.arguments || {},
-      startTime: event.timestamp,
-      parentId: event.parentId,
-      visibleInChat: event.data.visibleInChat ?? true,
-      isTransparent: event.data.isTransparent || false,
-      collapsed: event.data.collapsed || false,
-      shouldCollapse: event.data.shouldCollapse || false,
-      hideOutput: event.data.hideOutput || false,
-      alwaysShowFullOutput: event.data.alwaysShowFullOutput || false,
-      isLinkedPlugin: event.data.isLinkedPlugin || false,
-      displayColor: event.data.displayColor,
-      displayIcon: event.data.displayIcon,
-      hideToolName: event.data.hideToolName || false,
-    };
-
-    actions.addToolCall(toolCall);
-  });
-
-  // Tool call end events
+  // Runtime owns conversation projection. Keep terminal-specific history and modal effects here.
   useActivityEvent(ActivityEventType.TOOL_CALL_END, (event) => {
     if (event.data?.groupExecution) return;
-
-    if (!event.id) {
-      throw new Error(`TOOL_CALL_END event missing required 'id' field. Timestamp: ${event.timestamp}`);
-    }
-    if (!event.timestamp) {
-      throw new Error(`TOOL_CALL_END event missing required 'timestamp' field. ID: ${event.id}`);
-    }
-    if (event.data?.success === undefined) {
-      throw new Error(`TOOL_CALL_END event missing required 'success' field. ID: ${event.id}`);
-    }
-
-    // Flush any pending chunks for this tool immediately when it ends
-    // This ensures no chunks are lost and final output is complete
-    flushChunks.current(event.id);
-
-    const updates: Partial<ToolCallState> = {
+    const call = agent.getConversationView().getSnapshot().activeToolCalls.find(item => item.id === event.id);
+    if (call) ServiceRegistry.getInstance().getToolCallHistory()?.addCall({
+      ...call,
       status: event.data.success ? 'success' : 'error',
       endTime: event.timestamp,
-      executionStartTime: event.data.executionStartTime,
+      output: resolveDisplayContent(event.data.result) || event.data.output || call.output,
       error: event.data.error,
-      error_type: event.data.result?.error_type,
       result: event.data.result,
-    };
-
-    // Extract agent_id from result for agent delegations
-    if (event.data.result?.agent_id) {
-      updates.agentId = event.data.result.agent_id;
-    }
-
-    // Clear diff preview on failure (operation didn't complete)
-    if (!event.data.success) {
-      updates.diffPreview = undefined;
-    }
-
-    const toolCall = state.activeToolCalls.find((tc: ToolCallState) => tc.id === event.id);
-
-    // Skip collapse for linked plugin agents (dev mode) to keep tool calls visible
-    const isLinkedPluginAgent = event.data.result?._isLinkedPluginAgent === true;
-    if (event.data.shouldCollapse && !isLinkedPluginAgent) {
-      updates.collapsed = true;
-    } else if (event.data.collapsed !== undefined) {
-      updates.collapsed = event.data.collapsed;
-    }
-
-    scheduleToolUpdate.current(event.id, updates);
-
-    // Record completed tool call in history
-    if (toolCall) {
-      const completedCall: ToolCallState = {
-        ...toolCall,
-        ...updates,
-        output: resolveDisplayContent(event.data.result) || event.data.output,
-      };
-
-      const serviceRegistry = ServiceRegistry.getInstance();
-      const toolCallHistory = serviceRegistry.getToolCallHistory();
-      if (toolCallHistory) {
-        toolCallHistory.addCall(completedCall);
-      }
-    }
-  });
-
-  // Tool execution start events
-  useActivityEvent(ActivityEventType.TOOL_EXECUTION_START, (event) => {
-    if (!event.id) {
-      throw new Error('TOOL_EXECUTION_START event missing required id field');
-    }
-    if (!event.timestamp) {
-      throw new Error(`TOOL_EXECUTION_START event missing required 'timestamp' field. ID: ${event.id}`);
-    }
-
-    scheduleToolUpdate.current(event.id, {
-      status: 'executing',
-      executionStartTime: event.timestamp,
     });
-  });
-
-  // Tool output chunks - accumulate and batch for performance
-  useActivityEvent(ActivityEventType.TOOL_OUTPUT_CHUNK, (event) => {
-    if (!event.id) {
-      throw new Error(`TOOL_OUTPUT_CHUNK event missing required 'id' field`);
-    }
-
-    const chunk = event.data?.chunk || '';
-
-    // Skip empty chunks
-    if (!chunk) return;
-
-    // Get or create chunk array for this tool
-    const boundedChunk = chunk.length > 64 * 1024 ? chunk.slice(-64 * 1024) : chunk;
-    pendingChunks.current.set(
-      event.id,
-      appendBoundedText(pendingChunks.current.get(event.id) ?? '', boundedChunk, 256 * 1024),
-    );
-
-    // Schedule debounced flush (batches chunks over 100ms window)
-    scheduleDebouncedFlush.current();
-  });
-
-  // Assistant content chunks
-  useActivityEvent(ActivityEventType.ASSISTANT_CHUNK, (event) => {
-    const chunk = event.data?.chunk || '';
-    if (chunk) {
-      // Update the source of truth immediately
-      streamingContentRef.current = appendBoundedText(streamingContentRef.current, chunk, 4 * 1024 * 1024);
-      // Accumulate chunk for batched state update
-      pendingStreamingChunks.current = appendBoundedText(pendingStreamingChunks.current, chunk, 512 * 1024);
-      // Schedule batched flush (100ms throttle window)
-      scheduleStreamingFlush.current();
-    }
-  });
-
-  // Assistant message complete (text blocks ready to display)
-  useActivityEvent(ActivityEventType.ASSISTANT_MESSAGE_COMPLETE, (event) => {
-    const content = event.data?.content || '';
-
-    // Flush any pending streaming chunks immediately before clearing
-    // This ensures no content is lost when the message completes
-    flushStreamingContent.current();
-
-    // Clear streaming content since it's now finalized as a message
-    streamingContentRef.current = '';
-    actions.setStreamingContent(undefined);
-
-    if (content && !event.parentId) {
-      // Root agent message - add to message history for chronological display
-      // Subagent messages are not added here as they're handled via tool output
-      actions.addMessage({
-        role: 'assistant',
-        content: content,
-        timestamp: event.timestamp || Date.now(),
-      });
-    }
-  });
-
-  /**
-   * Thinking start (tracked for the "Thought for Ns" duration).
-   *
-   * Timed from the first reasoning token, NOT from the "Thinking..." indicator
-   * the agent emits before the request goes out. On a slow local backend the gap
-   * between those two is prefill - dead air where the model has produced nothing
-   * - and charging it to thinking time reported 44s of "thought" for a few
-   * seconds of actual reasoning.
-   */
-  useActivityEvent(ActivityEventType.THOUGHT_CHUNK, (event) => {
-    const key = event.parentId || 'root';
-
-    if (event.data?.thinking === true) {
-      thinkingClock.current.markRequestSent(key, event.timestamp);
-      return;
-    }
-
-    const chunk = event.data?.chunk;
-    if (typeof chunk === 'string' && chunk.length > 0) {
-      thinkingClock.current.markReasoningToken(key, event.timestamp);
-    }
-  });
-
-  // Thinking complete
-  useActivityEvent(ActivityEventType.THOUGHT_COMPLETE, (event) => {
-    const thinking = event.data?.thinking || '';
-    const key = event.parentId || 'root';
-    const startTime = thinkingClock.current.resolveStart(key);
-    const endTime = event.timestamp;
-
-    // Always track thinking (not just when show_thinking_in_chat is true)
-    // This allows us to show truncated version when setting is false
-    if (thinking) {
-      // If event has parentId, associate thinking with that tool call (subagent)
-      // Otherwise, add as a standalone message (root agent)
-      if (event.parentId) {
-        // Find the tool call and update it with thinking content and timing
-        actions.updateToolCall(event.parentId, {
-          thinking,
-          thinkingStartTime: startTime,
-          thinkingEndTime: endTime,
-        });
-      } else {
-        // Root agent thinking - add as message with timing info
-        actions.addMessage({
-          role: 'assistant',
-          content: '',
-          thinking: thinking,
-          thinkingStartTime: startTime,
-          thinkingEndTime: endTime,
-          timestamp: Date.now(),
-        });
-      }
-
-      thinkingClock.current.clear(key);
-    }
   });
 
   // System prompt display
@@ -500,188 +155,18 @@ export const useActivitySubscriptions = (
     }
   });
 
-  // Agent start
   useActivityEvent(ActivityEventType.AGENT_START, (event) => {
-    const isSpecialized = event.data?.isSpecializedAgent || false;
-    const agentName = event.data?.agentName;
-
-    if (isSpecialized) {
-      // Track sub-agent name if available
-      if (agentName) {
-        actions.addSubAgent(agentName);
-      }
-    } else {
-      // Flush any pending streaming content before clearing
-      flushStreamingContent.current();
-
-      // Cancel any pending streaming flush timer (already flushed above)
-      if (streamingFlushTimerRef.current) {
-        clearTimeout(streamingFlushTimerRef.current);
-        streamingFlushTimerRef.current = null;
-      }
-
-      // Clear both streaming refs atomically to prevent accumulation bugs
-      streamingContentRef.current = '';
-      pendingStreamingChunks.current = '';
-      actions.setStreamingContent(undefined);
-    }
-
-    // Capture agent model for the tool call (event.id is the tool call ID)
-    if (event.id && event.data?.model) {
-      scheduleToolUpdate.current(event.id, {
-        agentModel: event.data.model,
-      });
-    }
+    if (event.data?.isSpecializedAgent && event.data.agentName) actions.addSubAgent(event.data.agentName);
   });
 
-  // Agent end
   useActivityEvent(ActivityEventType.AGENT_END, (event) => {
-    const isSpecialized = event.data?.isSpecializedAgent || false;
-    const wasInterrupted = event.data?.interrupted || false;
-    const agentName = event.data?.agentName;
-    const contextUsage = event.data?.contextUsage;
-
-    if (isSpecialized) {
-      // Remove sub-agent from tracking if available
-      if (agentName) {
-        actions.removeSubAgent(agentName);
-      }
-
-      // Record delegation tool call in history (AGENT_END fires before TOOL_CALL_END for delegations)
-      // This ensures delegation tools are captured in ToolCallHistory for /debug agent
-      if (event.id) {
-        const toolCall = state.activeToolCalls.find((tc: ToolCallState) => tc.id === event.id);
-        if (toolCall) {
-          const completedCall: ToolCallState = {
-            ...toolCall,
-            status: wasInterrupted ? 'error' : 'success',
-            endTime: event.timestamp || Date.now(),
-            output: event.data?.result || event.data?.output,
-            contextUsage,
-          };
-
-          const serviceRegistry = ServiceRegistry.getInstance();
-          const toolCallHistory = serviceRegistry.getToolCallHistory();
-          if (toolCallHistory) {
-            toolCallHistory.addCall(completedCall);
-          }
-        }
-      }
-    } else {
-      // Flush any pending streaming content before clearing
-      flushStreamingContent.current();
-
-      // Cancel any pending streaming flush timer (already flushed above)
-      if (streamingFlushTimerRef.current) {
-        clearTimeout(streamingFlushTimerRef.current);
-        streamingFlushTimerRef.current = null;
-      }
-
-      // Clear both streaming refs atomically to prevent accumulation bugs
-      streamingContentRef.current = '';
-      pendingStreamingChunks.current = '';
-      actions.setStreamingContent(undefined);
-
-      // Reconcile tool calls whenever the main agent ends, including hard
-      // interrupts. Recorded tool results are authoritative; calls that truly
-      // never reported completion become errors instead of disappearing or
-      // spinning forever.
-      const messages = agent.getMessages().filter((message) => message.role !== 'system');
-      const reconstructed = reconstructToolCallsFromMessages(
-        messages,
-        ServiceRegistry.getInstance(),
-      );
-      const finalized = finalizeToolCallsAtAgentEnd(
-        state.activeToolCalls,
-        reconstructed,
-        Date.now(),
-      );
-      finalized.forEach((toolCall, index) => {
-        const previous = state.activeToolCalls[index];
-        if (previous && previous.status !== toolCall.status) {
-          flushChunks.current(toolCall.id);
-          actions.updateToolCall(toolCall.id, toolCall);
-        }
-      });
-
-      // Clear per-turn tracking maps to prevent unbounded growth across turns.
-      thinkingClock.current.clearAll();
-      pendingChunks.current.clear();
-    }
-
-    // Capture context usage + tool-use count for the tool call (event.id is the
-    // tool call ID). toolUseCount feeds the collapsed "Done (N tool uses)" summary,
-    // since the sub-agent's individual tool calls are stream-isolated and never
-    // ingested into the main conversation.
-    const toolUseCount = event.data?.toolUseCount;
-    if (event.id && (typeof contextUsage === 'number' || typeof toolUseCount === 'number')) {
-      scheduleToolUpdate.current(event.id, {
-        ...(typeof contextUsage === 'number' ? { contextUsage } : {}),
-        ...(typeof toolUseCount === 'number' ? { toolUseCount } : {}),
-      });
-    }
-    // Note: isCancelling is cleared via an effect tied to isThinking (see above),
-    // not here — AGENT_END also fires for sub-agents, which must not clear the
-    // main "Cancelling" indicator while the main turn is still unwinding.
+    if (event.data?.isSpecializedAgent && event.data.agentName) actions.removeSubAgent(event.data.agentName);
   });
 
-  /** Begin hard-interrupt UI cleanup without discarding tool history. */
   useActivityEvent(ActivityEventType.USER_INTERRUPT_INITIATED, () => {
     setIsCancelling(true);
-    // Preserve any output received before cancellation. The terminal tool
-    // event or AGENT_END reconciliation will finalize the row.
-    flushStreamingContent.current();
-    flushChunks.current();
-    state.activeSubAgents.forEach(agentName => {
-      actions.removeSubAgent(agentName);
-    });
-
-    // Dismiss any agent-driven request modals. Their backend promises are
-    // rejected on the same event by TrustManager/FormManager/PlanModeManager,
-    // but those rejections emit no UI event, so the prompts must be cleared
-    // here or they would linger after the work they belong to is abandoned.
+    state.activeSubAgents.forEach(agentName => actions.removeSubAgent(agentName));
     modal.clearTransientModals();
-
-    // Per-turn clocks are no longer useful after cancellation. Tool chunks were
-    // flushed above, so clearing their accumulator cannot erase visible output.
-    thinkingClock.current.clearAll();
-    pendingChunks.current.clear();
-  });
-
-  // Diff preview
-  useActivityEvent(ActivityEventType.DIFF_PREVIEW, (event) => {
-    if (!event.id) {
-      throw new Error(`DIFF_PREVIEW event missing required 'id' field`);
-    }
-
-    scheduleToolUpdate.current(event.id, {
-      diffPreview: {
-        oldContent: String(event.data?.oldContent || '').slice(-64 * 1024),
-        newContent: String(event.data?.newContent || '').slice(-64 * 1024),
-        filePath: event.data?.filePath || '',
-        operationType: event.data?.operationType || 'apply-patch',
-        editsCount: event.data?.editsCount,
-      },
-    });
-  });
-
-  // Error events
-  useActivityEvent(ActivityEventType.ERROR, (event) => {
-    if (event.data?.groupExecution) return;
-
-    if (!event.id) {
-      throw new Error(`ERROR event missing required 'id' field`);
-    }
-    if (!event.timestamp) {
-      throw new Error(`ERROR event missing required 'timestamp' field. ID: ${event.id}`);
-    }
-
-    scheduleToolUpdate.current(event.id, {
-      status: 'error',
-      error: event.data?.error || 'Unknown error',
-      endTime: event.timestamp,
-      diffPreview: undefined, // Clear diff preview on error (operation didn't complete)
-    });
   });
 
   // Status message events (connection retries, etc.)
@@ -981,7 +466,7 @@ export const useActivitySubscriptions = (
     if (typeof contextUsage === 'number') {
       if (parentCallId) {
         // Update tool call context usage for specialized agents
-        scheduleToolUpdate.current(parentCallId, { contextUsage });
+        actions.updateToolCall(parentCallId, { contextUsage });
       } else {
         // Update global context usage for main agent
         actions.setContextUsage(contextUsage);
@@ -994,7 +479,7 @@ export const useActivitySubscriptions = (
     const { parentId } = event.data || {};
     if (parentId) {
       // Mark the tool call as compacting for delegated agents
-      scheduleToolUpdate.current(parentId, { isCompacting: true });
+      actions.updateToolCall(parentId, { isCompacting: true });
     } else {
       // Show global compacting indicator for main agent
       actions.setIsCompacting(true);
@@ -1010,7 +495,7 @@ export const useActivitySubscriptions = (
     // the agent immediately rebuilds from the newer conversation.
     if (error || interrupted) {
       if (parentId) {
-        scheduleToolUpdate.current(parentId, { isCompacting: false });
+        actions.updateToolCall(parentId, { isCompacting: false });
       } else {
         actions.setIsCompacting(false);
       }
@@ -1024,7 +509,7 @@ export const useActivitySubscriptions = (
     // For delegated agent compaction, only add the notice and clear compacting state
     // Don't touch main agent's conversation or tool calls
     if (parentId) {
-      scheduleToolUpdate.current(parentId, { isCompacting: false });
+      actions.updateToolCall(parentId, { isCompacting: false });
       actions.addCompactionNotice({
         id: event.id,
         timestamp: event.timestamp,
@@ -1144,31 +629,9 @@ export const useActivitySubscriptions = (
     }
   }, [modal.rewindRequest, actions, setRewindRequest, undoCoordinator]);
 
-  // Cleanup on unmount: flush pending chunks and cancel timers
   useEffect(() => {
-    const flushPendingToolChunks = flushChunks.current;
-    const flushPendingStreamingContent = flushStreamingContent.current;
-    return () => {
-      isMountedRef.current = false;
-
-      // Flush any remaining chunks
-      flushPendingToolChunks();
-
-      // Cancel pending flush timer
-      if (flushTimerRef.current) {
-        clearTimeout(flushTimerRef.current);
-        flushTimerRef.current = null;
-      }
-
-      // Flush any pending streaming content
-      flushPendingStreamingContent();
-
-      // Cancel pending streaming flush timer
-      if (streamingFlushTimerRef.current) {
-        clearTimeout(streamingFlushTimerRef.current);
-        streamingFlushTimerRef.current = null;
-      }
-    };
+    isMountedRef.current = true;
+    return () => { isMountedRef.current = false; };
   }, []);
 
   // Undo file list request

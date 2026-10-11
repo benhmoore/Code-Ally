@@ -1,3 +1,4 @@
+import { ConversationViewStore } from '@services/ConversationViewStore.js';
 import React, { useEffect } from 'react';
 import { EventEmitter } from 'node:events';
 import { render } from 'ink';
@@ -33,11 +34,12 @@ describe('useForegroundConversationView', () => {
   it('projects child messages and live chunks without mutating root state', async () => {
     const stream = new ActivityStream('child-call');
     const messages: Message[] = [{ role: 'user', content: 'child task' }];
-    let processing = true;
+    const store = new ConversationViewStore(stream, () => messages, () => []);
+    stream.emit({ id: 'start', type: ActivityEventType.AGENT_START, timestamp: Date.now(), data: { isSpecializedAgent: true } });
     const child = {
       getMessages: () => messages,
       getActivityStream: () => stream,
-      isProcessing: () => processing,
+      getConversationView: () => store,
     } as Agent;
     const observed: Array<ForegroundConversationView | null> = [];
 
@@ -102,7 +104,7 @@ describe('useForegroundConversationView', () => {
     await vi.waitFor(() => expect(observed.at(-1)?.streamingContent).toBe('replacement'));
 
     messages.push({ role: 'assistant', content: 'done' });
-    processing = false;
+
     stream.emit({
       id: 'complete',
       type: ActivityEventType.ASSISTANT_MESSAGE_COMPLETE,
@@ -110,9 +112,11 @@ describe('useForegroundConversationView', () => {
       data: { content: 'done' },
     });
     await vi.waitFor(() => {
-      expect(observed.at(-1)?.messages).toEqual(messages);
+      expect(observed.at(-1)?.messages.map(message => message.content)).toContain('done');
+      expect(observed.at(-1)?.messages.map(message => message.content)).toContain('route-local error');
       expect(observed.at(-1)?.streamingContent).toBeUndefined();
-      expect(observed.at(-1)?.isThinking).toBe(false);
+      // A text block can complete while tools or additional requests still run.
+      expect(observed.at(-1)?.isThinking).toBe(true);
     });
 
     stream.emit({
@@ -122,5 +126,6 @@ describe('useForegroundConversationView', () => {
       data: {},
     });
     await vi.waitFor(() => expect(observed.at(-1)?.messages).toEqual([]));
+    store.close();
   });
 });

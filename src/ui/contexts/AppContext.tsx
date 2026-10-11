@@ -1,3 +1,4 @@
+import type { ConversationViewStore } from '@services/ConversationViewStore.js';
 /**
  * AppContext - Global application state management
  *
@@ -6,70 +7,16 @@
  * tree to access and update global application state.
  */
 
-import React, { createContext, useContext, useState, useCallback, useRef, useEffect } from 'react';
+import React, { createContext, useContext, useState, useCallback, useRef, useEffect, useSyncExternalStore } from 'react';
 import { useStdout } from 'ink';
 import type { Message, Config, ToolCallState } from '@shared/index.js';
 import { UI_DELAYS } from '@config/constants.js';
 import { generateMessageId } from '@utils/id.js';
 import { isToolCallExpanded } from '../utils/toolVisibility.js';
 
-const LIVE_MESSAGE_LIMIT = 500;
-const LIVE_MESSAGE_BYTES = 4 * 1024 * 1024;
-const COMPLETED_TOOL_LIMIT = 500;
+import { boundVisibleMessages, boundToolCalls } from '@services/conversationBounds.js';
 const NOTICE_LIMIT = 100;
 const STATUS_LIMIT = 50;
-const TOOL_TEXT_LIMIT = 64 * 1024;
-
-function truncateMiddle(value: string | undefined, max = TOOL_TEXT_LIMIT): string | undefined {
-  if (!value || value.length <= max) return value;
-  const half = Math.floor((max - 80) / 2);
-  return `${value.slice(0, half)}\n… ${value.length - half * 2} characters omitted …\n${value.slice(-half)}`;
-}
-
-function boundVisibleMessages(messages: Message[]): Message[] {
-  const visible = messages
-    .filter(message => message.role !== 'system' && message.role !== 'tool')
-    .map(message => ({ ...message, content: truncateMiddle(message.content, 1024 * 1024) ?? '' }));
-  const result: Message[] = [];
-  let bytes = 0;
-  for (let index = visible.length - 1; index >= 0 && result.length < LIVE_MESSAGE_LIMIT; index--) {
-    const message = visible[index]!;
-    const size = Buffer.byteLength(JSON.stringify(message));
-    if (result.length > 0 && bytes + size > LIVE_MESSAGE_BYTES) break;
-    result.push(message);
-    bytes += size;
-  }
-  return result.reverse();
-}
-
-function compactSettledTool(call: ToolCallState): ToolCallState {
-  if (!['success', 'error', 'cancelled'].includes(call.status)) return call;
-  return {
-    ...call,
-    output: truncateMiddle(call.output),
-    error: truncateMiddle(call.error),
-    thinking: truncateMiddle(call.thinking),
-    result: call.result ? {
-      ...call.result,
-      content: truncateMiddle(call.result.content),
-      error: truncateMiddle(call.result.error) ?? '',
-    } : undefined,
-    diffPreview: call.diffPreview ? {
-      ...call.diffPreview,
-      oldContent: truncateMiddle(call.diffPreview.oldContent) ?? '',
-      newContent: truncateMiddle(call.diffPreview.newContent) ?? '',
-    } : undefined,
-  };
-}
-
-function boundToolCalls(calls: ToolCallState[]): ToolCallState[] {
-  const running = calls.filter(call => !['success', 'error', 'cancelled'].includes(call.status));
-  const completed = calls.filter(call => ['success', 'error', 'cancelled'].includes(call.status))
-    .slice(-COMPLETED_TOOL_LIMIT)
-    .map(compactSettledTool);
-  const ids = new Set(running.map(call => call.id));
-  return [...completed.filter(call => !ids.has(call.id)), ...running];
-}
 
 function applyToolCallUpdates(
   calls: ToolCallState[],
@@ -274,7 +221,11 @@ export const AppContext = createContext<AppContextValue | null>(null);
 /**
  * Props for AppProvider
  */
+const emptySubscribe = () => () => {};
+const emptySnapshot = () => null;
+
 export interface AppProviderProps {
+  conversationStore?: ConversationViewStore;
   initialConfig: Config;
   children: React.ReactNode;
 }
@@ -319,9 +270,11 @@ export function reconcileCurrentAgentModelAfterConfigUpdate(
  */
 export const AppProvider: React.FC<AppProviderProps> = ({
   initialConfig,
+  conversationStore,
   children,
 }) => {
   const { write: writeToStdout } = useStdout();
+  const runtimeView = useSyncExternalStore(conversationStore?.subscribe ?? emptySubscribe, conversationStore?.getSnapshot ?? emptySnapshot);
   // State
   const [conversationView, setConversationView] = useState<{
     messages: Message[];
@@ -350,6 +303,10 @@ export const AppProvider: React.FC<AppProviderProps> = ({
 
   // Actions
   const addMessage = useCallback((message: Message) => {
+    if (conversationStore) {
+      conversationStore.addDisplayMessage(message);
+      return;
+    }
     // Add ID and timestamp if not present
     const messageWithMetadata = {
       ...message,
@@ -367,7 +324,7 @@ export const AppProvider: React.FC<AppProviderProps> = ({
         messages: boundVisibleMessages([...prev.messages, messageWithMetadata]),
       };
     });
-  }, []);
+  }, [conversationStore]);
 
   const setMessagesWithTimestamps = useCallback((newMessages: Message[]) => {
     // Add IDs and timestamps to messages that don't have them
@@ -669,7 +626,7 @@ export const AppProvider: React.FC<AppProviderProps> = ({
     messages,
     config,
     contextUsage,
-    activeToolCallsCount: activeToolCalls.length,
+    activeToolCallsCount: (runtimeView?.activeToolCalls ?? activeToolCalls).length,
     activeToolCalls,
     isThinking,
     streamingContent,
@@ -682,7 +639,8 @@ export const AppProvider: React.FC<AppProviderProps> = ({
     currentAgentModel,
     activeSubAgents,
     activeAgentId,
-  }), [messages, config, contextUsage, activeToolCalls, isThinking, streamingContent, isCompacting, compactionNotices, rewindNotices, statusMessages, staticRemountKey, currentAgent, currentAgentModel, activeSubAgents, activeAgentId]);
+    ...runtimeView,
+  }), [runtimeView, messages, config, contextUsage, activeToolCalls, isThinking, streamingContent, isCompacting, compactionNotices, rewindNotices, statusMessages, staticRemountKey, currentAgent, currentAgentModel, activeSubAgents, activeAgentId]);
 
   // Memoize actions object to prevent unnecessary context updates
   const actions = React.useMemo(() => ({

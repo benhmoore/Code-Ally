@@ -95,3 +95,15 @@ describe('ConversationManager message-added observer', () => {
     expect(manager.getMessageCount()).toBe(1);
   });
 });
+
+it('notifies projections on history replacement without treating compaction as a rewind', () => {
+  const manager = new ConversationManager({ instanceId: 'replacement' });
+  const histories: string[][] = [];
+  manager.setTranscriptReplacedObserver(() => histories.push(manager.getTranscript().map(message => message.content)));
+  manager.setMessages([user('original')]);
+  manager.replaceActiveMessages([user('summary')]);
+  expect(histories).toEqual([['original']]);
+  manager.loadConversation([user('resumed context')], [user('resumed transcript')]);
+  manager.clearMessages();
+  expect(histories).toEqual([['original'], ['resumed transcript'], []]);
+});

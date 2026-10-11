@@ -107,16 +107,6 @@ export const useInputHandlers = (
     const parentId = 'root';
     const targetAgent = route.kind === 'primary' ? 'main' : route.id;
 
-    // Add user message to UI conversation with parentId for reconstruction
-    if (route.kind === 'primary') {
-      addDisplayMessage({
-        role: 'user',
-        content: message,
-        timestamp: Date.now(),
-        metadata: { isInterjection: true, parentId },
-      });
-    }
-
     // Emit event for UI
     activityStream.emit({
       id: `interjection-${Date.now()}`,
@@ -128,7 +118,7 @@ export const useInputHandlers = (
         targetAgent,
       },
     });
-  }, [addDisplayMessage, ensureRouteAvailable, route]);
+  }, [ensureRouteAvailable, route]);
 
   /**
    * Handle user input (messages, commands, bash shortcuts)
@@ -137,11 +127,11 @@ export const useInputHandlers = (
     if (!ensureRouteAvailable()) return;
     const serviceRegistry = ServiceRegistry.getInstance();
     const { agent, activityStream } = route;
-    // Child views are projections of the Agent transcript, so durable user
+    // Views project the Agent transcript, so durable user
     // echoes arrive through CONVERSATION_MESSAGE_ADDED. Presentation-only
     // errors and responses still use the route-local display channel.
     const shortcutMessageSink = (message: Message) => {
-      if (route.kind === 'child' && message.role === 'user') return;
+      if (message.role === 'user' && trimmed.startsWith('!')) return;
       addDisplayMessage(message);
     };
 
@@ -209,7 +199,6 @@ export const useInputHandlers = (
           // Add any updated messages (e.g., system reminders) to both UI and Agent
           if (result.updatedMessages) {
             result.updatedMessages.forEach(msg => {
-              addDisplayMessage(msg);  // route-local UI display
               agent.addMessage(msg);    // Agent context for LLM
             });
           }
@@ -275,21 +264,6 @@ export const useInputHandlers = (
           });
           return;
         }
-      }
-
-      // Add user message to UI (separate from Agent's internal message history)
-      // This displays the message to the user immediately.
-      // Child projections receive the durable user message from the Agent's
-      // own message-added event; the primary UI still owns its legacy context.
-      if (route.kind === 'primary') {
-        addDisplayMessage({
-          role: 'user',
-          content: trimmed,
-          metadata: filteredMentions && (filteredMentions.files?.length || filteredMentions.images?.length || filteredMentions.directories?.length)
-            ? { mentions: filteredMentions }
-            : undefined,
-          images: base64Images,
-        });
       }
 
       // Handle file mentions - execute read tool before sending user message

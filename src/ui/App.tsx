@@ -721,9 +721,9 @@ const AppContentComponent: React.FC<{
           isThinking={displayedIsThinking}
           streamingContent={displayedStreamingContent}
           activeToolCalls={displayedToolCalls}
-          compactionNotices={isChildSelected ? [] : state.compactionNotices}
+          compactionNotices={isChildSelected ? selectedChildView?.compactionNotices ?? [] : state.compactionNotices}
           rewindNotices={isChildSelected ? [] : state.rewindNotices}
-          statusMessages={isChildSelected ? [] : state.statusMessages}
+          statusMessages={isChildSelected ? selectedChildView?.statusMessages ?? [] : state.statusMessages}
           staticRemountKey={state.staticRemountKey}
           config={effectiveConfig}
           activePluginCount={activePluginCount}
@@ -1291,7 +1291,7 @@ export const App: React.FC<AppProps> = ({
   return (
     <TerminalProvider>
       <ActivityProvider activityStream={streamRef.current}>
-        <AppProvider initialConfig={config}>
+        <AppProvider initialConfig={config} conversationStore={routing.primaryAgent.getConversationView()}>
           <AppContent
             foregroundAgent={routing.foregroundAgent}
             foregroundAgentId={routing.foregroundAgentId}
@@ -1352,7 +1352,7 @@ export const AppWithMessages: React.FC<AppWithMessagesProps> = ({
   return (
     <TerminalProvider>
       <ActivityProvider activityStream={streamRef.current}>
-        <AppProvider initialConfig={config}>
+        <AppProvider initialConfig={config} conversationStore={routing.primaryAgent.getConversationView()}>
           <AppContentWithMessages
             foregroundAgent={routing.foregroundAgent}
             foregroundAgentId={routing.foregroundAgentId}
@@ -1385,16 +1385,15 @@ const AppContentWithMessages: React.FC<{
   returnToPrimaryConversation,
   initialMessages,
 }) => {
-  const { actions } = useAppContext();
   const hasLoadedRef = useRef(false);
 
   // Load initial messages on mount
   useEffect(() => {
     if (!hasLoadedRef.current && initialMessages.length > 0) {
-      actions.setMessages(initialMessages);
+      primaryAgent.setMessages(initialMessages);
       hasLoadedRef.current = true;
     }
-  }, [initialMessages, actions]);
+  }, [initialMessages, primaryAgent]);
 
   return (
     <AppContent
