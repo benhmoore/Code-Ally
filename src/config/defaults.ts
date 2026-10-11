@@ -5,10 +5,11 @@
  * Configuration can be overridden via config file or runtime modifications.
  */
 
-import { DIFF_LAYOUT_VALUES, MOUSE_SUPPORT_VALUES, type Config, type DiffLayout, type MouseSupport } from '../types/index.js';
+import type { Config } from '../types/index.js';
 import { isHooksConfigShape } from '../hooks/types.js';
 import { formatError } from '../utils/errorUtils.js';
-import { REASONING_EFFORT, REASONING_EFFORT_API_VALUES } from './constants.js';
+import { REASONING_EFFORT } from './constants.js';
+import { CONFIG_CHOICES } from './metadata.js';
 import { TIMEOUT_LIMITS } from './toolDefaults.js';
 
 /**
@@ -33,6 +34,11 @@ export const DEFAULT_CONFIG: Config = {
   // Leave temperature unset so the backend can use the model author's tuned
   // default. Users can still configure a numeric override.
   temperature: undefined,
+  top_p: undefined,
+  top_k: undefined,
+  min_p: undefined,
+  repeat_penalty: undefined,
+  stop: undefined,
   max_tokens: 16384, // Max tokens to generate per response (or 90% of context_size, whichever is lower)
   reasoning_effort: REASONING_EFFORT.LOW, // Reasoning level for gpt-oss and reasoning models
   // Sampling overrides are omitted by default so each model's own tuned defaults
@@ -235,8 +241,19 @@ export function validateConfigValue(
 ): { valid: boolean; coercedValue?: any; error?: string } {
   const expectedType = getConfigType(key);
 
+  if (key === 'endpoint') {
+    try {
+      if (typeof value !== 'string') throw new Error('Invalid URL');
+      const url = new URL(value);
+      if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password) throw new Error('Invalid URL');
+      return { valid: true, coercedValue: value.trim().replace(/\/+$/, '') };
+    } catch {
+      return { valid: false, error: 'endpoint must be an HTTP or HTTPS base URL; use api_key for credentials' };
+    }
+  }
+
   // An unset temperature means "use the backend/model default".
-  if (key === 'temperature' && (value === undefined || value === null)) {
+  if (['temperature', 'top_p', 'top_k', 'min_p', 'repeat_penalty'].includes(key) && (value === undefined || value === null)) {
     return { valid: true, coercedValue: undefined };
   }
 
@@ -256,7 +273,7 @@ export function validateConfigValue(
   }
 
   // Handle null/undefined plan_model (defaults to global model)
-  if (key === 'plan_model' && (value === null || value === undefined)) {
+  if ((key === 'plan_model' || key === 'agent_creation_model') && (value === null || value === undefined)) {
     return { valid: true, coercedValue: value };
   }
 
@@ -265,39 +282,13 @@ export function validateConfigValue(
     return { valid: true, coercedValue: undefined };
   }
 
-  // Validate reasoning_effort values
-  if (key === 'reasoning_effort' && typeof value === 'string') {
-    const lowerValue = value.toLowerCase();
-    if (REASONING_EFFORT_API_VALUES.includes(lowerValue as any)) {
-      return { valid: true, coercedValue: lowerValue };
-    }
-    return { valid: false, error: `reasoning_effort must be one of: ${REASONING_EFFORT_API_VALUES.join(', ')}` };
-  }
-
-  if (key === 'diff_display_layout' && typeof value === 'string') {
-    const lowerValue = value.toLowerCase();
-    if (DIFF_LAYOUT_VALUES.includes(lowerValue as DiffLayout)) {
-      return { valid: true, coercedValue: lowerValue };
-    }
-    return { valid: false, error: `diff_display_layout must be one of: ${DIFF_LAYOUT_VALUES.join(', ')}` };
-  }
-
-  if (key === 'mouse_support' && typeof value === 'string') {
-    const lowerValue = value.toLowerCase();
-    if (MOUSE_SUPPORT_VALUES.includes(lowerValue as MouseSupport)) {
-      return { valid: true, coercedValue: lowerValue };
-    }
-    return { valid: false, error: `mouse_support must be one of: ${MOUSE_SUPPORT_VALUES.join(', ')}` };
-  }
-
-  // Validate provider values
-  const VALID_PROVIDERS = ['ollama', 'openai-compat', 'openai-responses'] as const;
-  if (key === 'provider' && typeof value === 'string') {
-    const lowerValue = value.toLowerCase();
-    if (VALID_PROVIDERS.includes(lowerValue as any)) {
-      return { valid: true, coercedValue: lowerValue };
-    }
-    return { valid: false, error: `provider must be one of: ${VALID_PROVIDERS.join(', ')}` };
+  // Finite choices are shared with setup, help, and completion.
+  const choices = CONFIG_CHOICES[key];
+  if (choices && typeof value === 'string') {
+    const normalized = value.toLowerCase();
+    return choices.includes(normalized)
+      ? { valid: true, coercedValue: normalized }
+      : { valid: false, error: `${key} must be one of: ${choices.join(', ')}` };
   }
 
   // Handle null/undefined/empty api_key (no auth)
@@ -314,16 +305,6 @@ export function validateConfigValue(
       return { valid: true, coercedValue: value };
     }
     return { valid: false, error: 'stop must be an array of strings' };
-  }
-
-  // Validate search_provider values
-  const VALID_SEARCH_PROVIDERS = ['none', 'brave', 'serper'] as const;
-  if (key === 'search_provider' && typeof value === 'string') {
-    const lowerValue = value.toLowerCase();
-    if (VALID_SEARCH_PROVIDERS.includes(lowerValue as any)) {
-      return { valid: true, coercedValue: lowerValue };
-    }
-    return { valid: false, error: `search_provider must be one of: ${VALID_SEARCH_PROVIDERS.join(', ')}` };
   }
 
   // Handle null/undefined search_api_key
@@ -353,12 +334,12 @@ export function validateConfigValue(
         return { valid: false, error: `Expected string, got ${typeof value}` };
 
       case 'number':
-        if (typeof value === 'number') {
+        if (typeof value === 'number' && Number.isFinite(value)) {
           return { valid: true, coercedValue: value };
         }
         if (typeof value === 'string') {
-          const parsed = parseFloat(value);
-          if (!isNaN(parsed)) {
+          const parsed = Number(value);
+          if (value.trim() && Number.isFinite(parsed)) {
             return { valid: true, coercedValue: parsed };
           }
         }

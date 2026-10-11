@@ -8,6 +8,7 @@
  * 4. Confirm and create
  */
 
+import { listProviderModels, probeModelCapabilities } from '@llm/ProviderAdapter.js';
 import React, { useState } from 'react';
 import { Box, Text, useInput } from 'ink';
 import { ServiceRegistry } from '@services/ServiceRegistry.js';
@@ -225,32 +226,20 @@ export const AgentWizardView: React.FC<AgentWizardViewProps> = ({
     return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)}GB`;
   };
 
-  // Fetch available models from Ollama
+  // Fetch available models from the configured provider
   const fetchModels = async () => {
     setError(null);
     try {
       const registry = ServiceRegistry.getInstance();
       const configManager = registry.get('config_manager');
       const config = configManager?.getConfig();
-      const endpoint = config?.endpoint || 'http://localhost:11434';
-
-      const response = await fetch(`${endpoint}/api/tags`, {
-        method: 'GET',
-        signal: AbortSignal.timeout(5000),
-      });
-
-      if (!response.ok) {
-        throw new Error(`HTTP ${response.status}`);
-      }
-
-      const data = (await response.json()) as { models?: Array<{ name: string; size?: number }> };
-      const models = (data.models || []).map((m) => ({
-        name: m.name,
-        size: m.size ? formatSize(m.size) : undefined,
-      }));
+      if (!config) throw new Error('Configuration is unavailable');
+      const discovery = await listProviderModels(config);
+      if (discovery.error) throw new Error(discovery.error);
+      const models = discovery.models.map(m => ({ name: m.name, size: m.size ? formatSize(m.size) : undefined }));
 
       if (models.length === 0) {
-        setError('No models available. Install models with: ollama pull <model>');
+        setError('No models reported by this provider. Use the global default, or configure a model with /config set model=<name>.');
         setStep(ConfigStep.MODEL_CHOICE);
         return;
       }
@@ -273,14 +262,11 @@ export const AgentWizardView: React.FC<AgentWizardViewProps> = ({
       const registry = ServiceRegistry.getInstance();
       const configManager = registry.get('config_manager');
       const config = configManager?.getConfig();
-      const endpoint = config?.endpoint || 'http://localhost:11434';
+      if (!config) throw new Error('Configuration is unavailable');
+      const result = await probeModelCapabilities(config, modelName);
+      setModelSupportsTools(result.tools !== 'unsupported');
 
-      const { testModelCapabilities } = await import('@llm/ModelValidation.js');
-      const result = await testModelCapabilities(endpoint, modelName);
-
-      setModelSupportsTools(result.supportsTools);
-
-      if (!result.supportsTools) {
+      if (result.tools === 'unsupported') {
         // Model doesn't support tools - skip tool selection, set to no tools
         setSelectedTools([]);
         setStep(ConfigStep.CONFIRM);

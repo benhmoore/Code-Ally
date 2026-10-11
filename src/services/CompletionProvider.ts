@@ -12,11 +12,13 @@ import { promises as fs } from 'fs';
 import { dirname, basename } from 'path';
 import path from 'path';
 import * as os from 'os';
+import { CONFIG_CHOICES, CONFIG_SUGGESTIONS, CONFIG_DESCRIPTIONS, SECRET_CONFIG_KEYS, formatConfigValue } from '../config/metadata.js';
+import { getModelProvider } from '../config/providers.js';
 import { AgentManager } from './AgentManager.js';
 import { ServiceRegistry } from './ServiceRegistry.js';
 import { logger } from './Logger.js';
 import { formatError } from '../utils/errorUtils.js';
-import { CACHE_TIMEOUTS, BUFFER_SIZES, REASONING_EFFORT_API_VALUES, API_TIMEOUTS } from '../config/constants.js';
+import { CACHE_TIMEOUTS, BUFFER_SIZES, API_TIMEOUTS } from '../config/constants.js';
 import { FuzzyFilePathMatcher, FuzzyMatchResult } from './FuzzyFilePathMatcher.js';
 import { formatRelativeTime } from '../ui/utils/timeUtils.js';
 import type { Config, SessionInfo } from '../types/index.js';
@@ -310,6 +312,12 @@ export class CompletionProvider {
           insertText: `${configKey}=${c.value}`,
         }));
       }
+    }
+
+    if (command === '/config' && subcommand === 'reset' && wordCount === 3) {
+      return (await this.getConfigKeyCompletions(context.currentWord)).map(completion => ({
+        ...completion, insertText: completion.value, continueInput: false,
+      }));
     }
 
     // Complete file paths for /focus (user typed "/focus ")
@@ -792,7 +800,23 @@ export class CompletionProvider {
     }
 
     const type = CONFIG_TYPES[key as keyof typeof CONFIG_TYPES];
-    const completions: Completion[] = [];
+    if (SECRET_CONFIG_KEYS.has(key as keyof Config)) return [];
+
+    const choices = CONFIG_CHOICES[key as keyof Config];
+    if (choices) {
+      return choices.filter(value => value.startsWith(prefix.toLowerCase())).map(value => ({
+        value,
+        description: key === 'provider' ? getModelProvider(value as Config['provider']).label : value,
+        type: 'option' as const,
+      }));
+    }
+
+    if (key === 'endpoint') {
+      const current = this.configManager?.getValue('endpoint');
+      const suggested = getModelProvider(this.configManager?.getValue('provider')).endpoint;
+      return [...new Set([current, suggested])].filter((value): value is string => !!value && value.startsWith(prefix))
+        .map(value => ({ value, description: value === current ? 'Current endpoint' : 'Provider default', type: 'option' as const }));
+    }
 
     // Boolean values
     if (type === 'boolean') {
@@ -809,22 +833,11 @@ export class CompletionProvider {
     // Model field - fetch from the configured provider when discovery is supported.
     if (key === 'model' || key === 'service_model' || key === 'explore_model' || key === 'plan_model' || key === 'agent_creation_model') {
       const models = await this.getProviderModels();
-      return models
+      return [...(key === 'model' ? [] : ['null']), ...models]
         .filter(model => model.toLowerCase().includes(prefix.toLowerCase()))
         .map(model => ({
           value: model,
-          description: 'Provider model',
-          type: 'option' as const,
-        }));
-    }
-
-    // Reasoning effort - predefined values
-    if (key === 'reasoning_effort') {
-      return [...REASONING_EFFORT_API_VALUES]
-        .filter(val => val.startsWith(prefix))
-        .map(val => ({
-          value: val,
-          description: `${val.charAt(0).toUpperCase() + val.slice(1)} reasoning effort`,
+          description: model === 'null' ? 'Use primary model' : 'Provider model',
           type: 'option' as const,
         }));
     }
@@ -864,53 +877,18 @@ export class CompletionProvider {
       return completions;
     }
 
-    // Theme field - predefined values
-    if (key === 'theme' || key === 'diff_display_theme') {
-      const themes = key === 'theme'
-        ? ['default', 'dark', 'light', 'minimal']
-        : ['auto', 'dark', 'light', 'minimal'];
-      return themes
-        .filter(val => val.startsWith(prefix))
-        .map(val => ({
-          value: val,
-          description: `${val.charAt(0).toUpperCase() + val.slice(1)} theme`,
-          type: 'option' as const,
-        }));
-    }
-
-    // For numbers, suggest the current value and some common alternatives
-    if (type === 'number' && this.configManager) {
-      try {
-        const currentValue = this.configManager.getValue(key as keyof Config);
-        if (typeof currentValue === 'number') {
-          const suggestions: number[] = [currentValue];
-
-          // Add contextual suggestions based on the key
-          if (key === 'temperature') {
-            suggestions.push(0.0, 0.3, 0.5, 0.7, 1.0);
-          } else if (key === 'context_size') {
-            suggestions.push(8192, 16384, 32768, 65536, 131072, 262144);
-          } else if (key === 'max_tokens') {
-            suggestions.push(2000, 4000, 7000, 10000, 16000);
-          }
-
-          // Remove duplicates and filter by prefix
-          const uniqueValues = [...new Set(suggestions)]
-            .map(String)
-            .filter(val => val.startsWith(prefix));
-
-          return uniqueValues.map(val => ({
-            value: val,
-            description: val === String(currentValue) ? 'Current value' : 'Suggested value',
-            type: 'option' as const,
-          }));
-        }
-      } catch {
-        // Fall through if we can't get current value
-      }
-    }
-
-    return completions;
+    const current = this.configManager?.getValue(key as keyof Config);
+    const defaults = DEFAULT_CONFIG[key as keyof Config];
+    const { validateConfigValue } = await import('../config/defaults.js');
+    const values = [current, defaults, ...(CONFIG_SUGGESTIONS[key as keyof Config] ?? [])];
+    return [...new Set(values.map(value => value === undefined ? 'null' : typeof value === 'string' ? value : JSON.stringify(value)))]
+      .filter((value): value is string => {
+        if (!value || !value.startsWith(prefix)) return false;
+        let parsed: unknown = value;
+        try { parsed = JSON.parse(value); } catch { /* plain string */ }
+        return validateConfigValue(key as keyof Config, parsed).valid;
+      })
+      .map(value => ({ value, description: 'Configured or suggested value', type: 'option' as const }));
   }
 
   /**
@@ -950,86 +928,19 @@ export class CompletionProvider {
     const configKeys = Object.keys(DEFAULT_CONFIG) as Array<keyof typeof DEFAULT_CONFIG>;
 
     // Group keys by category for better descriptions
-    const keyDescriptions: Record<string, string> = {
-      // LLM Model Settings
-      'model': 'LLM model name',
-      'service_model': 'Model for background services (titles, idle messages)',
-      'explore_model': 'Model for Explore agent',
-      'plan_model': 'Model for Plan agent',
-      'agent_creation_model': 'Model for ManageAgents agent',
-      'endpoint': 'Ollama API endpoint',
-      'context_size': 'Context window size (tokens)',
-      'temperature': 'Generation temperature override (unset uses model default)',
-      'max_tokens': 'Max tokens per response',
-      'reasoning_effort': 'Reasoning effort level (low/medium/high)',
 
-      // Agent Settings
-      'default_agent': 'Default agent at startup',
-
-      // Execution Settings
-      'bash_timeout': 'Bash command timeout (seconds)',
-      'auto_confirm': 'Skip permission prompts',
-      'parallel_tools': 'Enable parallel tool execution',
-      'tool_call_activity_timeout': 'Agent no-tool activity timeout (seconds)',
-
-      // UI Preferences
-      'theme': 'UI theme name',
-      'show_thinking_in_chat': 'Show model thinking in chat',
-      'show_system_prompt_in_chat': 'Show system prompts in chat',
-      'show_full_tool_output': 'Show full tool output without truncation',
-      'show_tool_parameters_in_chat': 'Show tool parameters in chat',
-      'enable_idle_messages': 'Enable generated idle status messages',
-      'enable_session_title_generation': 'Enable generated session titles',
-      'enable_terminal_hyperlinks': 'Make file names and links clickable in supporting terminals',
-      'mouse_support': 'Mouse clicks: off, dialogs (default) or always',
-
-      // Tool Call Retry
-      'tool_call_retry_enabled': 'Enable automatic tool-call retry',
-      'tool_call_max_retries': 'Maximum tool-call retries',
-      'tool_call_repair_attempts': 'Ask model to repair invalid tool calls',
-      'tool_call_verbose_errors': 'Show verbose tool-call errors',
-
-      // File System Settings
-      'temp_directory': 'Temporary file directory',
-
-      // Directory Tree
-      'dir_tree_enable': 'Enable directory tree generation',
-      'dir_tree_max_depth': 'Directory tree max depth',
-      'dir_tree_max_files': 'Directory tree max files',
-
-      // Diff Display
-      'diff_display_enabled': 'Show file diffs',
-      'diff_display_max_file_size': 'Max diff file size (bytes)',
-      'diff_display_context_lines': 'Diff context lines',
-      'diff_display_theme': 'Diff theme',
-      'diff_display_layout': 'Diff layout: auto, unified or side-by-side',
-      'diff_display_color_removed': 'Removed line color',
-      'diff_display_color_added': 'Added line color',
-      'diff_display_color_modified': 'Modified line color',
-
-      // Tool Result Truncation
-      'tool_result_max_context_percent': 'Max context % per tool result',
-      'tool_result_min_tokens': 'Minimum tokens per result',
-      'read_max_tokens': 'Maximum tokens for read operations',
-      'setup_completed': 'Whether setup wizard has completed',
-    };
 
     return configKeys
       .filter(key => key.startsWith(prefix) && key !== 'setup_completed') // Hide internal keys
       .map(key => {
-        const baseDescription = keyDescriptions[key] || `${CONFIG_TYPES[key]} setting`;
+        const baseDescription = CONFIG_DESCRIPTIONS[key] || `${CONFIG_TYPES[key]} setting`;
 
         // Get current value if config manager is available
         let currentValue: string | undefined;
         if (this.configManager && typeof this.configManager.getValue === 'function') {
           try {
             const value = this.configManager.getValue(key);
-            // Format value without quotes for strings, just the raw value
-            if (typeof value === 'string') {
-              currentValue = value;
-            } else {
-              currentValue = JSON.stringify(value);
-            }
+            currentValue = formatConfigValue(key, value);
           } catch {
             // If we can't get the value, leave it undefined
           }

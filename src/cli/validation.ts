@@ -23,7 +23,7 @@ export async function runStartupValidation(config: Config): Promise<StartupValid
   const providerName = config.provider ?? 'ollama';
 
   if (!result.connected) {
-    logger.error(`Cannot connect to ${providerName} endpoint ${config.endpoint}: ${result.error}`);
+    logger.warn(`Cannot connect to ${providerName} endpoint ${config.endpoint}: ${result.error}`);
     return {
       ok: false,
       providerConnected: false,

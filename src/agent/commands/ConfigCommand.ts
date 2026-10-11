@@ -13,6 +13,7 @@ import type { IntegrationStore } from '@services/IntegrationStore.js';
 import { formatError } from '@utils/errorUtils.js';
 import { CommandRegistry } from './CommandRegistry.js';
 import type { CommandMetadata } from './types.js';
+import { CONFIG_CATEGORIES, formatConfigValue } from '@config/metadata.js';
 import { DEFAULT_CONFIG, validateConfigValue } from '@config/defaults.js';
 import { ANSI_COLORS } from '../../ui/constants/colors.js';
 import { SEARCH_PROVIDER_INFO } from '../../types/integration.js';
@@ -28,8 +29,10 @@ export class ConfigCommand extends Command {
     description: 'View or modify configuration',
     helpCategory: 'Core',
     subcommands: [
+      { name: 'show', description: 'Show current configuration' },
+      { name: 'setup', description: 'Configure provider, endpoint, credentials, and model' },
       { name: 'set', description: 'Set a config value', args: '<key>=<value>' },
-      { name: 'reset', description: 'Reset to defaults' },
+      { name: 'reset', description: 'Reset one setting or all settings to defaults', args: '[key]' },
     ],
   };
 
@@ -61,7 +64,22 @@ export class ConfigCommand extends Command {
       return this.createError('Invalid config command');
     }
 
+    if (subcommand.toLowerCase() === 'setup') {
+      serviceRegistry.get('activity_stream')?.emit({
+        id: `setup_${Date.now()}`, type: ActivityEventType.SETUP_WIZARD_REQUEST,
+        timestamp: Date.now(), data: {},
+      });
+      return { handled: true };
+    }
+
     if (subcommand.toLowerCase() === 'reset') {
+      if (parts.length > 2) return this.createError('Use /config reset [key]');
+      const key = parts[1];
+      if (key) {
+        if (!Object.prototype.hasOwnProperty.call(DEFAULT_CONFIG, key)) return this.createError(`Unknown config key '${key}'`);
+        const value = DEFAULT_CONFIG[key as keyof Config];
+        return this.handleConfigSet(`${key}=${JSON.stringify(value ?? null)}`, serviceRegistry);
+      }
       return this.handleConfigReset(serviceRegistry);
     }
 
@@ -71,7 +89,7 @@ export class ConfigCommand extends Command {
       return this.handleConfigSet(kvString, serviceRegistry);
     }
 
-    return this.createError('Invalid format. Use /config, /config set key=value, or /config reset');
+    return this.createError('Invalid format. Use /config, /config setup, /config set key=value, or /config reset [key]');
   }
 
   private async handleConfigView(serviceRegistry: ServiceRegistry): Promise<CommandResult> {
@@ -83,21 +101,10 @@ export class ConfigCommand extends Command {
 
     const config = configManager.getConfig();
 
-    // Category definitions matching ConfigViewer
-    const categoryDefs = {
-      'LLM Model Settings': ['model', 'service_model', 'explore_model', 'plan_model', 'agent_creation_model', 'endpoint', 'context_size', 'temperature', 'max_tokens', 'reasoning_effort'],
-      'Agent Settings': ['default_agent'],
-      'Execution Settings': ['bash_timeout', 'auto_confirm', 'parallel_tools', 'tool_call_activity_timeout'],
-      'File System Settings': ['temp_directory'],
-      'UI Preferences': ['theme', 'show_thinking_in_chat', 'show_system_prompt_in_chat', 'show_full_tool_output', 'show_tool_parameters_in_chat', 'enable_idle_messages', 'enable_session_title_generation'],
-      'Tool Call Retry': ['tool_call_retry_enabled', 'tool_call_max_retries', 'tool_call_repair_attempts', 'tool_call_verbose_errors'],
-      'Directory Tree': ['dir_tree_enable', 'dir_tree_max_depth', 'dir_tree_max_files'],
-      'Diff Display': ['diff_display_enabled', 'diff_display_max_file_size', 'diff_display_context_lines', 'diff_display_theme', 'diff_display_color_removed', 'diff_display_color_added', 'diff_display_color_modified'],
-      'Tool Result Truncation': ['tool_result_max_context_percent', 'tool_result_min_tokens'],
-      'Read Tool': ['read_max_tokens'],
-      'Setup': ['setup_completed'],
-      'Search Integration': ['search_provider', 'search_api_key'],
-    };
+    // Include newly declared settings even before they have a display category.
+    const categoryDefs = { ...CONFIG_CATEGORIES };
+    const categorized = new Set(Object.values(categoryDefs).flat());
+    categoryDefs.Other = (Object.keys(DEFAULT_CONFIG) as (keyof Config)[]).filter(key => !categorized.has(key));
 
     // Get search config from IntegrationStore
     const integrationStore = serviceRegistry.get('integration_store');
@@ -111,8 +118,7 @@ export class ConfigCommand extends Command {
     // Pre-compute all values to find max value length
     const allValues: { key: string; currentStr: string; defaultStr: string; isModified: boolean }[] = [];
     const displayValue = (key: string, value: unknown): string => {
-      if (key === 'temperature' && value === undefined) return '(model default)';
-      return JSON.stringify(value) ?? 'undefined';
+      return formatConfigValue(key as keyof Config, value);
     };
     for (const keys of Object.values(categoryDefs)) {
       for (const key of keys) {
@@ -180,7 +186,8 @@ export class ConfigCommand extends Command {
     lines.push('---');
     lines.push('');
     lines.push('Use `/config set key=value` to change settings');
-    lines.push('Use `/config reset` to restore all defaults');
+    lines.push('Use `/config setup` for guided provider configuration');
+    lines.push('Use `/config reset [key]` to restore one setting or all defaults');
 
     return {
       handled: true,
@@ -231,7 +238,7 @@ export class ConfigCommand extends Command {
       );
     }
 
-    if (parsed && (parsed.key === 'provider' || parsed.key === 'model')) {
+    if (parsed && (parsed.key === 'provider' || parsed.key === 'model' || parsed.key === 'endpoint')) {
       let parsedValue: unknown = parsed.valueString;
       try { parsedValue = JSON.parse(parsed.valueString); } catch { /* plain string */ }
       const validation = validateConfigValue(parsed.key, parsedValue);
@@ -239,14 +246,19 @@ export class ConfigCommand extends Command {
         const activeAgent = serviceRegistry.get('agent');
         const block = activeAgent?.getModelIdentityChangeBlock?.({
           [parsed.key]: validation.coercedValue,
-        });
+        }) ?? serviceRegistry.get('agent_pool')?.getModelIdentityChangeBlock?.({ [parsed.key]: validation.coercedValue });
         if (block) return this.createError(block);
       }
     }
 
     try {
+      const before = configManager.getConfig();
       const { key, oldValue, newValue } = await configManager.setFromString(kvString);
-      const updates = { [key]: newValue } as Partial<Config>;
+      const after = configManager.getConfig();
+      const updates = Object.fromEntries(
+        (Object.keys(after) as (keyof Config)[]).filter(field => !Object.is(before[field], after[field]))
+          .map(field => [field, after[field]]),
+      ) as Partial<Config>;
 
       applyRuntimeConfigUpdates(serviceRegistry, updates);
 
@@ -262,7 +274,8 @@ export class ConfigCommand extends Command {
       }
 
       return this.createResponse(
-        `Configuration updated: ${key}\n  Old value: ${JSON.stringify(oldValue)}\n  New value: ${JSON.stringify(newValue)}`
+        `Configuration updated: ${key}\n  Old value: ${formatConfigValue(key as keyof Config, oldValue)}\n  New value: ${formatConfigValue(key as keyof Config, newValue)}`
+        + (updates.provider !== undefined ? `\nEndpoint: ${after.endpoint}\nUse /model to select a model from this provider. Provider credentials were cleared unless configured in setup.` : '')
       );
     } catch (error) {
       return this.createError(formatError(error));
@@ -425,7 +438,8 @@ export class ConfigCommand extends Command {
       const block = serviceRegistry.get('agent')?.getModelIdentityChangeBlock?.({
         provider: DEFAULT_CONFIG.provider,
         model: DEFAULT_CONFIG.model,
-      });
+        endpoint: DEFAULT_CONFIG.endpoint,
+      }) ?? serviceRegistry.get('agent_pool')?.getModelIdentityChangeBlock?.(DEFAULT_CONFIG);
       if (block) return this.createError(block);
       const changes = await configManager.reset();
       const changedKeys = Object.keys(changes);

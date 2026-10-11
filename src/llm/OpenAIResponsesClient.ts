@@ -44,7 +44,10 @@ function assistantMatches(
 
 /** Official Responses API transport with locally persisted, store:false item replay. */
 export class OpenAIResponsesClient extends ModelClient {
-  private client: OpenAI;
+  private _client?: OpenAI;
+  private get client(): OpenAI {
+    return this._client ??= this.createClient();
+  }
   private _endpoint: string;
   private _modelName: string;
   private _temperature?: number;
@@ -66,7 +69,6 @@ export class OpenAIResponsesClient extends ModelClient {
     this.apiKey = config.apiKey;
     this.activityStream = config.activityStream;
     this._supportsImages = config.supportsImages;
-    this.client = this.createClient();
   }
 
   override get providerId(): string {
@@ -86,7 +88,7 @@ export class OpenAIResponsesClient extends ModelClient {
   }
   setEndpoint(endpoint: string): void {
     this._endpoint = endpoint;
-    this.client = this.createClient();
+    this._client = undefined;
   }
   setTemperature(temperature: number | undefined): void { this._temperature = temperature; }
   setMaxTokens(maxTokens: number): void { this._maxTokens = maxTokens; }

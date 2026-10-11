@@ -13,6 +13,7 @@
 
 import { Message, FunctionDefinition } from '../types/index.js';
 import type { ProviderCheckpointState } from '../agent/compaction/types.js';
+import type { ModelTransport } from '../config/providers.js';
 
 /**
  * Sampling parameters beyond temperature. Every field is optional: when a field
@@ -81,7 +82,7 @@ export interface SendOptions {
 /** Provider-ready request captured before transport headers are applied. */
 export interface ModelRequestPreview {
   /** Concrete wire protocol, independent of persisted checkpoint identifiers. */
-  provider: 'ollama' | 'openai-compat' | 'openai-responses';
+  provider: ModelTransport;
   /** Exact endpoint that would receive the payload. */
   url: string;
   /** JSON-serializable body after message/tool/provider normalization. */

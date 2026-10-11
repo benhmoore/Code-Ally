@@ -4,6 +4,7 @@
 
 import type { ConversationCheckpointV1, ProviderCheckpointState } from '../agent/compaction/types.js';
 import type { HooksConfig } from '../hooks/types.js';
+import type { ModelProvider } from '../config/providers.js';
 
 // Agent definition types (data shapes for stored/loaded agents)
 export type { AgentData, AgentInfo, BaseAgentConfig } from './agents.js';
@@ -473,7 +474,7 @@ export interface Config {
   explore_model?: string | null; // Model for Explore agent. Defaults to global model.
   plan_model?: string | null; // Model for Plan agent. Defaults to global model.
   agent_creation_model?: string | null; // Model for ManageAgents agent. Defaults to global model.
-  provider?: 'ollama' | 'openai-compat' | 'openai-responses'; // LLM backend protocol. 'openai-responses' uses OpenAI's stateless Responses API with native compaction.
+  provider?: ModelProvider;
   endpoint: string;
   api_key?: string | null; // Bearer token for authenticated endpoints (cloud/remote). Stored separately with encryption like search_api_key.
   context_size: number;

@@ -6,6 +6,7 @@
  * before launching the appropriate mode (interactive, once, setup, etc.).
  */
 
+import { formatConfigValue } from './config/metadata.js';
 import React from 'react';
 import { render } from 'ink';
 import readline from 'readline';
@@ -302,8 +303,8 @@ async function handleConfigCommands(
     try {
       const result = await configManager.setFromString(kvInput);
       console.log(`\n✓ Configuration updated: ${result.key}`);
-      console.log(`  Old value: ${JSON.stringify(result.oldValue)}`);
-      console.log(`  New value: ${JSON.stringify(result.newValue)}\n`);
+      console.log(`  Old value: ${formatConfigValue(result.key as keyof import('./types/index.js').Config, result.oldValue)}`);
+      console.log(`  New value: ${formatConfigValue(result.key as keyof import('./types/index.js').Config, result.newValue)}\n`);
     } catch (error: any) {
       console.error(`\nError: ${error.message}\n`);
       process.exit(1);
@@ -332,8 +333,8 @@ async function handleConfigCommands(
       try {
         const result = await configManager.resetField(field as any);
         console.log(`\n✓ Reset ${result.key} to default`);
-        console.log(`  Old value: ${JSON.stringify(result.oldValue)}`);
-        console.log(`  New value: ${JSON.stringify(result.newValue)}\n`);
+        console.log(`  Old value: ${formatConfigValue(result.key as keyof import('./types/index.js').Config, result.oldValue)}`);
+        console.log(`  New value: ${formatConfigValue(result.key as keyof import('./types/index.js').Config, result.newValue)}\n`);
       } catch (error: any) {
         console.error(`\nError: ${error.message}\n`);
         process.exit(1);
@@ -506,6 +507,7 @@ function getCliConfigOverrides(options: CLIOptions): Record<string, any> {
   const overrides: Record<string, any> = {};
 
   if (options.model !== undefined) overrides.model = options.model;
+  if (options.provider !== undefined) overrides.provider = options.provider;
   if (options.endpoint !== undefined) overrides.endpoint = options.endpoint;
   if (options.temperature !== undefined)
     overrides.temperature = options.temperature;
@@ -1058,14 +1060,22 @@ async function main() {
       throw new Error('Noninteractive mode requires a configured provider and model; run `ally --init` first');
     }
 
-    // Validate the configured provider and model (skip in setup/non-interactive paths).
+    /** Provider warnings and SessionStart messages, rendered with the startup header. */
+    const startupStatusMessages: string[] = [];
+
+    // Provider availability is advisory: keep configuration commands accessible
+    // even when the endpoint is offline or speaks a different API.
+    // Skip validation in setup/non-interactive paths.
     let forceModelSelector = false;
     let availableModels: any[] | undefined;
     if (!isHeadlessRun(options) && !forceSetup && !options.init) {
       const validationResult = await runStartupValidation(config);
 
       if (!validationResult.providerConnected) {
-        process.exit(1);
+        startupStatusMessages.push(
+          `Cannot connect to ${config.provider ?? 'ollama'} endpoint ${config.endpoint}: ${validationResult.error ?? 'Connection failed'}.`,
+          'Use /config setup to configure the provider, or start the server and try again.',
+        );
       }
 
       if (validationResult.modelStatus === 'missing') {
@@ -1467,9 +1477,6 @@ async function main() {
     const headlessSessionHandle = isHeadlessRun(options)
       ? await openHeadlessSession(options, sessionManager)
       : null;
-
-    /** Interactive SessionStart messages, rendered with the startup header. */
-    const startupStatusMessages: string[] = [];
 
     // Hooks. Registered even when nothing declares one, so call sites can ask
     // hasHooks() instead of null-checking the service.

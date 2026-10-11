@@ -22,7 +22,8 @@ import {
 } from '../utils/versionedStore.js';
 import { CONFIG_SCHEMA } from '../config/schemas.js';
 
-const SECRET_CONFIG_KEYS = new Set<keyof Config>(['api_key', 'search_api_key']);
+import { SECRET_CONFIG_KEYS } from '../config/metadata.js';
+import { providerConfigUpdates } from '../config/providers.js';
 
 export class ConfigManager implements IService {
   private _config: Config;
@@ -250,12 +251,12 @@ export class ConfigManager implements IService {
           if (baseValue !== undefined) {
             // Base config has this key, only save if different from base
             if (JSON.stringify(value) !== JSON.stringify(baseValue)) {
-              (configToSave as any)[key] = value;
+              (configToSave as any)[key] = value === undefined ? null : value;
             }
           } else {
             // No base config, save if different from default
             if (JSON.stringify(value) !== JSON.stringify(defaultValue)) {
-              (configToSave as any)[key] = value;
+              (configToSave as any)[key] = value === undefined ? null : value;
             }
           }
         }
@@ -350,19 +351,7 @@ export class ConfigManager implements IService {
    * @throws Error if validation fails
    */
   async setValue<K extends keyof Config>(key: K, value: Config[K]): Promise<void> {
-    const validation = validateConfigValue(key, value);
-
-    if (!validation.valid) {
-      throw new Error(
-        `Cannot set config value '${key}': ${validation.error}`
-      );
-    }
-
-    this._config[key] = validation.coercedValue as Config[K];
-    delete this._runtimeOverrides[key];
-
-    // Save to disk
-    await this.saveConfig();
+    await this.setValues({ [key]: value } as Partial<Config>);
   }
 
   /**
@@ -391,14 +380,23 @@ export class ConfigManager implements IService {
       }
     }
 
-    // Apply all validated values
-    for (const [key, value] of validations) {
+    const updates = providerConfigUpdates(this.getConfig(), Object.fromEntries(validations) as Partial<Config>);
+    const previous = { ...this._config };
+    const previousOverrides = { ...this._runtimeOverrides };
+    // Apply all validated values, including dependent provider defaults.
+    for (const [key, value] of Object.entries(updates) as [keyof Config, unknown][]) {
       (this._config as any)[key] = value;
       delete this._runtimeOverrides[key];
     }
 
     // Save to disk
-    await this.saveConfig();
+    try {
+      await this.saveConfig();
+    } catch (error) {
+      this._config = previous;
+      this._runtimeOverrides = previousOverrides;
+      throw error;
+    }
   }
 
   /**
@@ -416,7 +414,7 @@ export class ConfigManager implements IService {
       }
       (validated as any)[key] = result.coercedValue;
     }
-    this._runtimeOverrides = { ...this._runtimeOverrides, ...validated };
+    this._runtimeOverrides = { ...this._runtimeOverrides, ...providerConfigUpdates(this.getConfig(), validated) };
   }
 
   /**
@@ -426,16 +424,15 @@ export class ConfigManager implements IService {
    */
   async reset(): Promise<Record<string, boolean>> {
     const changes: Record<string, boolean> = {};
+    const current = this.getConfig();
 
     for (const key of Object.keys(DEFAULT_CONFIG) as Array<keyof Config>) {
-      if (JSON.stringify(this._config[key]) !== JSON.stringify(DEFAULT_CONFIG[key])) {
-        (this._config as any)[key] = DEFAULT_CONFIG[key];
+      if (JSON.stringify(current[key]) !== JSON.stringify(DEFAULT_CONFIG[key])) {
         changes[key] = true;
       }
     }
 
-    this._runtimeOverrides = {};
-    await this.saveConfig();
+    await this.setValues(DEFAULT_CONFIG);
     return changes;
   }
 
@@ -659,9 +656,7 @@ export class ConfigManager implements IService {
     const oldValue = this.getValue(key);
     const newValue = DEFAULT_CONFIG[key];
 
-    (this._config as any)[key] = newValue;
-    delete this._runtimeOverrides[key];
-    await this.saveConfig();
+    await this.setValue(key, newValue);
 
     return { key: key as string, oldValue, newValue };
   }

@@ -9,7 +9,7 @@
 import { ServiceRegistry } from '../services/ServiceRegistry.js';
 import { formatError } from './errorUtils.js';
 import { API_TIMEOUTS } from '../config/constants.js';
-import { testModelToolCalling } from '../llm/ModelValidation.js';
+import { listProviderModels, probeModelCapabilities } from '../llm/ProviderAdapter.js';
 
 /**
  * Validation result with error message if invalid
@@ -185,7 +185,7 @@ export async function validateTools(tools: string[]): Promise<ToolsValidationRes
 /**
  * Validate model name
  *
- * Checks if the model exists in Ollama by querying the /api/tags endpoint.
+ * Checks if the model is advertised by the configured provider.
  *
  * @param model - Model name to validate
  * @returns Validation result with available models if invalid
@@ -220,52 +220,14 @@ export async function validateModel(model: string): Promise<ModelValidationResul
     }
 
     const config = configManager.getConfig();
-    const endpoint = config.endpoint;
-
-    // Fetch available models from Ollama
-    const url = `${endpoint}/api/tags`;
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), API_TIMEOUTS.OLLAMA_MODEL_LIST_TIMEOUT);
-
-    try {
-      const response = await fetch(url, {
-        method: 'GET',
-        headers: { 'Content-Type': 'application/json' },
-        signal: controller.signal,
-      });
-
-      clearTimeout(timeout);
-
-      if (!response.ok) {
-        return {
-          valid: false,
-          error: `Failed to fetch models from Ollama: ${response.status} ${response.statusText}`
-        };
-      }
-
-      interface OllamaListResponse {
-        models: Array<{ name: string }>;
-      }
-
-      const data = await response.json() as OllamaListResponse;
-      const availableModels = data.models.map(m => m.name);
-
-      if (!availableModels.includes(model)) {
-        return {
-          valid: false,
-          error: `Model "${model}" not found. Available models: ${availableModels.slice(0, 5).join(', ')}${availableModels.length > 5 ? '...' : ''}. Run "ollama list" to see all models, or "ollama pull ${model}" to download it.`,
-          availableModels
-        };
-      }
-
-      return { valid: true };
-    } catch (error) {
-      clearTimeout(timeout);
-      return {
-        valid: false,
-        error: `Failed to connect to Ollama at ${endpoint}: ${formatError(error)}. Make sure Ollama is running.`
-      };
+    const discovery = await listProviderModels(config, API_TIMEOUTS.OLLAMA_MODEL_LIST_TIMEOUT);
+    if (discovery.error) return { valid: false, error: `Failed to fetch provider models: ${discovery.error}` };
+    if (!discovery.supported) return { valid: true };
+    const availableModels = discovery.models.map(entry => entry.name);
+    if (!availableModels.includes(model)) {
+      return { valid: false, error: `Model "${model}" not found at ${config.endpoint}. Available models: ${availableModels.slice(0, 5).join(', ')}`, availableModels };
     }
+    return { valid: true };
   } catch (error) {
     return {
       valid: false,
@@ -328,12 +290,9 @@ export async function validateModelToolCapability(
     }
 
     const config = configManager.getConfig();
-    const endpoint = config.endpoint;
+    const result = await probeModelCapabilities(config, model);
 
-    // Test if the model supports tool calling
-    const result = await testModelToolCalling(endpoint, model);
-
-    if (!result.supportsTools) {
+    if (result.tools === 'unsupported') {
       return {
         valid: false,
         supportsTools: false,
@@ -341,7 +300,7 @@ export async function validateModelToolCapability(
       };
     }
 
-    return { valid: true, supportsTools: true };
+    return { valid: true, supportsTools: result.tools === 'supported' ? true : undefined };
   } catch (error) {
     return {
       valid: false,

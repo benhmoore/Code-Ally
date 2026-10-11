@@ -14,6 +14,7 @@
  * - Validate agent configuration (name, tools, etc.)
  */
 
+import { listProviderModels } from '../llm/ProviderAdapter.js';
 import { BaseDelegationTool, DelegationToolConfig } from './BaseDelegationTool.js';
 import { ToolCapability } from './ToolCapability.js';
 import { ToolResult, FunctionDefinition } from '../types/index.js';
@@ -288,12 +289,12 @@ Skip for: One-time tasks, using existing agents.`;
   }
 
   /**
-   * Perform additional setup: fetch available models from Ollama
+   * Perform additional setup: fetch available provider models
    */
   protected async performAdditionalSetup(config: Config): Promise<AgentManagementContext> {
     const agentsDir = getAgentsDir();
     const profileName = getActiveProfile();
-    const availableModels = await this.fetchAvailableModels(config.endpoint);
+    const availableModels = await this.fetchAvailableModels(config);
     const currentModel = config.model || 'unknown';
 
     return {
@@ -334,36 +335,16 @@ Skip for: One-time tasks, using existing agents.`;
   }
 
   /**
-   * Fetch available models from Ollama
+   * Fetch available models from the configured provider
    *
-   * @param endpoint - Ollama endpoint URL
+   * @param endpoint - Provider endpoint URL
    * @returns Array of available model names
    */
-  private async fetchAvailableModels(endpoint: string): Promise<string[]> {
+  private async fetchAvailableModels(config: Config): Promise<string[]> {
     try {
-      const url = `${endpoint}/api/tags`;
-      const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), API_TIMEOUTS.OLLAMA_MODEL_LIST_TIMEOUT);
-
-      const response = await fetch(url, {
-        method: 'GET',
-        headers: { 'Content-Type': 'application/json' },
-        signal: controller.signal,
-      });
-
-      clearTimeout(timeout);
-
-      if (!response.ok) {
-        logger.warn('[MANAGE_AGENTS_TOOL] Failed to fetch models from Ollama:', response.status);
-        return [];
-      }
-
-      interface OllamaListResponse {
-        models: Array<{ name: string }>;
-      }
-
-      const data = await response.json() as OllamaListResponse;
-      return data.models.map(m => m.name);
+      const discovery = await listProviderModels(config, API_TIMEOUTS.OLLAMA_MODEL_LIST_TIMEOUT);
+      if (discovery.error) logger.warn('[MANAGE_AGENTS_TOOL] Failed to fetch provider models:', discovery.error);
+      return discovery.models.map(model => model.name);
     } catch (error) {
       logger.warn('[MANAGE_AGENTS_TOOL] Error fetching models:', formatError(error));
       return [];

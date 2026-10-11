@@ -557,6 +557,14 @@ export class AgentPoolService implements IService {
   /**
    * Apply runtime config updates to all pooled agents and their stored metadata.
    */
+  getModelIdentityChangeBlock(updates: Partial<Config>): string | null {
+    for (const metadata of this.pool.values()) {
+      const block = metadata.agent.getModelIdentityChangeBlock(updates);
+      if (block) return block;
+    }
+    return null;
+  }
+
   applyConfigUpdates(updates: Partial<Config>): void {
     for (const metadata of this.pool.values()) {
       Object.assign(metadata.config.config, updates);

@@ -253,12 +253,19 @@ Run `ally --init` for interactive setup. Profile overrides live at
 `~/.ally/profiles/<profile>/config.json`; the optional global base configuration
 lives at `~/.ally/config.json`.
 
+Inside Ally, use `/config setup` to choose a provider, enter its endpoint and
+optional API key, and select a discovered model. Escape cancels setup and returns
+to the conversation. `/config` shows all settings; `/config set ` completes setting
+names, then offers valid choices, provider endpoints, and available models.
+Use `/config reset <key>` to reset one setting, or `null` to clear optional sampling overrides or make a secondary model inherit
+the primary model. Secrets are hidden in configuration output and completion.
+
 ### Model Settings
 
 | Option | Default | Description |
 |--------|---------|-------------|
 | `model` | (auto) | Primary model |
-| `provider` | `ollama` | `ollama`, `openai-compat`, or `openai-responses` (stateless Responses API with native compaction) |
+| `provider` | `ollama` | `ollama`, `rapid-mlx`, `openai-compat`, or `openai-responses` |
 | `endpoint` | `http://localhost:11434` | Provider base URL |
 | `api_key` | (none) | Bearer token for authenticated endpoints |
 | `context_size` | `16384` | Context window tokens |
@@ -303,6 +310,7 @@ lives at `~/.ally/config.json`.
 ally --model llama3.2
 ally --temperature 0.7
 ally --endpoint http://remote:11434
+ally --provider rapid-mlx --model rapid-mlx/your-model
 ally --auto-confirm
 ally --reasoning-effort high
 ```
@@ -311,6 +319,27 @@ OpenAI-compatible servers use `/v1/chat/completions` and, when available,
 `/v1/models`. Servers without model discovery can be configured with a model
 name manually. API keys are encrypted in profile files and redacted from config
 and debug output.
+
+Rapid-MLX is a built-in provider using this protocol. Select **Rapid-MLX** in
+setup, or configure it inside Ally:
+
+```text
+/config set provider=rapid-mlx
+/config set endpoint=http://127.0.0.1:8000
+/model
+```
+
+Choose the model name reported by Rapid-MLX, which can differ from its Ollama
+alias. The Rapid-MLX default uses `127.0.0.1` explicitly to avoid reaching a
+different service listening on IPv6 `localhost`.
+
+Provider, endpoint, credentials, and sampling changes update existing clients
+without restarting. Switching providers adopts the new default endpoint when
+the old endpoint was also a provider default; custom endpoints are preserved.
+Provider switches clear the previous provider's API key. Setup lets you supply
+the new connection together. Active turns must finish before switching model
+identity; conversations with provider-native replay state require a new session
+or rewind. An unavailable endpoint leaves the UI accessible for configuration.
 
 For OpenAI's Responses API, select `openai-responses` in `ally --init` (or set
 `provider=openai-responses` and `endpoint=https://api.openai.com`). This transport

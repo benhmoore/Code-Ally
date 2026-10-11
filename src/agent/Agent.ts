@@ -12,6 +12,7 @@
  * Based on Python implementation patterns adapted for TypeScript/async.
  */
 
+import { samplingFromConfig } from '../llm/createModelClient.js';
 import {
   ModelClient,
   LLMResponse,
@@ -564,17 +565,16 @@ export class Agent {
   }
 
   /** Guard live transport changes and provider-native replay identity. */
-  getModelIdentityChangeBlock(next: { provider?: Config['provider']; model?: string | null }): string | null {
+  getModelIdentityChangeBlock(next: { provider?: Config['provider']; model?: string | null; endpoint?: string }): string | null {
     const providerChanged = next.provider !== undefined
-      && next.provider !== (this.appConfig.provider ?? this.modelClient.providerId);
-    if (providerChanged) {
-      return 'Changing provider transports requires a restart. Start a new process/session with the desired provider so the live client and conversation state cannot diverge.';
-    }
-    if (this.conversationManager.getProviderState().kind === 'chat') return null;
+      && next.provider !== (this.appConfig.provider ?? 'ollama');
     const modelChanged = next.model !== undefined
       && next.model !== (this.appConfig.model ?? this.modelClient.modelName);
-    if (!modelChanged) return null;
-    return 'This conversation has provider-native compacted state tied to its current model. Start a new session or rewind before switching the primary provider/model.';
+    const endpointChanged = next.endpoint !== undefined && next.endpoint !== this.modelClient.endpoint;
+    if (!providerChanged && !modelChanged && !endpointChanged) return null;
+    if (this.isProcessing()) return 'Wait for the current turn to finish before changing provider, endpoint, or model.';
+    if (this.conversationManager.getProviderState().kind === 'chat') return null;
+    return 'This conversation has provider-native state tied to its current connection. Start a new session or rewind before switching provider, endpoint, or model.';
   }
 
   /**
@@ -589,12 +589,20 @@ export class Agent {
 
     const modelClient = this.modelClient as any;
 
+    if (updates.provider !== undefined) modelClient.setProvider?.(updates.provider);
+    if (Object.prototype.hasOwnProperty.call(updates, 'api_key')) modelClient.setApiKey?.(updates.api_key);
+
     if (typeof updates.endpoint === 'string' && typeof modelClient.setEndpoint === 'function') {
       modelClient.setEndpoint(updates.endpoint);
     }
-    if (typeof updates.temperature === 'number' && typeof modelClient.setTemperature === 'function') {
+    if (Object.prototype.hasOwnProperty.call(updates, 'temperature') && typeof modelClient.setTemperature === 'function') {
       modelClient.setTemperature(updates.temperature);
     }
+    if (['top_p', 'top_k', 'min_p', 'repeat_penalty', 'stop'].some(key => Object.prototype.hasOwnProperty.call(updates, key))) {
+      modelClient.setSampling?.(samplingFromConfig(this.appConfig));
+    }
+    if (updates.max_tokens !== undefined) modelClient.setMaxTokens?.(updates.max_tokens);
+    if (Object.prototype.hasOwnProperty.call(updates, 'reasoning_effort')) modelClient.setReasoningEffort?.(updates.reasoning_effort);
     if (typeof updates.context_size === 'number') {
       this.tokenManager.setContextSize(updates.context_size);
       this.tokenManager.updateTokenCount(this.conversationManager.getMessages());

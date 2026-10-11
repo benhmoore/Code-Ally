@@ -1,13 +1,14 @@
 /**
  * Factory for ModelClient instances. This is the single place that maps a
- * provider setting to a concrete client, so call sites (cli bootstrap, per-agent
- * client resolution) never hardcode a backend. Adding a new backend means adding
- * one branch here.
+ * provider setting to a transport behind a stable client reference. Call sites
+ * never hardcode a backend; providers reuse protocols through the registry.
  */
 
 import { ModelClient, ModelClientConfig, SamplingParams } from './ModelClient.js';
 import type { Config } from '../types/index.js';
 import { ModelCapabilitiesIndex } from '../services/ModelCapabilitiesIndex.js';
+import { getModelProvider } from '../config/providers.js';
+import { ConfigurableModelClient } from './ConfigurableModelClient.js';
 
 /**
  * Collect the explicitly-configured sampling overrides from a Config. Returns
@@ -60,8 +61,9 @@ export function toModelClientConfig(opts: CreateModelClientOptions): ModelClient
 
 /**
  * Create the appropriate ModelClient for the configured provider. Dynamic
- * imports keep the unused backend out of the dependency graph and avoid the
- * circular-import issues that direct construction has historically hit.
+ * imports defer transport loading until initialization, avoiding the circular
+ * imports that direct construction has historically hit. All transports are
+ * then available for synchronous live configuration changes.
  */
 export async function createModelClient(opts: CreateModelClientOptions): Promise<ModelClient> {
   const clientConfig = toModelClientConfig(opts);
@@ -70,7 +72,7 @@ export async function createModelClient(opts: CreateModelClientOptions): Promise
   // Ollama capability probes are cached by model and endpoint. Carry that
   // model-specific fact into the request boundary; provider type alone cannot
   // tell us whether a particular model accepts images.
-  if (provider === 'ollama' && clientConfig.modelName) {
+  if (getModelProvider(provider).transport === 'ollama' && clientConfig.modelName) {
     const capabilities = ModelCapabilitiesIndex.getInstance();
     await capabilities.load();
     clientConfig.supportsImages = capabilities.getCapabilities(
@@ -79,16 +81,16 @@ export async function createModelClient(opts: CreateModelClientOptions): Promise
     )?.supportsImages;
   }
 
-  if (provider === 'openai-compat') {
-    const { OpenAICompatClient } = await import('./OpenAICompatClient.js');
-    return new OpenAICompatClient(clientConfig);
-  }
-
-  if (provider === 'openai-responses') {
-    const { OpenAIResponsesClient } = await import('./OpenAIResponsesClient.js');
-    return new OpenAIResponsesClient(clientConfig);
-  }
-
-  const { OllamaClient } = await import('./OllamaClient.js');
-  return new OllamaClient(clientConfig);
+  const [{ OllamaClient }, { OpenAICompatClient }, { OpenAIResponsesClient }] = await Promise.all([
+    import('./OllamaClient.js'), import('./OpenAICompatClient.js'), import('./OpenAIResponsesClient.js'),
+  ]);
+  const transports = {
+    ollama: OllamaClient,
+    'openai-compat': OpenAICompatClient,
+    'openai-responses': OpenAIResponsesClient,
+  };
+  return new ConfigurableModelClient(provider, clientConfig, (selected, settings) => {
+    const Transport = transports[getModelProvider(selected).transport];
+    return new Transport(settings);
+  });
 }

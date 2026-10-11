@@ -1,10 +1,13 @@
 import type { Config } from '../types/index.js';
 import { testModelCapabilities } from './ModelValidation.js';
+import { getModelProvider } from '../config/providers.js';
 
 export interface ProviderModel {
   name: string;
   size?: number;
   modified?: string;
+  capabilities?: ModelCapabilities;
+  contextWindow?: number;
 }
 
 export type CapabilityState = 'supported' | 'unsupported' | 'unknown';
@@ -23,8 +26,8 @@ export interface ProviderValidation {
   error?: string;
 }
 
-function provider(config: Pick<Config, 'provider'>): NonNullable<Config['provider']> {
-  return config.provider ?? 'ollama';
+function provider(config: Pick<Config, 'provider'>) {
+  return getModelProvider(config.provider).transport;
 }
 
 function apiBase(endpoint: string): string {
@@ -63,10 +66,15 @@ export async function listProviderModels(
     return {
       supported: true,
       models: rawModels
-        .map((model: any) => ({
+        .map((model: any): ProviderModel => ({
           name: String(kind === 'ollama' ? model.name : model.id ?? ''),
           size: typeof model.size === 'number' ? model.size : undefined,
           modified: typeof model.modified_at === 'string' ? model.modified_at : undefined,
+          ...(Array.isArray(model.capabilities) ? { capabilities: {
+            tools: model.capabilities.includes('tools') ? 'supported' : 'unsupported',
+            images: model.capabilities.includes('vision') || model.capabilities.includes('images') ? 'supported' : 'unsupported',
+          } } : {}),
+          ...(typeof model.context_window === 'number' ? { contextWindow: model.context_window } : {}),
         }))
         .filter((model: ProviderModel) => model.name),
     };
@@ -104,10 +112,14 @@ export async function validateProvider(
 }
 
 export async function probeModelCapabilities(
-  config: Pick<Config, 'provider' | 'endpoint'>,
+  config: Pick<Config, 'provider' | 'endpoint'> & Partial<Pick<Config, 'api_key'>>,
   modelName: string
 ): Promise<ModelCapabilities> {
-  if (provider(config) !== 'ollama') return { tools: 'unknown', images: 'unknown' };
+  if (provider(config) !== 'ollama') {
+    const discovery = await listProviderModels({ ...config, api_key: config.api_key ?? null });
+    return discovery.models.find(model => model.name === modelName)?.capabilities
+      ?? { tools: 'unknown', images: 'unknown' };
+  }
   const capabilities = await testModelCapabilities(config.endpoint, modelName);
   return {
     tools: capabilities.supportsTools ? 'supported' : 'unsupported',

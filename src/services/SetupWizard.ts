@@ -12,9 +12,10 @@
 import { ConfigManager } from './ConfigManager.js';
 import { API_TIMEOUTS, CONTEXT_SIZES, VALID_CONTEXT_SIZES } from '../config/constants.js';
 import { listProviderModels } from '../llm/ProviderAdapter.js';
+import { getModelProvider, type ModelProvider } from '../config/providers.js';
 
 export interface SetupConfig {
-  provider: 'ollama' | 'openai-compat' | 'openai-responses';
+  provider: ModelProvider;
   endpoint: string;
   api_key: string | null;
   model: string;
@@ -43,8 +44,8 @@ export class SetupWizard {
   }
 
   /**
-   * Validate Ollama endpoint connectivity
-   * @param endpoint - The Ollama API endpoint URL
+   * Validate provider endpoint connectivity
+   * @param endpoint - The provider base URL
    * @returns Promise<boolean> - true if connection successful
    */
   async validateConnection(
@@ -52,16 +53,13 @@ export class SetupWizard {
     provider = this.configManager.getConfig().provider,
     apiKey = this.configManager.getConfig().api_key
   ): Promise<boolean> {
-    const result = await listProviderModels(
-      { provider, endpoint, api_key: apiKey },
-      API_TIMEOUTS.OLLAMA_ENDPOINT_VALIDATION
-    );
+    const result = await this.discoverModels(endpoint, provider, apiKey);
     return !result.error;
   }
 
   /**
-   * Get available models from Ollama endpoint
-   * @param endpoint - The Ollama API endpoint URL
+   * Get available models from the configured provider
+   * @param endpoint - The provider base URL
    * @returns Promise<string[]> - Array of model names
    */
   async getAvailableModels(
@@ -69,11 +67,19 @@ export class SetupWizard {
     provider = this.configManager.getConfig().provider,
     apiKey = this.configManager.getConfig().api_key
   ): Promise<string[]> {
-    const result = await listProviderModels(
+    const result = await this.discoverModels(endpoint, provider, apiKey);
+    return result.models.map((model) => model.name);
+  }
+
+  async discoverModels(
+    endpoint: string,
+    provider = this.configManager.getConfig().provider,
+    apiKey = this.configManager.getConfig().api_key
+  ) {
+    return listProviderModels(
       { provider, endpoint, api_key: apiKey },
       API_TIMEOUTS.OLLAMA_ENDPOINT_VALIDATION
     );
-    return result.models.map((model) => model.name);
   }
 
   /**
@@ -115,8 +121,8 @@ export class SetupWizard {
   /**
    * Get default endpoint
    */
-  getDefaultEndpoint(): string {
-    return 'http://localhost:11434';
+  getDefaultEndpoint(provider = this.configManager.getConfig().provider): string {
+    return getModelProvider(provider).endpoint;
   }
 
   /**

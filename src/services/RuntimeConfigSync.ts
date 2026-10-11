@@ -4,6 +4,8 @@ import { IdleMessageGenerator } from './IdleMessageGenerator.js';
 import { SessionTitleGenerator } from './SessionTitleGenerator.js';
 import { logger } from './Logger.js';
 import { ModelCapabilitiesIndex } from './ModelCapabilitiesIndex.js';
+import { samplingFromConfig } from '../llm/createModelClient.js';
+import { getModelProvider } from '../config/providers.js';
 
 function hasUpdate<K extends keyof Config>(updates: Partial<Config>, key: K): boolean {
   return Object.prototype.hasOwnProperty.call(updates, key);
@@ -17,6 +19,8 @@ function setIfAvailable(target: unknown, method: string, value: unknown): void {
 }
 
 function syncCommonModelClientSettings(client: unknown, updates: Partial<Config>): void {
+  if (hasUpdate(updates, 'provider')) setIfAvailable(client, 'setProvider', updates.provider);
+  if (hasUpdate(updates, 'api_key')) setIfAvailable(client, 'setApiKey', updates.api_key);
   if (hasUpdate(updates, 'endpoint')) {
     setIfAvailable(client, 'setEndpoint', updates.endpoint);
   }
@@ -35,7 +39,7 @@ function syncCommonModelClientSettings(client: unknown, updates: Partial<Config>
 }
 
 function cachedImageSupport(config: Config, modelName: string | null | undefined): boolean | undefined {
-  if ((config.provider ?? 'ollama') !== 'ollama' || !modelName) return undefined;
+  if (getModelProvider(config.provider).transport !== 'ollama' || !modelName) return undefined;
   return ModelCapabilitiesIndex.getInstance()
     .getCapabilities(modelName, config.endpoint)
     ?.supportsImages;
@@ -65,6 +69,10 @@ export function applyRuntimeConfigUpdates(
 
   syncCommonModelClientSettings(modelClient, updates);
   syncCommonModelClientSettings(serviceModelClient, updates);
+  if (['top_p', 'top_k', 'min_p', 'repeat_penalty', 'stop'].some(key => hasUpdate(updates, key as keyof Config))) {
+    setIfAvailable(modelClient, 'setSampling', samplingFromConfig(fullConfig));
+    setIfAvailable(serviceModelClient, 'setSampling', samplingFromConfig(fullConfig));
+  }
 
   if (hasUpdate(updates, 'model')) {
     setIfAvailable(modelClient, 'setModelName', fullConfig.model ?? '');

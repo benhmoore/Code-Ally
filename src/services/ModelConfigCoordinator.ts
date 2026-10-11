@@ -24,7 +24,7 @@ export type ModelSlot = 'ally' | 'service';
 
 /** Subset of ConfigManager the model switch depends on */
 export interface ModelConfigManager {
-  getConfig(): Readonly<Pick<Config, 'endpoint'>> & Record<string, unknown>;
+  getConfig(): Readonly<Pick<Config, 'endpoint'>> & Partial<Pick<Config, 'provider' | 'api_key'>> & Record<string, unknown>;
   setValue(key: 'model' | 'service_model', value: string): Promise<void>;
 }
 
@@ -122,7 +122,7 @@ export class ModelConfigCoordinator {
       const config = configManager.getConfig();
       const endpoint = config.endpoint || DEFAULT_ENDPOINT;
 
-      const probe = this.deps.testModelCapabilities ?? (await loadDefaultProbe());
+      const probe = this.deps.testModelCapabilities ?? (await loadDefaultProbe(config));
       const capabilities = await probe(endpoint, modelName);
 
       if (slot === 'ally' && !capabilities.supportsTools) {
@@ -178,7 +178,10 @@ export class ModelConfigCoordinator {
   }
 }
 
-async function loadDefaultProbe(): Promise<ModelCapabilityProbe> {
-  const { testModelCapabilities } = await import('../llm/ModelValidation.js');
-  return testModelCapabilities;
+async function loadDefaultProbe(config: Pick<Config, 'endpoint' | 'provider'> & Partial<Pick<Config, 'api_key'>>): Promise<ModelCapabilityProbe> {
+  const { probeModelCapabilities } = await import('../llm/ProviderAdapter.js');
+  return async (_endpoint, model) => {
+    const result = await probeModelCapabilities(config, model);
+    return { supportsTools: result.tools !== 'unsupported', supportsImages: result.images !== 'unsupported', fromCache: result.fromCache ?? false };
+  };
 }

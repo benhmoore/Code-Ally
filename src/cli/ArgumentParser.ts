@@ -6,6 +6,7 @@
  */
 
 import { Command, InvalidArgumentError } from 'commander';
+import { MODEL_PROVIDERS, type ModelProvider } from '../config/providers.js';
 
 export const OUTPUT_FORMATS = ['text', 'json', 'stream-json'] as const;
 export type OutputFormat = (typeof OUTPUT_FORMATS)[number];
@@ -31,6 +32,7 @@ function commaList(value: string): string[] {
 export interface CLIOptions {
   // Model settings
   model?: string;
+  provider?: ModelProvider;
   endpoint?: string;
   temperature?: number;
   contextSize?: number;
@@ -126,9 +128,10 @@ Use '/help' for complete interactive command reference.
     // Model Settings
     this.program
       .option('--model <name>', 'The model to use')
+      .option('--provider <name>', 'Model provider', oneOf(MODEL_PROVIDERS.map(provider => provider.value)))
       .option(
         '--endpoint <url>',
-        'The Ollama API endpoint URL'
+        'The model provider base URL'
       )
       .option(
         '--temperature <float>',

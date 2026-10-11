@@ -26,6 +26,7 @@ import { UI_COLORS } from '../constants/colors.js';
 import { SEARCH_PROVIDER_INFO, SearchProviderType } from '../../types/integration.js';
 import { MCP_PRESETS, MCP_PRESET_ORDER, buildConfigFromPreset } from '@mcp/MCPPresets.js';
 import { tokenizeCommand } from '@mcp/MCPServerSpec.js';
+import { MODEL_PROVIDERS } from '@config/providers.js';
 
 enum SetupStep {
   WELCOME,
@@ -68,12 +69,9 @@ function isLocalEndpoint(endpointUrl: string): boolean {
 export const SetupWizardView: React.FC<SetupWizardViewProps> = ({ onComplete, onSkip }) => {
   const [step, setStep] = useState<SetupStep>(SetupStep.WELCOME);
   const [welcomeChoiceIndex, setWelcomeChoiceIndex] = useState(0); // 0 = Continue, 1 = Skip
-  const [providerIndex, setProviderIndex] = useState(0);
-  const providers = [
-    { value: 'ollama' as const, label: 'Ollama', endpoint: 'http://localhost:11434' },
-    { value: 'openai-responses' as const, label: 'OpenAI Responses', endpoint: 'https://api.openai.com' },
-    { value: 'openai-compat' as const, label: 'OpenAI-compatible', endpoint: 'http://localhost:8000' },
-  ];
+  const [initialConfig] = useState(() => ServiceRegistry.getInstance().getRequired('config_manager').getConfig());
+  const providers = MODEL_PROVIDERS;
+  const [providerIndex, setProviderIndex] = useState(() => Math.max(0, providers.findIndex(p => p.value === (initialConfig.provider ?? 'ollama'))));
   const selectedProvider = providers[providerIndex]?.value ?? 'ollama';
   const [endpoint, setEndpoint] = useState('http://localhost:11434');
   const [endpointBuffer, setEndpointBuffer] = useState('http://localhost:11434');
@@ -85,15 +83,18 @@ export const SetupWizardView: React.FC<SetupWizardViewProps> = ({ onComplete, on
   const [selectedModelIndex, setSelectedModelIndex] = useState(0);
   const [modelBuffer, setModelBuffer] = useState('');
   const [modelCursor, setModelCursor] = useState(0);
-  const [selectedContextSizeIndex, setSelectedContextSizeIndex] = useState(1); // Default to 32K
-  const [isLaptop, setIsLaptop] = useState(false);
-  const [selectedLaptopChoiceIndex, setSelectedLaptopChoiceIndex] = useState(1); // Default to "No"
-  const [error, setError] = useState<string | null>(null);
   const [setupWizard] = useState(() => {
     const registry = ServiceRegistry.getInstance();
     const configManager = registry.getRequired('config_manager');
     return new SetupWizard(configManager);
   });
+  const [selectedContextSizeIndex, setSelectedContextSizeIndex] = useState(() => initialConfig.setup_completed
+    ? Math.max(0, setupWizard.getContextSizeOptions().findIndex(option => option.value === initialConfig.context_size))
+    : 1);
+  const [isLaptop, setIsLaptop] = useState(false);
+  const [selectedLaptopChoiceIndex, setSelectedLaptopChoiceIndex] = useState(1); // Default to "No"
+  const [error, setError] = useState<string | null>(null);
+
 
   // Search configuration state
   const [searchPromptIndex, setSearchPromptIndex] = useState(1); // 0 = Yes, 1 = Skip (default to skip)
@@ -130,7 +131,7 @@ export const SetupWizardView: React.FC<SetupWizardViewProps> = ({ onComplete, on
 
   // Handle exit from TextInput's onCtrlC (empty buffer)
   const handleCtrlC = () => {
-    process.exit(0);
+    onSkip?.();
   };
 
   // Handle keyboard input for selection screens
@@ -142,14 +143,14 @@ export const SetupWizardView: React.FC<SetupWizardViewProps> = ({ onComplete, on
                             step === SetupStep.VALIDATING_MODEL;
 
     // ESC - exit (except protected steps)
-    if (key.escape && !isProtectedStep) {
-      process.exit(0);
+    if (key.escape && !isProtectedStep && !isTextInputStep) {
+      onSkip?.();
       return;
     }
 
     // Ctrl+C - only handle for non-TextInput steps (TextInput handles its own)
     if (key.ctrl && input === 'c' && !isProtectedStep && !isTextInputStep) {
-      process.exit(0);
+      onSkip?.();
       return;
     }
 
@@ -175,18 +176,15 @@ export const SetupWizardView: React.FC<SetupWizardViewProps> = ({ onComplete, on
       } else if (key.downArrow) {
         setProviderIndex((prev) => Math.min(providers.length - 1, prev + 1));
       } else if (key.return) {
-        const defaultEndpoint = providers[providerIndex]?.endpoint ?? providers[0]!.endpoint;
+        const defaultEndpoint = selectedProvider === (initialConfig.provider ?? 'ollama')
+          ? initialConfig.endpoint : providers[providerIndex]!.endpoint;
         setEndpoint(defaultEndpoint);
         setEndpointBuffer(defaultEndpoint);
         setEndpointCursor(defaultEndpoint.length);
-        if (selectedProvider !== 'ollama') {
-          setProviderApiKeyBuffer('');
-          setProviderApiKeyCursor(0);
-          setStep(SetupStep.PROVIDER_API_KEY);
-        } else {
-          setProviderApiKey('');
-          setStep(SetupStep.ENDPOINT);
-        }
+        const apiKey = selectedProvider === (initialConfig.provider ?? 'ollama') ? initialConfig.api_key ?? '' : '';
+        setProviderApiKeyBuffer(apiKey);
+        setProviderApiKeyCursor(apiKey.length);
+        setStep(SetupStep.PROVIDER_API_KEY);
       }
     } else if (step === SetupStep.MODEL) {
       if (key.upArrow) {
@@ -292,14 +290,14 @@ export const SetupWizardView: React.FC<SetupWizardViewProps> = ({ onComplete, on
   const validateEndpointAndFetchModels = React.useCallback(async () => {
     setError(null);
 
-    const isValid = await setupWizard.validateConnection(endpoint, selectedProvider, providerApiKey || null);
-    if (!isValid) {
-      setError('Failed to connect to the configured model provider. Check the endpoint and credentials.');
+    const discovery = await setupWizard.discoverModels(endpoint, selectedProvider, providerApiKey || null);
+    if (discovery.error) {
+      setError(`Unable to list models: ${discovery.error}. Check the endpoint and credentials.`);
       setStep(SetupStep.ENDPOINT);
       return;
     }
 
-    const models = await setupWizard.getAvailableModels(endpoint, selectedProvider, providerApiKey || null);
+    const models = discovery.models.map(model => model.name);
     if (models.length === 0) {
       setError(null);
       setModelBuffer('');
@@ -309,7 +307,13 @@ export const SetupWizardView: React.FC<SetupWizardViewProps> = ({ onComplete, on
     }
 
     setAvailableModels(models);
-    setSelectedModelIndex(0);
+    const currentModelIndex = models.indexOf(initialConfig.model ?? '');
+    setSelectedModelIndex(Math.max(0, currentModelIndex));
+
+    if (initialConfig.setup_completed) {
+      setStep(SetupStep.MODEL);
+      return;
+    }
 
     // Check if endpoint is local - if so, ask about laptop preference
     if (isLocalEndpoint(endpoint)) {
@@ -320,7 +324,7 @@ export const SetupWizardView: React.FC<SetupWizardViewProps> = ({ onComplete, on
       // Keep default context size (32K - index 1) for desktop/server
       setStep(SetupStep.MODEL);
     }
-  }, [setupWizard, endpoint, selectedProvider, providerApiKey]);
+  }, [setupWizard, endpoint, selectedProvider, providerApiKey, initialConfig]);
 
   const validateModelCapabilities = React.useCallback(async () => {
     setError(null);
@@ -333,7 +337,7 @@ export const SetupWizardView: React.FC<SetupWizardViewProps> = ({ onComplete, on
     }
 
     try {
-      const result = await probeModelCapabilities({ provider: selectedProvider, endpoint }, selectedModel);
+      const result = await probeModelCapabilities({ provider: selectedProvider, endpoint, api_key: providerApiKey || null }, selectedModel);
 
       if (result.tools === 'unsupported') {
         setError(`Model '${selectedModel}' does not support tools. Please select a different model.`);
@@ -348,7 +352,7 @@ export const SetupWizardView: React.FC<SetupWizardViewProps> = ({ onComplete, on
       logger.warn('[SetupWizardView] Model validation error:', error);
       setStep(SetupStep.CONTEXT_SIZE);
     }
-  }, [availableModels, selectedModelIndex, selectedProvider, endpoint]);
+  }, [availableModels, selectedModelIndex, selectedProvider, endpoint, providerApiKey]);
 
   // Validation is driven by explicit transient states so each transition runs once.
   useEffect(() => {
@@ -391,7 +395,7 @@ export const SetupWizardView: React.FC<SetupWizardViewProps> = ({ onComplete, on
 
   const handleSearchApiKeySubmit = (value: string) => {
     if (!value.trim()) {
-      setError('API key cannot be empty. Press ESC to skip search configuration.');
+      setError('API key cannot be empty. Press ESC to cancel setup.');
       return;
     }
     setError(null);
@@ -402,7 +406,7 @@ export const SetupWizardView: React.FC<SetupWizardViewProps> = ({ onComplete, on
 
   const handleMcpInputSubmit = (value: string) => {
     if (!value.trim()) {
-      setError('Value cannot be empty. Press ESC to skip.');
+      setError('Value cannot be empty. Press ESC to cancel setup.');
       return;
     }
     setError(null);
@@ -412,7 +416,7 @@ export const SetupWizardView: React.FC<SetupWizardViewProps> = ({ onComplete, on
   const handleMcpCustomNameSubmit = (value: string) => {
     const name = value.trim();
     if (!name) {
-      setError('Server name cannot be empty. Press ESC to skip.');
+      setError('Server name cannot be empty. Press ESC to cancel setup.');
       return;
     }
     setError(null);
@@ -425,7 +429,7 @@ export const SetupWizardView: React.FC<SetupWizardViewProps> = ({ onComplete, on
   const handleMcpCustomCommandSubmit = (value: string) => {
     const command = value.trim();
     if (!command) {
-      setError('Command cannot be empty. Press ESC to skip.');
+      setError('Command cannot be empty. Press ESC to cancel setup.');
       return;
     }
     setError(null);
@@ -459,15 +463,19 @@ export const SetupWizardView: React.FC<SetupWizardViewProps> = ({ onComplete, on
       endpoint,
       api_key: providerApiKey || null,
       model: selectedModel,
-      service_model: null,
+      service_model: selectedProvider === initialConfig.provider ? initialConfig.service_model ?? null : null,
       context_size: selectedContextSize.value,
-      auto_confirm: false,
-      enable_idle_messages: !isLaptop,
-      enable_session_title_generation: !isLaptop,
-      tool_call_activity_timeout: isLaptop ? 90 : 120,
+      auto_confirm: initialConfig.auto_confirm,
+      enable_idle_messages: initialConfig.setup_completed ? initialConfig.enable_idle_messages : !isLaptop,
+      enable_session_title_generation: initialConfig.setup_completed ? initialConfig.enable_session_title_generation : !isLaptop,
+      tool_call_activity_timeout: initialConfig.setup_completed ? initialConfig.tool_call_activity_timeout : isLaptop ? 90 : 120,
     };
 
     try {
+      const registry = ServiceRegistry.getInstance();
+      const block = registry.get('agent')?.getModelIdentityChangeBlock(config)
+        ?? registry.get('agent_pool')?.getModelIdentityChangeBlock(config);
+      if (block) throw new Error(block);
       await setupWizard.applySetupConfig(config);
 
       // Apply search configuration if user provided one
@@ -524,7 +532,7 @@ export const SetupWizardView: React.FC<SetupWizardViewProps> = ({ onComplete, on
       setStep(SetupStep.COMPLETED);
     } catch (error) {
       logger.error('[SetupWizardView] Failed to apply configuration:', error);
-      setError('Failed to save configuration. Please try again.');
+      setError(error instanceof Error ? error.message : 'Failed to save configuration. Please try again.');
       setStep(SetupStep.MCP_PROMPT);
     }
   };
@@ -578,7 +586,7 @@ export const SetupWizardView: React.FC<SetupWizardViewProps> = ({ onComplete, on
               <Text bold><ChickAnimation /></Text>
               <Text color={UI_COLORS.TEXT_DEFAULT} bold>Step 1: Model Provider</Text>
             </Box>
-            <Box marginBottom={1}><Text>Select the API protocol Code Ally should use.</Text></Box>
+            <Box marginBottom={1}><Text>Select your model provider.</Text></Box>
             <Box marginLeft={2} flexDirection="column">
               {providers.map((provider, index) => (
                 <SelectionIndicator key={provider.value} isSelected={providerIndex === index}>
@@ -605,7 +613,7 @@ export const SetupWizardView: React.FC<SetupWizardViewProps> = ({ onComplete, on
               cursorPosition={providerApiKeyCursor}
               onCursorChange={setProviderApiKeyCursor}
               onSubmit={handleProviderApiKeySubmit}
-              onEscape={() => setStep(SetupStep.PROVIDER)}
+              onEscape={handleCtrlC}
               onCtrlC={handleCtrlC}
               isActive={true}
               multiline={false}
@@ -644,11 +652,11 @@ export const SetupWizardView: React.FC<SetupWizardViewProps> = ({ onComplete, on
                 cursorPosition={endpointCursor}
                 onCursorChange={setEndpointCursor}
                 onSubmit={handleEndpointSubmit}
-                onEscape={() => process.exit(0)}
+                onEscape={handleCtrlC}
                 onCtrlC={handleCtrlC}
                 isActive={true}
                 multiline={false}
-                placeholder="http://localhost:11434"
+                placeholder={providers[providerIndex]!.endpoint}
               />
             </Box>
             <Box marginTop={1} borderTop borderColor="gray" paddingTop={1}>
@@ -693,7 +701,7 @@ export const SetupWizardView: React.FC<SetupWizardViewProps> = ({ onComplete, on
               cursorPosition={modelCursor}
               onCursorChange={setModelCursor}
               onSubmit={handleModelSubmit}
-              onEscape={() => setStep(SetupStep.ENDPOINT)}
+              onEscape={handleCtrlC}
               onCtrlC={handleCtrlC}
               isActive={true}
               multiline={false}
@@ -949,11 +957,7 @@ export const SetupWizardView: React.FC<SetupWizardViewProps> = ({ onComplete, on
                 cursorPosition={searchApiKeyCursor}
                 onCursorChange={setSearchApiKeyCursor}
                 onSubmit={handleSearchApiKeySubmit}
-                onEscape={() => {
-                  // Skip search API key on ESC — continue to MCP prompt
-                  setError(null);
-                  setStep(SetupStep.MCP_PROMPT);
-                }}
+                onEscape={handleCtrlC}
                 onCtrlC={handleCtrlC}
                 isActive={true}
                 multiline={false}
@@ -962,7 +966,7 @@ export const SetupWizardView: React.FC<SetupWizardViewProps> = ({ onComplete, on
               />
             </Box>
             <Box marginTop={1} borderTop borderColor="gray" paddingTop={1}>
-              <Text dimColor>Press Enter to save, ESC to skip search configuration</Text>
+              <Text dimColor>Press Enter to save, ESC to cancel setup</Text>
             </Box>
           </>
         )}
@@ -1082,10 +1086,7 @@ export const SetupWizardView: React.FC<SetupWizardViewProps> = ({ onComplete, on
                   cursorPosition={mcpInputCursor}
                   onCursorChange={setMcpInputCursor}
                   onSubmit={handleMcpInputSubmit}
-                  onEscape={() => {
-                    setError(null);
-                    applyAllConfiguration();
-                  }}
+                  onEscape={handleCtrlC}
                   onCtrlC={handleCtrlC}
                   isActive={true}
                   multiline={false}
@@ -1093,7 +1094,7 @@ export const SetupWizardView: React.FC<SetupWizardViewProps> = ({ onComplete, on
                 />
               </Box>
               <Box marginTop={1} borderTop borderColor="gray" paddingTop={1}>
-                <Text dimColor>Press Enter to save, ESC to skip MCP configuration</Text>
+                <Text dimColor>Press Enter to save, ESC to cancel setup</Text>
               </Box>
             </>
           );
@@ -1128,10 +1129,7 @@ export const SetupWizardView: React.FC<SetupWizardViewProps> = ({ onComplete, on
                 cursorPosition={mcpCustomNameCursor}
                 onCursorChange={setMcpCustomNameCursor}
                 onSubmit={handleMcpCustomNameSubmit}
-                onEscape={() => {
-                  setError(null);
-                  applyAllConfiguration();
-                }}
+                onEscape={handleCtrlC}
                 onCtrlC={handleCtrlC}
                 isActive={true}
                 multiline={false}
@@ -1139,7 +1137,7 @@ export const SetupWizardView: React.FC<SetupWizardViewProps> = ({ onComplete, on
               />
             </Box>
             <Box marginTop={1} borderTop borderColor="gray" paddingTop={1}>
-              <Text dimColor>Press Enter to continue, ESC to skip MCP configuration</Text>
+              <Text dimColor>Press Enter to continue, ESC to cancel setup</Text>
             </Box>
           </>
         )}
@@ -1178,10 +1176,7 @@ export const SetupWizardView: React.FC<SetupWizardViewProps> = ({ onComplete, on
                 cursorPosition={mcpCustomCommandCursor}
                 onCursorChange={setMcpCustomCommandCursor}
                 onSubmit={handleMcpCustomCommandSubmit}
-                onEscape={() => {
-                  setError(null);
-                  applyAllConfiguration();
-                }}
+                onEscape={handleCtrlC}
                 onCtrlC={handleCtrlC}
                 isActive={true}
                 multiline={false}
@@ -1189,7 +1184,7 @@ export const SetupWizardView: React.FC<SetupWizardViewProps> = ({ onComplete, on
               />
             </Box>
             <Box marginTop={1} borderTop borderColor="gray" paddingTop={1}>
-              <Text dimColor>Press Enter to save, ESC to skip MCP configuration</Text>
+              <Text dimColor>Press Enter to save, ESC to cancel setup</Text>
             </Box>
           </>
         )}
