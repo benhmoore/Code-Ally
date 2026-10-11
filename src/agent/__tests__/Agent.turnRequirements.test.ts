@@ -93,4 +93,14 @@ describe('root agent requirements across turns', () => {
     expect(recorded).toEqual([{ answer: 'first' }, { answer: 'second' }]);
     expect(send).toHaveBeenCalledTimes(5);
   });
+  it('stops unmet requirements at the no-progress boundary instead of recursively requesting forever', async () => {
+    send.mockResolvedValue(textResponse('still done'));
+    const response = await agent.sendMessage('produce the structured result');
+    expect(response).toContain('no new successful tool evidence');
+    expect(send).toHaveBeenCalledTimes(12);
+    expect(recorded).toEqual([]);
+    expect(agent.getTurnSnapshot().terminationReason).toBe('no_progress');
+    await agent.cleanup();
+  });
+
 });

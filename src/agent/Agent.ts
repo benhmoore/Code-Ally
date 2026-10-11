@@ -1,3 +1,5 @@
+import { createHash } from 'node:crypto';
+import { decideContinuation } from './ContinuationPolicy.js';
 import { ConversationInputQueue } from '../services/ConversationInputQueue.js';
 import { ConversationViewStore } from '../services/ConversationViewStore.js';
 import { reconstructToolCallsFromMessages } from '../services/conversationTools.js';
@@ -258,6 +260,7 @@ export class Agent {
 
   private readonly turnController = new TurnController({
     maxModelCalls: AGENT_CONFIG.MAX_LLM_ROUNDTRIPS_PER_TURN,
+    maxCallsWithoutProgress: AGENT_CONFIG.MAX_MODEL_CALLS_WITHOUT_PROGRESS,
     maxToolCalls: AGENT_CONFIG.MAX_TOOL_CALLS_PER_TURN,
   });
   private activeExecutionContext: AgentExecutionContext = {};
@@ -1429,6 +1432,7 @@ export class Agent {
    * Called when user submits message mid-response
    */
   addUserInterjection(message: string): void {
+    this.turnController.acceptDirection();
     this.conversationManager.addMessage({
       role: 'user',
       content: message,
@@ -1517,6 +1521,11 @@ export class Agent {
       const registry = ServiceRegistry.getInstance();
       const runPolicy = registry.get('run_policy_manager')?.getPolicy();
       const runSupervisor = registry.get('run_supervisor');
+      if (snapshot.terminationReason === 'no_progress') {
+        const content = this.getBudgetStopMessage();
+        if (!this.config.isSpecializedAgent && runSupervisor?.isRunning()) await runSupervisor.block(content);
+        return { role: 'assistant', content };
+      }
       if (!this.config.isSpecializedAgent && runPolicy?.completion === 'durable_objective' && runSupervisor?.isRunning()) {
         this.turnController.rollover();
         await runSupervisor.rolloverEpoch(snapshot.terminationReason ?? 'round_trip_budget');
@@ -1539,7 +1548,7 @@ export class Agent {
         logger.warn('[AGENT]', this.instanceId, `Reached per-turn round-trip limit (${AGENT_CONFIG.MAX_LLM_ROUNDTRIPS_PER_TURN}); stopping to avoid an unbounded loop`);
         return {
           role: 'assistant',
-          content: `I stopped because this turn reached its ${snapshot.terminationReason === 'tool_budget' ? 'tool-call' : 'model-call'} safety budget. The task may be incomplete; review the completed work before continuing.`,
+          content: this.getBudgetStopMessage(),
         };
       }
     }
@@ -2048,22 +2057,22 @@ export class Agent {
       const registry = ServiceRegistry.getInstance();
       const supervisor = registry.get('run_supervisor');
       const policy = registry.get('run_policy_manager')?.getPolicy();
-      if (policy?.completion === 'durable_objective' && supervisor?.isRunning()) {
+      const todoBaseline = new Set(this.invocationState.todoBaselineIds);
+      const unfinishedTodos = registry.get('todo_manager')
+        ?.getTodos()
+        .filter(todo => todo.status !== 'completed' && !todoBaseline.has(todo.id)) ?? [];
+      const decision = decideContinuation({
+        durableObjective: policy?.completion === 'durable_objective' && supervisor?.isRunning(),
+        unfinishedWork: unfinishedTodos.length > 0
+          && this.invocationState.unfinishedWorkContinuations < AGENT_CONFIG.MAX_UNFINISHED_WORK_CONTINUATIONS,
+      });
+      if (supervisor && decision === 'objective') {
         await supervisor.recordProgress(result);
         this.conversationManager.addMessage(createActiveObjectiveReminder(supervisor.getActiveRun()!));
         const continuation = await this.getLLMResponse(executionContext);
         return await this.processLLMResponse(continuation, executionContext);
       }
-
-      const todoBaseline = new Set(this.invocationState.todoBaselineIds);
-      const unfinishedTodos = registry.get('todo_manager')
-        ?.getTodos()
-        .filter(todo => todo.status !== 'completed' && !todoBaseline.has(todo.id)) ?? [];
-      if (
-        unfinishedTodos.length > 0
-        && this.invocationState.unfinishedWorkContinuations
-          < AGENT_CONFIG.MAX_UNFINISHED_WORK_CONTINUATIONS
-      ) {
+      if (decision === 'unfinished_work') {
         this.invocationState.unfinishedWorkContinuations++;
         this.conversationManager.addMessage(createSystemReminder(
           'This turn still has unfinished todos, so a progress update alone does not finish the work. Continue with the next concrete tool call. If the work is actually complete, reconcile the todo statuses first. If no safe path remains without user input, state the concrete blocker and the decision or information needed.',
@@ -2170,6 +2179,13 @@ export class Agent {
    * Contains callbacks and state needed for response processing
    * @param executionContext - Execution context for this invocation
    */
+  private getBudgetStopMessage(): string {
+    const reason = this.turnController.snapshot().terminationReason;
+    return reason === 'no_progress'
+      ? 'I stopped because repeated continuation attempts produced no new successful tool evidence. The task is incomplete; a different approach or additional direction is needed.'
+      : `I stopped because this turn reached its ${reason === 'tool_budget' ? 'tool-call' : 'model-call'} safety budget. The task may be incomplete; review the completed work before continuing.`;
+  }
+
   private buildResponseContext(executionContext: AgentExecutionContext): ResponseContext {
     const registry = ServiceRegistry.getInstance();
     const supervisor = !this.config.isSpecializedAgent
@@ -2178,6 +2194,7 @@ export class Agent {
     const runId = supervisor?.getActiveRun()?.runId;
     return {
       getTerminalResponse: () => {
+        if (this.turnController.isBudgetExhausted()) return this.getBudgetStopMessage();
         const run = supervisor?.getActiveRun();
         if (!runId || run?.runId !== runId) return undefined;
         const outcome = run.outcome;
@@ -2244,7 +2261,15 @@ export class Agent {
       recordToolCalls: (toolCalls, results) => {
         this.loopDetector.recordToolCalls(toolCalls, results);
         this.turnController.recordToolCalls(toolCalls.length);
-        const hasSuccessfulResult = results?.some(result => result.success) === true;
+        const hasSuccessfulResult = results?.map((result, index) => {
+          if (!result.success) return false;
+          const call = toolCalls[index];
+          const fingerprint = createHash('sha256').update(JSON.stringify({
+            tool: call?.function.name, arguments: call?.function.arguments,
+            content: result.content ?? result.result ?? result.output ?? '',
+          })).digest('hex');
+          return this.turnController.recordProgress(fingerprint);
+        }).some(Boolean) === true;
         if (hasSuccessfulResult) {
           this.invocationState.unfinishedWorkContinuations = 0;
         }
@@ -2253,7 +2278,7 @@ export class Agent {
         // failure) replenish bounded recovery. Sustained successful batches
         // are evidence that the prior loop was actually escaped.
         if (this.invocationState.recoveryAttempts > 0) {
-          const wholeBatchSucceeded = results !== undefined
+          const wholeBatchSucceeded = hasSuccessfulResult && results !== undefined
             && results.length > 0
             && results.every(result => result.success === true);
           this.invocationState.recoverySuccessStreak = wholeBatchSucceeded

@@ -1,3 +1,4 @@
+import { decideContinuation } from './ContinuationPolicy.js';
 /**
  * ResponseProcessor - Handles LLM response parsing and validation
  *
@@ -162,6 +163,10 @@ export class ResponseProcessor {
     // continuation messages before Agent resumes with the queued input.
     const pendingInterruption = this.checkForInterruption();
     if (pendingInterruption !== null) return pendingInterruption;
+    const terminalResponse = context.getTerminalResponse?.();
+    if (decideContinuation({ terminal: terminalResponse !== undefined }) === 'terminal') {
+      return this.recordTextResponse({ role: 'assistant', content: terminalResponse! }, context);
+    }
 
     // GAP 2: Partial response due to HTTP error (mid-stream interruption)
     // Detect partial responses that were interrupted by HTTP 500/503 errors
@@ -655,6 +660,11 @@ export class ResponseProcessor {
     // Validate that we have actual content
     const content = response.content || '';
 
+    const decision = decideContinuation({
+      missingRequiredTools: this.requiredToolTracker.hasRequiredTools() && !this.requiredToolTracker.areAllCalled(),
+      unmetRequirements: this.requirementValidator.hasRequirements() && !this.requirementValidator.checkRequirements().met,
+    });
+
     // Check if all required tool calls have been executed before allowing agent to exit
     // IMPORTANT: This check must happen BEFORE any fallback/retry logic to ensure required tools are always enforced
     if (this.requiredToolTracker.hasRequiredTools() && !this.interruptionManager.isInterrupted()) {
@@ -665,9 +675,9 @@ export class ResponseProcessor {
       const result = this.requiredToolTracker.checkAndWarn();
       logger.debug(`[REQUIRED_TOOLS_DEBUG] Missing tools:`, result.missingTools);
 
-      if (result.shouldWarn) {
+      if (result.shouldWarn && decision === 'required_tools') {
         // Send reminder to call required tools
-        logger.debug(`[REQUIRED_TOOLS_DEBUG] ⚠ ISSUING WARNING ${result.warningCount} (will retry indefinitely)`);
+        logger.debug(`[REQUIRED_TOOLS_DEBUG] ⚠ ISSUING WARNING ${result.warningCount} (subject to the owning turn continuation budget)`);
         logger.debug(`[REQUIRED_TOOLS_DEBUG] Sending reminder to call: ${result.missingTools.join(', ')}`);
 
         // Ensure context room before adding retry message
@@ -719,13 +729,13 @@ export class ResponseProcessor {
 
       const { met } = this.requirementValidator.checkRequirements();
 
-      if (!met) {
+      if (!met && decision === 'requirements') {
         // Requirements not met - inject reminder and retry
         this.requirementValidator.incrementRetryCount();
         const retryCount = this.requirementValidator.getRetryCount();
 
         logger.debug('[REQUIREMENT_VALIDATOR]', context.instanceId,
-          `Requirements not met. Injecting reminder (attempt ${retryCount}, will retry indefinitely)`);
+          `Requirements not met. Injecting reminder (attempt ${retryCount}, subject to the owning turn continuation budget)`);
 
         // Ensure context room before adding retry message
         await context.ensureContextRoom();

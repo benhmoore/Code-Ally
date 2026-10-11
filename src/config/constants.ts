@@ -915,6 +915,7 @@ export const AGENT_CONFIG = {
    * resort behind them.
    */
   MAX_LLM_ROUNDTRIPS_PER_TURN: 300,
+  MAX_MODEL_CALLS_WITHOUT_PROGRESS: 12,
 
   /**
    * Hard ceiling across direct and batched tool calls in one user turn. Kept

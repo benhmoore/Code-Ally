@@ -72,3 +72,23 @@ describe('TurnController', () => {
     expect(turn.isBudgetExhausted()).toBe(false);
   });
 });
+
+it('keeps no-progress admission bounded across budget epochs and repeated successful results', () => {
+  const turn = new TurnController({ maxModelCalls: 1, maxToolCalls: 10, maxCallsWithoutProgress: 2 });
+  turn.start();
+  expect(turn.recordProgress('read:unchanged')).toBe(true);
+  expect(turn.beginModelCall()).toBe(true);
+  expect(turn.recordProgress('read:unchanged')).toBe(false);
+  turn.rollover();
+  expect(turn.beginModelCall()).toBe(true);
+  turn.rollover();
+  expect(turn.beginModelCall()).toBe(false);
+  expect(turn.snapshot().terminationReason).toBe('no_progress');
+  turn.finish();
+  expect(turn.snapshot().terminationReason).toBe('no_progress');
+  turn.acceptDirection();
+  turn.rollover();
+  expect(turn.beginModelCall()).toBe(true);
+  expect(turn.recordProgress('read:changed')).toBe(true);
+  expect(turn.snapshot().modelCallsWithoutProgress).toBe(0);
+});

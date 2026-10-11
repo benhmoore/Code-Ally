@@ -480,7 +480,7 @@ describe('Agent - Interruption Handling', () => {
       expect((agent as any).invocationState.recoveryAttempts).toBe(1);
       expect((agent as any).invocationState.recoverySuccessStreak).toBe(1);
 
-      context.recordToolCalls([call], [{ success: true, error: '', content: 'source' }]);
+      context.recordToolCalls([call], [{ success: true, error: '', content: 'changed source' }]);
       expect((agent as any).invocationState.recoveryAttempts).toBe(0);
       expect((agent as any).invocationState.recoverySuccessStreak).toBe(0);
     });
@@ -499,7 +499,7 @@ describe('Agent - Interruption Handling', () => {
         { success: true },
         { success: false, error: 'failed' },
       ]);
-      context.recordToolCalls([call], [{ success: true }]);
+      context.recordToolCalls([call], [{ success: true, content: 'new verification output' }]);
 
       expect((agent as any).invocationState.recoveryAttempts).toBe(1);
       expect((agent as any).invocationState.recoverySuccessStreak).toBe(1);
