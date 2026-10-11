@@ -97,3 +97,26 @@ it('binds lifecycle to the owner even when an unscoped background completion omi
   stream.emit({ type: E.AGENT_END, id: 'end', timestamp: 3, data: { instanceId: 'primary' } });
   expect(store.getSnapshot().isThinking).toBe(false);
 });
+
+it('keeps generation estimates scoped and available across view subscriptions, resetting on retry and history replacement', () => {
+  const { store, stream } = setup();
+  const send = (type: E, timestamp: number, data: Record<string, unknown> = {}, parentId?: string) =>
+    stream.emit({ type, timestamp, data, parentId, id: 'rate' });
+  send(E.MODEL_REQUEST_START, 0);
+  send(E.THOUGHT_CHUNK, 5000, { thinking: true });
+  send(E.THOUGHT_CHUNK, 10000, { chunk: 'first' });
+  send(E.ASSISTANT_CHUNK, 12000, { chunk: 'a'.repeat(160) });
+  expect(store.getSnapshot().generationRate).toBe(20);
+  send(E.ASSISTANT_CHUNK, 13000, { chunk: 'a'.repeat(4000) }, 'different-agent');
+  expect(store.getSnapshot().generationRate).toBe(20);
+  send(E.MODEL_REQUEST_END, 14000);
+  send(E.TOOL_OUTPUT_CHUNK, 16000, { chunk: 'output'.repeat(1000) });
+  expect(store.getSnapshot().generationRate).toBe(20);
+  send(E.MODEL_STREAM_RESET, 20000);
+  expect(store.getSnapshot().generationRate).toBeUndefined();
+  send(E.ASSISTANT_CHUNK, 22000, { chunk: 'first' });
+  send(E.ASSISTANT_CHUNK, 24000, { chunk: 'a'.repeat(80) });
+  expect(store.getSnapshot().generationRate).toBe(10);
+  store.refresh(true);
+  expect(store.getSnapshot().generationRate).toBeUndefined();
+});

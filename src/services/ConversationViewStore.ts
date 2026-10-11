@@ -1,3 +1,4 @@
+import { GenerationRate } from './GenerationRate.js';
 import { ThinkingClock } from './ThinkingClock.js';
 import { ActivityEventType, type ActivityEvent, type Message, type ToolCallState } from '../types/index.js';
 import type { ActivityStream } from './ActivityStream.js';
@@ -12,6 +13,7 @@ export interface ConversationViewSnapshot {
   isThinking: boolean;
   isCompacting: boolean;
   contextUsage: number;
+  generationRate?: number;
   statusMessages: Array<{ id: string; timestamp: number; message: string }>;
   compactionNotices: Array<{ id: string; timestamp: number; oldContextUsage: number; threshold: number; parentId?: string }>;
 
@@ -27,6 +29,7 @@ export class ConversationViewStore {
   private displayMessages: Message[] = [];
   private notificationTimer?: ReturnType<typeof setTimeout>;
   private closed = false;
+  private readonly generationRate = new GenerationRate();
   private readonly thinkingClock = new ThinkingClock();
 
   constructor(
@@ -73,7 +76,7 @@ export class ConversationViewStore {
   /** Replace views only when history changes; compaction retains the visible transcript. */
   refresh = (replace = false): void => {
     if (this.closed) return;
-    if (replace) this.displayMessages = [];
+    if (replace) { this.displayMessages = []; this.generationRate.clear(); }
     const transcript = [...this.readMessages()];
     const recordedIds = new Set(transcript.filter(m => m.role === 'tool').map(m => m.tool_call_id));
     const calls = new Map((replace ? [] : this.snapshot.activeToolCalls).map(call => [call.id, call]));
@@ -91,7 +94,7 @@ export class ConversationViewStore {
     this.publish({ messages: boundVisibleMessages(messages.map(message =>
       message.role === 'assistant' && message.content && this.displayMessages.some(display => display.thinking === message.thinking && display.thinking)
         ? { ...message, thinking: undefined } : message)), activeToolCalls: boundToolCalls([...calls.values()]),
-      ...(replace ? { streamingContent: undefined, isCompacting: false, statusMessages: [], compactionNotices: [] } : {}) });
+      ...(replace ? { generationRate: undefined, streamingContent: undefined, isCompacting: false, statusMessages: [], compactionNotices: [] } : {}) });
   };
 
   private updateTool(id: string, update: Partial<ToolCallState>, streamed = false): void {
@@ -113,12 +116,16 @@ export class ConversationViewStore {
         break;
       case ActivityEventType.CONVERSATION_CLEAR:
         this.displayMessages = [];
-        this.publish({ messages: [], activeToolCalls: [], streamingContent: undefined, isThinking: false, isCompacting: false, statusMessages: [], compactionNotices: [], contextUsage: 0 });
+        this.generationRate.clear();
+        this.publish({ messages: [], activeToolCalls: [], streamingContent: undefined, isThinking: false, isCompacting: false, statusMessages: [], compactionNotices: [], contextUsage: 0, generationRate: undefined });
         break;
       case ActivityEventType.THOUGHT_CHUNK: {
         const key = event.parentId || 'root';
         if (data.thinking === true) this.thinkingClock.markRequestSent(key, event.timestamp);
-        else if (data.chunk) this.thinkingClock.markReasoningToken(key, event.timestamp);
+        else if (data.chunk) {
+          this.thinkingClock.markReasoningToken(key, event.timestamp);
+          if (own) this.publish({ generationRate: this.generationRate.add(data.chunk, event.timestamp) }, true);
+        }
         break;
       }
       case ActivityEventType.THOUGHT_COMPLETE: {
@@ -132,17 +139,27 @@ export class ConversationViewStore {
         break;
       }
       case ActivityEventType.MODEL_REQUEST_START:
-        if (own) this.publish({ isThinking: true });
+        if (own) {
+          this.generationRate.start();
+          this.publish({ isThinking: true, generationRate: undefined });
+        }
+        break;
+      case ActivityEventType.MODEL_REQUEST_END:
+        if (own) this.generationRate.stop();
         break;
       case ActivityEventType.ASSISTANT_CHUNK:
         if (own && data.chunk) this.publish({
+          generationRate: this.generationRate.add(data.chunk, event.timestamp),
           streamingContent: ((this.snapshot.streamingContent ?? '') + data.chunk).slice(-4 * 1024 * 1024),
           isThinking: true,
         }, true);
         break;
       case ActivityEventType.MODEL_STREAM_RESET:
         this.thinkingClock.clear(event.parentId || 'root');
-        if (own) this.publish({ streamingContent: undefined });
+        if (own) {
+          this.generationRate.start();
+          this.publish({ streamingContent: undefined, generationRate: undefined });
+        }
         break;
       case ActivityEventType.ASSISTANT_MESSAGE_COMPLETE:
         if (own) {
@@ -151,11 +168,15 @@ export class ConversationViewStore {
         }
         break;
       case ActivityEventType.AGENT_START:
-        if (ownLifecycle) this.publish({ isThinking: true, streamingContent: undefined });
+        if (ownLifecycle) {
+          this.generationRate.clear();
+          this.publish({ isThinking: true, streamingContent: undefined, generationRate: undefined });
+        }
         if (data.model) this.updateTool(event.id, { agentModel: data.model });
         break;
       case ActivityEventType.AGENT_END:
         if (ownLifecycle) {
+          this.generationRate.stop();
           this.refresh();
           this.publish({ isThinking: false, isCompacting: false, streamingContent: undefined,
             activeToolCalls: this.snapshot.activeToolCalls.map(call =>

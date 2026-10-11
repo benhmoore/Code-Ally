@@ -617,3 +617,32 @@ test('completed conversations cannot submit or interrupt a reused agent', async 
     expect(onExitAgent).toHaveBeenCalledOnce();
   } finally { instance.unmount(); }
 });
+
+test('a prominent prompt keeps the cursor visible in a long draft and submits the complete text', async () => {
+  const stdout = new FakeStdout();
+  stdout.rows = 12;
+  const stdin = new FakeStdin();
+  const onSubmit = vi.fn();
+  const instance = render(<InputPrompt prominent onSubmit={onSubmit} />, {
+    stdout: stdout as unknown as NodeJS.WriteStream, stdin: stdin as unknown as NodeJS.ReadStream,
+    debug: true, exitOnCtrlC: false, patchConsole: false,
+  });
+  try {
+    await settle();
+    const draft = Array.from({ length: 40 }, (_, i) => `Draft line ${i}`).join('\n');
+    stdin.write(draft);
+    await settle();
+    const end = stripAnsi(stdout.frames.at(-1) ?? '');
+    expect(end).toContain('Draft line 39');
+    expect(end).not.toContain('Draft line 0');
+    expect(end.split('\n').length).toBeLessThanOrEqual(5);
+    stdin.write('\x1b[A');
+    await settle();
+    stdin.write('\x1b[A');
+    await settle();
+    expect(stripAnsi(stdout.frames.at(-1) ?? '')).toContain('Draft line 37');
+    stdin.write('\r');
+    await settle();
+    expect(onSubmit).toHaveBeenCalledWith(draft, undefined);
+  } finally { instance.unmount(); }
+});

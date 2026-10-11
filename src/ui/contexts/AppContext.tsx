@@ -67,6 +67,7 @@ export interface StatusMessage {
  * Global application state
  */
 export interface AppState {
+  generationRate?: number;
   /** Conversation message history */
   messages: Message[];
 

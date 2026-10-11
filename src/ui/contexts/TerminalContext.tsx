@@ -97,7 +97,9 @@ export const TerminalProvider: React.FC<TerminalProviderProps> = ({ children }) 
     };
 
     // Attach resize listener
-    process.stdout?.on('resize', handleResize);
+    // Resize the React layout before Ink compares its old frame height with the
+    // new terminal height; otherwise a shrink can trigger a full scrollback clear.
+    process.stdout?.prependListener('resize', handleResize);
 
     // Cleanup on unmount
     return () => {

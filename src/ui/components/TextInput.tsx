@@ -23,6 +23,7 @@ import { stripAnsi, wrapAnsiText } from '@utils/terminalText.js';
 export interface TextInputProps {
   /** Current text value */
   value: string;
+  maxVisibleRows?: number;
   /** Callback when value changes */
   onValueChange: (value: string) => void;
   /** Current cursor position (0-indexed character position) */
@@ -94,6 +95,7 @@ export function enterInsertsNewline(multiline: boolean, shift: boolean): boolean
  */
 export const TextInput: React.FC<TextInputProps> = ({
   value,
+  maxVisibleRows,
   onValueChange,
   cursorPosition,
   onCursorChange,
@@ -714,10 +716,15 @@ export const TextInput: React.FC<TextInputProps> = ({
     return result;
   }, [displayValue, cursorLogicalLine, cursorPosInLogicalLine, contentWidth, promptWidth, hasPrompt, isEmpty, placeholder, isActive]);
 
+  const visibleRows = Math.max(1, maxVisibleRows ?? visualLinesData.length);
+  const cursorRow = Math.max(0, visualLinesData.findIndex(line => line.hasCursor));
+  const firstVisibleRow = Math.max(0, Math.min(visualLinesData.length - visibleRows, cursorRow - visibleRows + 1));
+  const visibleLines = visualLinesData.slice(firstVisibleRow, firstVisibleRow + visibleRows);
+
   // Render the text content with proper visual line handling
   const renderContent = () => (
     <>
-      {visualLinesData.map((visualLine, index) => {
+      {visibleLines.map((visualLine, index) => {
         const { text, isFirstLogicalLine, hasCursor, cursorPos, isPlaceholder } = visualLine;
         const prompt = hasPrompt && isFirstLogicalLine ? promptText : '';
         const textColor = isPlaceholder ? 'gray' : 'white';

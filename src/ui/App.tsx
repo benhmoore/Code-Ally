@@ -13,6 +13,8 @@ import { ActivityProvider, useActivityStreamContext } from './contexts/ActivityC
 import { AppProvider, useAppContext } from './contexts/AppContext.js';
 import { TerminalProvider } from './contexts/TerminalContext.js';
 import { ActivityEventType, Config, Message } from '../types/index.js';
+import { BottomAlignedLayout } from './components/BottomAlignedLayout.js';
+import { useTerminalRows } from './hooks/useTerminalRows.js';
 import { InputPrompt } from './components/InputPrompt.js';
 import { AgentFleetView } from './components/AgentFleetView.js';
 import { ConversationView } from './components/ConversationView.js';
@@ -554,6 +556,7 @@ const AppContentComponent: React.FC<{
   const contentWidth = useContentWidth();
   // Get full terminal width for elements that should expand (input, footer, modals)
   const terminalWidth = useTerminalWidth();
+  const terminalRows = useTerminalRows();
 
   // Reflow the committed transcript when the terminal narrows.
   useReflowOnResize();
@@ -596,6 +599,7 @@ const AppContentComponent: React.FC<{
   const displayedContextUsage = !isChildSelected
     ? state.contextUsage
     : selectedChildView?.contextUsage ?? 0;
+  const displayedGenerationRate = isChildSelected ? selectedChildView?.generationRate : state.generationRate;
   const displayedModel = !isChildSelected
     ? state.currentAgentModel || state.config.model
     : selectedTask?.completedModel ?? (selectedChildView ? foregroundAgent.getModelClient().modelName : state.config.model);
@@ -726,41 +730,8 @@ const AppContentComponent: React.FC<{
 
   return (
     <PointerProvider input={terminalInput} tracking={pointerTracking}>
-    <Box flexDirection="column" padding={1} width={terminalWidth}>
-      {/* Conversation View - contains header + all conversation history */}
-      {/* Constrained to max content width for readability */}
-      <Box width={contentWidth}>
-        <ErrorBoundary label="ConversationView" resetKey={state.staticRemountKey}>
-          <ConversationView
-          messages={displayedMessages}
-          onToggleToolCall={isChildSelected ? undefined : actions.toggleToolCallExpanded}
-          isThinking={displayedIsThinking}
-          streamingContent={displayedStreamingContent}
-          activeToolCalls={displayedToolCalls}
-          compactionNotices={isChildSelected ? selectedChildView?.compactionNotices ?? [] : state.compactionNotices}
-          rewindNotices={isChildSelected ? [] : state.rewindNotices}
-          statusMessages={isChildSelected ? selectedChildView?.statusMessages ?? [] : state.statusMessages}
-          staticRemountKey={state.staticRemountKey}
-          config={effectiveConfig}
-          activePluginCount={activePluginCount}
-          totalPluginCount={totalPluginCount}
-          activeMcpCount={activeMcpCount}
-          startupNotices={startupNotices}
-          totalMcpCount={totalMcpCount}
-          currentAgent={displayedAgentName}
-          />
-        </ErrorBoundary>
-      </Box>
-
-
-      {completedChild && <Text dimColor>Completed conversation · Esc returns to main · queued text can be recalled with Alt+↑</Text>}
-      {displayedIsThinking && <Text dimColor>{isChildSelected ? 'Enter steers this agent · Esc stops' : 'Enter steers · Alt+Enter queues a follow-up · Esc stops'}</Text>}
-      {pendingInput.length > 0 && (
-        <Box flexDirection="column" marginTop={1}>
-          <Text dimColor>Queued follow-ups ({pendingInput.length}) · Alt+↑ recalls the last message to edit or discard</Text>
-          {pendingInput.slice(-3).map(input => <Text key={input.id} dimColor wrap="truncate">{input.status === 'not_sent' ? 'Not sent (conversation closed): ' : ''}{input.text}</Text>)}
-        </Box>
-      )}
+    <BottomAlignedLayout historyKey={state.staticRemountKey} footer={
+      <>
 
       {/*
         Modal render chain. Exactly one exclusive modal can be open at a time
@@ -1189,14 +1160,38 @@ const AppContentComponent: React.FC<{
           })}
         </Box>
       ) : (
-        /* Input Group - Status Indicator + Input Prompt */
-        <Box marginTop={1} flexDirection="column">
+        /* Bottom interaction region */
+        <Box flexDirection="column">
+      {completedChild && <Text dimColor wrap="truncate-end">Completed conversation · Esc returns to main · queued text can be recalled with Alt+↑</Text>}
+      {displayedIsThinking && <Text dimColor wrap="truncate-end">{isChildSelected ? 'Enter steers this agent · Esc stops' : 'Enter steers · Alt+Enter queues a follow-up · Esc stops'}</Text>}
+      {pendingInput.length > 0 && (
+        <Box flexDirection="column" marginTop={1}>
+          <Text dimColor wrap="truncate-end">Queued follow-ups ({pendingInput.length}) · Alt+↑ recalls the last message to edit or discard</Text>
+          {pendingInput.slice(terminalRows >= 30 ? -2 : -1).map(input => <Text key={input.id} dimColor wrap="truncate">{input.status === 'not_sent' ? 'Not sent (conversation closed): ' : ''}{input.text}</Text>)}
+        </Box>
+      )}
+
+          {/* Background agent fleet — reachable with ↓ from an empty prompt */}
+          <AgentFleetView
+            compact
+            agents={backgroundAgents}
+            selectedIndex={modal.fleetSelectedIndex}
+            focused={modal.fleetFocused}
+            activeAgentId={state.activeAgentId}
+            onOptionPress={handleEnterAgent}
+            maxVisible={Math.max(1, Math.min(4, Math.floor(terminalRows / 8)))}
+          />
+
           {statusIndicator}
+          {!displayedIsThinking && !displayedIsCompacting && !isCancelling && (
+            <Text dimColor>{completedChild ? 'Completed' : 'Ready'} · {displayedAgentName}</Text>
+          )}
 
           {/* Input Prompt */}
           <InputPrompt
             key={state.activeAgentId}
             onSubmit={handleInput}
+            prominent
             onInterjection={handleInterjection}
             conversationReadOnly={completedChild}
             onFollowUp={state.activeAgentId === 'main' ? handleFollowUp : undefined}
@@ -1232,23 +1227,17 @@ const AppContentComponent: React.FC<{
             onToggleToolOutput={handleToggleToolOutput}
           />
 
-          {/* Background agent fleet — reachable with ↓ from an empty prompt */}
-          <AgentFleetView
-            agents={backgroundAgents}
-            selectedIndex={modal.fleetSelectedIndex}
-            focused={modal.fleetFocused}
-            activeAgentId={state.activeAgentId}
-            onOptionPress={handleEnterAgent}
-          />
-
           {/* Persistent metadata belongs to the normal input state only. */}
-          <Box width={terminalWidth - 2} paddingLeft={1}>
+          <Box width={Math.max(1, terminalWidth - 2)} paddingLeft={1}>
             {modal.isWaitingForExitConfirmation ? (
               <Text color={UI_COLORS.PRIMARY}>ctrl+c again to exit</Text>
             ) : (
-              <Text dimColor>
+              <Text dimColor wrap="truncate-end">
                 {isDebugMode && <Text color={UI_COLORS.PRIMARY}>debug · </Text>}
                 {displayedModel || 'no model'}
+                {displayedGenerationRate !== undefined && displayedGenerationRate > 0 && (
+                  <> · ~{displayedGenerationRate < 10 ? displayedGenerationRate.toFixed(1) : Math.round(displayedGenerationRate)} tok/s</>
+                )}
                 {isDebugMode && ` · ${debugStats.heapMB} MB · ${debugStats.tokensUsed.toLocaleString()}/${debugStats.tokensTotal.toLocaleString()} tokens`}
                 {currentFocus && <> · focus <Text color="magenta">{currentFocus}</Text></>}
                 {displayedContextUsage > CONTEXT_THRESHOLDS.VISIBILITY && (
@@ -1266,7 +1255,35 @@ const AppContentComponent: React.FC<{
           </Box>
         </Box>
       )}
-    </Box>
+      </>
+    }>
+      {/* Conversation View - contains header + all conversation history */}
+      {/* Constrained to max content width for readability */}
+      <Box width={contentWidth}>
+        <ErrorBoundary label="ConversationView" resetKey={state.staticRemountKey}>
+          <ConversationView
+          messages={displayedMessages}
+          onToggleToolCall={isChildSelected ? undefined : actions.toggleToolCallExpanded}
+          isThinking={displayedIsThinking}
+          streamingContent={displayedStreamingContent}
+          activeToolCalls={displayedToolCalls}
+          compactionNotices={isChildSelected ? selectedChildView?.compactionNotices ?? [] : state.compactionNotices}
+          rewindNotices={isChildSelected ? [] : state.rewindNotices}
+          statusMessages={isChildSelected ? selectedChildView?.statusMessages ?? [] : state.statusMessages}
+          staticRemountKey={state.staticRemountKey}
+          config={effectiveConfig}
+          activePluginCount={activePluginCount}
+          totalPluginCount={totalPluginCount}
+          activeMcpCount={activeMcpCount}
+          startupNotices={startupNotices}
+          totalMcpCount={totalMcpCount}
+          currentAgent={displayedAgentName}
+          />
+        </ErrorBoundary>
+      </Box>
+
+
+    </BottomAlignedLayout>
     </PointerProvider>
   );
 };

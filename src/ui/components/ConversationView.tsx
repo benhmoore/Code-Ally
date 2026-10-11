@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Box, Static, Text } from 'ink';
+import { Box, Text } from 'ink';
+import { CommittedTranscript, useBottomLayout } from './BottomAlignedLayout.js';
 import { Message, ToolCallState, ToolCallTreeNode } from '@shared/index.js';
 import { MessageDisplay } from './MessageDisplay.js';
 import { ToolCallDisplay } from './ToolCallDisplay.js';
@@ -21,6 +22,7 @@ import type {
 import { getStatusColor, getStatusIcon } from '../utils/statusUtils.js';
 import { ErrorBoundary } from './ErrorBoundary.js';
 import { useTerminalRows } from '../hooks/useTerminalRows.js';
+import { wrapAnsiText } from '@utils/terminalText.js';
 import { liveRegionBudget } from '../utils/layout.js';
 import { resolveToolVisibility } from '../utils/toolVisibility.js';
 import { fitToolsToBudget, partitionCompletedToolCalls } from '../utils/liveToolCalls.js';
@@ -259,10 +261,11 @@ const ActiveContent = React.memo<{
   onToggleToolCall?: (id: string) => void;
 }>(({ completedToolCalls, runningToolCalls, streamingContent, config, compactionNotices, pendingSummary, width, onToggleToolCall }) => {
   const terminalRows = useTerminalRows();
-  const maxActiveHeight = liveRegionBudget(terminalRows);
+  const layout = useBottomLayout();
+  const maxActiveHeight = Math.min(liveRegionBudget(terminalRows), layout?.liveRows ?? Infinity);
 
   // Early return null if nothing to render - prevents empty Box from taking space
-  if (completedToolCalls.length === 0 && runningToolCalls.length === 0 && !streamingContent && !pendingSummary) {
+  if (maxActiveHeight === 0 || (completedToolCalls.length === 0 && runningToolCalls.length === 0 && !streamingContent && !pendingSummary)) {
     return null;
   }
 
@@ -280,10 +283,12 @@ const ActiveContent = React.memo<{
   let displayStreaming = streamingContent?.trimStart();
   let streamingRows = 0;
   if (displayStreaming) {
-    const lines = displayStreaming.split('\n');
+    const lines = wrapAnsiText(displayStreaming.slice(-maxActiveHeight * width * 4), Math.max(1, width - 2));
     const availableStreamingRows = Math.max(1, Math.min(MAX_STREAMING_LINES, maxActiveHeight - noticeRows - wantedToolRows));
     if (lines.length > availableStreamingRows) {
       displayStreaming = lines.slice(-availableStreamingRows).join('\n');
+    } else {
+      displayStreaming = lines.join('\n');
     }
     streamingRows = Math.min(lines.length, availableStreamingRows);
   }
@@ -291,10 +296,12 @@ const ActiveContent = React.memo<{
   const visibleTools = fitToolsToBudget([...completedToolCalls, ...visibleRunning], toolBudget, estimate);
 
   const estimatedRows = noticeRows + streamingRows + visibleTools.reduce((sum, toolCall) => sum + estimate(toolCall), 0);
-  const constrainedHeight = estimatedRows > maxActiveHeight ? maxActiveHeight : undefined;
+  const constrainedHeight = Math.min(maxActiveHeight, Math.max(1, estimatedRows));
 
   return (
-    <Box flexDirection="column" height={constrainedHeight} overflowY="hidden">
+    // The shell owns clipping when docked. Ink does not intersect nested clip
+    // regions; a second clip here can paint over the footer during measurement.
+    <Box flexDirection="column" height={constrainedHeight} overflowY={layout ? undefined : 'hidden'}>
       {/* Trailing context group, deferred out of Static so it can still absorb
           later context calls without rewriting already-printed output */}
       {pendingSummary && (
@@ -685,17 +692,9 @@ const ConversationViewComponent: React.FC<ConversationViewProps> = ({
 
       {/* Static is absolutely positioned: give it the conversation width so
           committed history cannot shrink to the live region's intrinsic width. */}
-      <Static
-        key={`static-${staticRemountKey}-${staticBatch.generation}`}
-        items={staticBatch.entries}
-        style={{ width: terminalWidth }}
-      >
-        {(entry) => (
-          <React.Fragment key={entry.key}>
-            {renderCompletedItem(entry)}
-          </React.Fragment>
-        )}
-      </Static>
+      <CommittedTranscript key={`static-${staticRemountKey}-${staticBatch.generation}`} width={terminalWidth}>
+        {staticBatch.entries.map(entry => <React.Fragment key={entry.key}>{renderCompletedItem(entry)}</React.Fragment>)}
+      </CommittedTranscript>
 
       {/* Active content - only re-renders when active tools change */}
       <ActiveContent

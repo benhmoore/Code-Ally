@@ -11,7 +11,9 @@
  * - Modal integrations
  */
 
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useLayoutEffect, useRef } from 'react';
+import { useBottomLayout } from './BottomAlignedLayout.js';
+import { useTerminalRows } from '../hooks/useTerminalRows.js';
 import { Box, useInput, useApp, type Key } from 'ink';
 import { TextInput } from './TextInput.js';
 import { CommandHistory } from '@services/CommandHistory.js';
@@ -37,6 +39,7 @@ import {
 } from '../utils/inputInteraction.js';
 
 interface InputPromptProps {
+  prominent?: boolean;
   /** Callback when user submits input */
   onSubmit: (input: string, mentions?: { files?: string[]; images?: string[]; directories?: string[] }) => void;
   /** Callback when user interjections (submits mid-response) */
@@ -177,6 +180,7 @@ interface InputPromptProps {
  */
 export const InputPrompt: React.FC<InputPromptProps> = ({
   onSubmit,
+  prominent = false,
   onInterjection,
   onFollowUp,
   onRecallFollowUp,
@@ -237,6 +241,9 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
   onPlanApprovalNavigate,
   modalActivation,
 }) => {
+  const bottomLayout = useBottomLayout();
+  const terminalRows = useTerminalRows();
+  useLayoutEffect(() => { bottomLayout?.measure(); });
   const { exit } = useApp();
   const [buffer, setBuffer] = useState(bufferValue || '');
   const [cursorPosition, setCursorPosition] = useState(0);
@@ -1278,7 +1285,7 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
   const isMemoryMode = buffer.startsWith('#');
 
   let promptText = '> ';
-  let borderColor: string = UI_COLORS.TEXT_DIM;
+  let borderColor: string = prominent ? UI_COLORS.PRIMARY : UI_COLORS.TEXT_DIM;
 
   if (isCommandMode) {
     promptText = '/ ';
@@ -1316,7 +1323,9 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
         suppressVerticalNavigation={showCompletions || historyIndex !== -1}
         multiline={true}
         placeholder={placeholder}
-        bordered={false}
+        bordered={prominent}
+        borderColor={borderColor}
+        maxVisibleRows={prominent ? Math.max(1, Math.min(5, Math.floor(terminalRows / 6))) : undefined}
         showPrompt={true}
         promptText={promptText}
         promptColor={borderColor}
@@ -1328,6 +1337,7 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
           completions={completions}
           selectedIndex={completionIndex}
           visible={showCompletions}
+          maxHeight={prominent ? Math.max(1, Math.min(4, Math.floor(terminalRows / 8))) : undefined}
         />
       )}
     </Box>

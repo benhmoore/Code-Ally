@@ -36,6 +36,7 @@ export interface AgentFleetViewProps {
   maxVisible?: number;
   /** Activate the option at an index, as a click on its row does. */
   onOptionPress?: (index: number) => void;
+  compact?: boolean;
 }
 
 const CURRENT_AGENT_DOT = '●';
@@ -91,10 +92,16 @@ const AgentFleetViewComponent: React.FC<AgentFleetViewProps> = ({
   activeAgentId,
   maxVisible = 6,
   onOptionPress,
+  compact = false,
 }) => {
   // Nothing to show until at least one background agent exists.
   if (agents.length === 0) {
     return null;
+  }
+
+  if (compact && !focused) {
+    const running = agents.filter(agent => agent.status === 'running').length;
+    return <Text dimColor wrap="truncate-end">{agents.length} agents · {running} running · ↓ manage</Text>;
   }
 
   const now = Date.now();
