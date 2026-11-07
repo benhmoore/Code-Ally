@@ -2,7 +2,7 @@
  * useModalActivation - The one place a modal's choice becomes an event.
  *
  * Every selector answers its request on the ActivityStream. The keyboard
- * cascade in InputPrompt (Enter and Escape) and a pointer click on an option
+ * owner in ModalHost (Enter and Escape) and a pointer click on an option
  * row both run these handlers, so a click is a selection followed by exactly
  * what Enter does, with nothing duplicated between the two input paths.
  */

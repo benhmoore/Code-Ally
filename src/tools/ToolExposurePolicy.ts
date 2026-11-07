@@ -1,4 +1,5 @@
-import type { FunctionDefinition } from '../types/index.js';
+import { createSystemReminder } from '../utils/messageUtils.js';
+import type { Message, FunctionDefinition } from '../types/index.js';
 import { matchesAnyToolGlob, normalizeToolName } from './toolNameAliases.js';
 
 /**
@@ -177,4 +178,13 @@ export function renderDeferredToolCatalogue(deferred: readonly DeferredToolInfo[
     'Available on demand:',
     ...lines,
   ].join('\n');
+}
+
+/** Append only when the current catalogue has not already been published. */
+export function deferredToolCatalogueMessage(messages: readonly Message[], catalogue: string): Message | undefined {
+  if (!catalogue || messages.some(message => message.metadata?.deferredToolCatalogue
+    && message.content.includes(catalogue))) return undefined;
+  const reminder = createSystemReminder(catalogue, true);
+  reminder.metadata = { ...reminder.metadata, deferredToolCatalogue: true };
+  return reminder;
 }

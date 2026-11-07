@@ -5,11 +5,12 @@ import { tokenCounter } from '../services/TokenCounter.js';
 import { createBuiltInTools } from '../tools/createBuiltInTools.js';
 import {
   getRuntimeToolExclusions,
+  selectRuntimeToolSurface,
   DURABLE_OBJECTIVE_TOOLS,
   type RuntimeToolSelectionContext,
 } from '../tools/runtimeToolSelection.js';
-import { selectExposedTools } from '../tools/ToolExposurePolicy.js';
 import { toolSchemaBudget } from '../agent/context/ContextBudget.js';
+import { getRuntimeToolEligibilityExclusions } from '../tools/runtimeToolSelection.js';
 import { ToolManager } from '../tools/ToolManager.js';
 import type { Config, FunctionDefinition } from '../types/index.js';
 
@@ -37,9 +38,9 @@ export function createRuntimeCoreToolDefinitionsForContext(
   config: Readonly<Config> = DEFAULT_CONFIG,
   requested: readonly string[] = [],
 ): FunctionDefinition[] {
-  const definitions = createRuntimeAvailableToolDefinitions(context, config);
-  return selectExposedTools({
-    definitions,
+  return selectRuntimeToolSurface({
+    definitions: createRuntimeAvailableToolDefinitions(context, config),
+    context,
     schemaBudget: toolSchemaBudget(config.context_size, config.max_tokens),
     requested,
     estimateTokens: text => tokenCounter.count(text),
@@ -55,7 +56,7 @@ export function createRuntimeAvailableToolDefinitions(
   const manager = new ToolManager(createBuiltInTools(stream, config));
   return manager.getFunctionDefinitions([
     ...DURABLE_ROOT_EXCLUSIONS,
-    ...getRuntimeToolExclusions(context),
+    ...getRuntimeToolEligibilityExclusions(context),
   ], 'ally');
 }
 

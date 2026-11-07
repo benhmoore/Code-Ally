@@ -35,6 +35,7 @@ export class SessionRuntime {
   private viewVersion?: ConversationViewSnapshot;
   private inputVersion?: readonly PendingConversationInput[];
   private closePromise?: Promise<void>;
+  private idleMutation?: Promise<void>;
 
   constructor(private readonly deps: SessionRuntimeDependencies) {
     this.snapshot = this.readSnapshot();
@@ -78,7 +79,7 @@ export class SessionRuntime {
     // follow-up so active-turn admission cannot silently discard them.
     const images = options.images?.slice();
     const execute = options.execute;
-    if (options.mode !== 'follow_up' && !images?.length && this.deps.steer(text)) return { kind: 'steered' };
+    if (!this.idleMutation && options.mode !== 'follow_up' && !images?.length && this.deps.steer(text)) return { kind: 'steered' };
     let result: SubmissionResult<T> = { kind: 'not_sent' };
     await this.deps.input.enqueue(text, async (input, signal) => {
       if (signal.aborted) return;
@@ -108,9 +109,38 @@ export class SessionRuntime {
     this.refresh();
   }
 
+  /** Own the complete session/patch rebind while new input waits in the normal queue. */
+  async withIdleMutation<T>(operation: (resume: (state: SessionResumeState) => void) => Promise<T>): Promise<T> {
+    if (this.closed) throw new Error('Session is closed');
+    if (this.deps.isProcessing()) throw new Error('Wait for active and queued work to finish before changing conversation state');
+    const releaseInput = this.deps.input.holdWhileIdle();
+    let settle!: () => void;
+    const completion = new Promise<void>(resolve => { settle = resolve; });
+    this.idleMutation = completion;
+    let owned = true;
+    const resume = (state: SessionResumeState) => {
+      if (!owned) throw new Error('Conversation mutation has ended');
+      this.deps.resume(structuredClone(state));
+      this.refresh();
+    };
+    try { return await operation(resume); }
+    finally {
+      owned = false;
+      this.idleMutation = undefined;
+      releaseInput();
+      settle();
+    }
+  }
+
   close(): Promise<void> {
     this.closed = true;
-    this.closePromise ??= this.deps.close().finally(() => this.dispose());
+    this.closePromise ??= (async () => {
+      // Drop queued submissions immediately; an admitted restore must finish or
+      // roll back before its resources are closed.
+      this.deps.input.close();
+      await this.idleMutation;
+      await this.deps.close();
+    })().finally(() => this.dispose());
     return this.closePromise;
   }
 

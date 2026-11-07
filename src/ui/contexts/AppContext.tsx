@@ -1,5 +1,5 @@
-/** Application presentation state backed by the conversation owner's projection. */
-import React, { createContext, useContext, useState, useCallback, useSyncExternalStore } from 'react';
+/** Application preferences and navigation. Live conversation subscriptions belong to surfaces. */
+import React, { createContext, useContext, useState, useCallback } from 'react';
 import { useStdout } from 'ink';
 import type { Message, Config } from '@shared/index.js';
 import type { ConversationViewStore, ConversationViewSnapshot } from '@services/ConversationViewStore.js';
@@ -15,9 +15,8 @@ export interface RewindNotice {
   failedRestorations?: string[];
 }
 
-export interface AppState extends ConversationViewSnapshot {
+export interface AppState {
   config: Config;
-  activeToolCallsCount: number;
   rewindNotices: RewindNotice[];
   staticRemountKey: number;
   currentAgent: string;
@@ -30,8 +29,6 @@ export interface AppActions {
   addMessage: (message: Message) => void;
   updateConfig: (config: Partial<Config>) => void;
   setContextUsage: (percentage: number) => void;
-  toggleToolCallExpanded: (id: string) => void;
-  setToolCallsExpanded: (expanded: boolean) => void;
   addRewindNotice: (notice: RewindNotice) => void;
   clearRewindNotices: () => void;
   forceStaticRemount: () => void;
@@ -51,7 +48,7 @@ export const AppContext = createContext<AppContextValue | null>(null);
 
 export interface AppProviderProps {
   conversationStore: Pick<ConversationViewStore,
-    'getSnapshot' | 'subscribe' | 'addDisplayMessage' | 'setContextUsage' | 'toggleToolCallExpanded' | 'setToolCallsExpanded'>;
+    'addDisplayMessage' | 'setContextUsage'>;
   initialConfig: Config;
   children: React.ReactNode;
 }
@@ -81,7 +78,6 @@ export function reconcileCurrentAgentModelAfterConfigUpdate(
 /** Keep UI preferences and navigation local; the session owns conversation state. */
 export const AppProvider: React.FC<AppProviderProps> = ({ initialConfig, conversationStore, children }) => {
   const { write: writeToStdout } = useStdout();
-  const runtimeView = useSyncExternalStore(conversationStore.subscribe, conversationStore.getSnapshot);
   const [config, setConfig] = useState(initialConfig);
   const [rewindNotices, setRewindNotices] = useState<RewindNotice[]>([]);
   const [staticRemountKey, setStaticRemountKey] = useState(0);
@@ -116,14 +112,12 @@ export const AppProvider: React.FC<AppProviderProps> = ({ initialConfig, convers
   }, []);
 
   const state: AppState = React.useMemo(() => ({
-    ...runtimeView, config, activeToolCallsCount: runtimeView.activeToolCalls.length,
+    config,
     rewindNotices, staticRemountKey, currentAgent, currentAgentModel, activeSubAgents, activeAgentId,
-  }), [runtimeView, config, rewindNotices, staticRemountKey, currentAgent, currentAgentModel, activeSubAgents, activeAgentId]);
+  }), [config, rewindNotices, staticRemountKey, currentAgent, currentAgentModel, activeSubAgents, activeAgentId]);
   const actions: AppActions = React.useMemo(() => ({
     addMessage: conversationStore.addDisplayMessage,
     setContextUsage: conversationStore.setContextUsage,
-    toggleToolCallExpanded: conversationStore.toggleToolCallExpanded,
-    setToolCallsExpanded: conversationStore.setToolCallsExpanded,
     updateConfig, addRewindNotice, clearRewindNotices, forceStaticRemount,
     repaintConversationSurface, setCurrentAgent, addSubAgent, removeSubAgent, setActiveAgentId,
   }), [conversationStore, updateConfig, addRewindNotice, clearRewindNotices, forceStaticRemount,

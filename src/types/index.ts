@@ -401,6 +401,12 @@ export type ToolStatus =
   | 'error'
   | 'cancelled';
 
+export interface ToolCallAnnotation {
+  id?: string;
+  message: string;
+  timestamp: number;
+}
+
 export interface ToolCallState {
   id: string;
   status: ToolStatus;
@@ -418,6 +424,8 @@ export interface ToolCallState {
   isTransparent?: boolean; // For wrapper tools that should not be displayed
   collapsed?: boolean; // For tools that should hide their children immediately
   expanded?: boolean; // The user's choice to open or close the call; undefined leaves the tool's default
+  interjections?: ToolCallAnnotation[];
+  acknowledgments?: ToolCallAnnotation[];
   shouldCollapse?: boolean; // For tools that should collapse after completion
   hideOutput?: boolean; // For tools that should never show output
   alwaysShowFullOutput?: boolean; // For tools that must always show full output without truncation
@@ -706,6 +714,9 @@ export interface ToolExecutionContext {
 // ===========================
 
 /** Supported field types for tool forms */
+export type FormValue = string | number | boolean | string[] | null | undefined;
+export type FormValues = Record<string, FormValue>;
+
 export type FormFieldType = 'string' | 'number' | 'boolean' | 'choice' | 'textarea' | 'label';
 
 /** Choice option for choice-type fields */
@@ -731,7 +742,7 @@ export interface FormField {
   label: string;
   description?: string;
   required?: boolean;
-  default?: any;
+  default?: FormValue;
   secret?: boolean;                   // Mask input (for sensitive data)
   choices?: FormFieldChoice[];        // For 'choice' type fields
   validation?: FormFieldValidation;
@@ -750,14 +761,14 @@ export interface FormRequest {
   requestId: string;
   toolName: string;
   schema: FormSchema;
-  initialValues?: Record<string, any>;
+  initialValues?: FormValues;
   callId?: string;  // Associated tool call ID
 }
 
 /** Response from tool form submission */
 export interface FormResponse {
   requestId: string;
-  data: Record<string, any>;
+  data: FormValues;
 }
 
 // ===========================

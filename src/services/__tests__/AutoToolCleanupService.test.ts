@@ -814,7 +814,7 @@ describe('AutoToolCleanupService', () => {
       expect(mockClient.lastSignal?.aborted).toBe(true);
     });
 
-    it('should reset isAnalyzing flag', () => {
+    it('retains analysis ownership until cancellation settles', async () => {
       const messages: Message[] = Array(AUTO_TOOL_CLEANUP.MIN_TOOL_RESULTS)
         .fill(null)
         .map((_, i) => ({
@@ -832,7 +832,9 @@ describe('AutoToolCleanupService', () => {
       // Cancel
       service.cancel();
 
-      // Should not be analyzing anymore
+      // Cancellation is a request, not proof that the operation settled.
+      expect(service.isActive).toBe(true);
+      await service.cleanup();
       const lastAnalysisAt = Date.now() - AUTO_TOOL_CLEANUP.MIN_INTERVAL - 1000;
       expect(service.shouldAnalyze(messages, lastAnalysisAt)).toBe(true);
     });

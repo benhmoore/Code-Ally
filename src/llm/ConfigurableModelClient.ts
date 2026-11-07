@@ -12,6 +12,10 @@ export class ConfigurableModelClient extends ModelClient {
   private client: ModelClient;
   private readonly retired = new Set<ModelClient>();
   private readonly active = new Map<ModelClient, number>();
+  private readonly closingTransports = new WeakMap<ModelClient, Promise<void>>();
+  private readonly pendingClosures = new Set<Promise<void>>();
+  private readonly closeFailures: unknown[] = [];
+  private closePromise?: Promise<void>;
 
   constructor(
     private provider: ModelProvider,
@@ -36,13 +40,27 @@ export class ConfigurableModelClient extends ModelClient {
   }
 
   private replace(config: ModelClientConfig, provider = this.provider): void {
+    if (this.closePromise) throw new Error('Model client is closed');
     const next = this.factory(provider, config);
     const previous = this.client;
     this.config = config;
     this.provider = provider;
     this.client = next;
     if (this.active.has(previous)) this.retired.add(previous);
-    else void previous.close?.();
+    else this.closeTransport(previous);
+  }
+
+  private closeTransport(client: ModelClient): Promise<void> {
+    const existing = this.closingTransports.get(client);
+    if (existing) return existing;
+    const operation = Promise.resolve().then(() => client.close?.());
+    this.closingTransports.set(client, operation);
+    this.pendingClosures.add(operation);
+    void operation.then(() => this.pendingClosures.delete(operation), error => {
+      this.pendingClosures.delete(operation);
+      this.closeFailures.push(error);
+    });
+    return operation;
   }
 
   setProvider(provider: ModelProvider): void {
@@ -84,6 +102,7 @@ export class ConfigurableModelClient extends ModelClient {
   }
 
   private async withClient<T>(run: (client: ModelClient) => Promise<T>): Promise<T> {
+    if (this.closePromise) throw new Error('Model client is closed');
     const client = this.client;
     this.active.set(client, (this.active.get(client) ?? 0) + 1);
     try {
@@ -93,7 +112,7 @@ export class ConfigurableModelClient extends ModelClient {
       if (remaining) this.active.set(client, remaining);
       else {
         this.active.delete(client);
-        if (this.retired.delete(client)) await client.close?.();
+        if (this.retired.delete(client)) this.closeTransport(client);
       }
     }
   }
@@ -110,8 +129,13 @@ export class ConfigurableModelClient extends ModelClient {
   override compactProviderState(messages: readonly Message[], options: SendOptions) {
     return this.withClient(client => client.compactProviderState(messages, options));
   }
-  async close(): Promise<void> {
-    await Promise.all([...new Set([this.client, ...this.retired])].map(client => client.close?.()));
-    this.retired.clear();
+  close(): Promise<void> {
+    this.closePromise ??= Promise.resolve().then(async () => {
+      for (const client of new Set([this.client, ...this.retired])) this.closeTransport(client);
+      await Promise.allSettled(this.pendingClosures);
+      this.retired.clear();
+      if (this.closeFailures.length) throw new AggregateError(this.closeFailures, 'Model transport cleanup failed');
+    });
+    return this.closePromise;
   }
 }

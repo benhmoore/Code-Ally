@@ -18,6 +18,38 @@ function setup(parentId?: string) {
 }
 
 describe.each([undefined, 'child'])('conversation projection (%s)', parent => {
+  it('owns nested interjections and acknowledgments across subscriptions and transcript refresh', () => {
+    const { store, messages, stream, emit } = setup(parent);
+    emit(E.TOOL_CALL_START, { toolName: 'agent', arguments: {} }, 'tool');
+    const event = { id: 'direction-event', type: E.USER_INTERJECTION, parentId: 'tool', timestamp: 100,
+      data: { message: 'Preserve the public API.' } };
+    stream.emit(event);
+    stream.emit(event);
+    const unsubscribe = store.subscribe(() => {});
+    unsubscribe();
+    stream.emit({ id: 'ack', type: E.INTERJECTION_ACKNOWLEDGMENT, parentId: 'tool', timestamp: 101,
+      data: { acknowledgment: 'I will preserve it.' } });
+    stream.emit({ id: 'ack', type: E.INTERJECTION_ACKNOWLEDGMENT, parentId: 'tool', timestamp: 101,
+      data: { acknowledgment: 'I will preserve it.' } });
+    messages.push({ id: 'assistant', role: 'assistant', content: '', tool_calls: [{ id: 'tool', type: 'function', function: { name: 'agent', arguments: {} } }] });
+    messages.push({ id: 'direction-message', role: 'user', content: 'Preserve the public API.', timestamp: 100,
+      metadata: { isInterjection: true, parentId: 'tool' } });
+    store.refresh();
+    expect(store.getSnapshot().activeToolCalls[0]?.interjections).toHaveLength(1);
+    expect(store.getSnapshot().activeToolCalls[0]?.acknowledgments).toEqual([{ id: 'ack', message: 'I will preserve it.', timestamp: 101 }]);
+    store.refresh(true);
+    expect(store.getSnapshot().activeToolCalls[0]?.interjections).toEqual([{ id: 'direction-message', message: 'Preserve the public API.', timestamp: 100 }]);
+    expect(store.getSnapshot().activeToolCalls[0]?.acknowledgments).toBeUndefined();
+  });
+
+  it('projects a persisted nested interjection append without rebuilding the complete transcript', () => {
+    const { store, emit } = setup(parent);
+    emit(E.TOOL_CALL_START, { toolName: 'agent', arguments: {} }, 'tool');
+    emit(E.CONVERSATION_MESSAGE_ADDED, { message: { id: 'direction', role: 'user', content: 'Submitted text plus hook', timestamp: 100,
+      metadata: { isInterjection: true, parentId: 'tool', submittedContent: 'Submitted text' } } });
+    expect(store.getSnapshot().activeToolCalls[0]?.interjections).toEqual([{ id: 'direction', message: 'Submitted text', timestamp: 100 }]);
+  });
+
   it('retains live output before subscription and across unsubscribe/re-entry', () => {
     const { store, emit } = setup(parent);
     emit(E.ASSISTANT_CHUNK, { chunk: 'first' });
@@ -153,4 +185,26 @@ it('keeps generation estimates scoped and available across view subscriptions, r
   expect(store.getSnapshot().generationRate).toBe(10);
   store.refresh(true);
   expect(store.getSnapshot().generationRate).toBeUndefined();
+});
+
+it('projects appended records incrementally and preserves unrelated settled rows', () => {
+  const stream = new ActivityStream();
+  const messages: Message[] = [];
+  const reconstruct = vi.fn((items: Message[]) => reconstructToolCallsFromMessages(items, { get: () => null }));
+  const store = new ConversationViewStore(stream, () => messages, reconstruct);
+  stores.push(store);
+  for (let index = 0; index < 500; index++) {
+    const message: Message = { id: `message-${index}`, role: 'user', content: `${index}` };
+    messages.push(message);
+    stream.emit({ type: E.CONVERSATION_MESSAGE_ADDED, id: `append-${index}`, timestamp: index, data: { message } });
+  }
+  expect(reconstruct).toHaveBeenCalledTimes(1);
+  stream.emit({ type: E.TOOL_CALL_START, id: 'done', timestamp: 500, data: { toolName: 'read', arguments: {} } });
+  stream.emit({ type: E.TOOL_CALL_END, id: 'done', timestamp: 501, data: { success: true, result: { success: true, content: 'finished' } } });
+  const settled = store.getSnapshot().activeToolCalls[0];
+  const message: Message = { id: 'next', role: 'user', content: 'next' };
+  messages.push(message);
+  stream.emit({ type: E.CONVERSATION_MESSAGE_ADDED, id: 'next-event', timestamp: 502, data: { message } });
+  expect(store.getSnapshot().activeToolCalls[0]).toBe(settled);
+  expect(reconstruct).toHaveBeenCalledTimes(1);
 });

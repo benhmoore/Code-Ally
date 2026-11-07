@@ -36,10 +36,6 @@ export async function switchAgent(
 
   logger.debug('[AGENT_SWITCHER]', 'Current agent ID:', currentAgent.getInstanceId());
 
-  // Get conversation history from current agent
-  const conversationHistory = currentAgent.getConversationHistory();
-  logger.debug('[AGENT_SWITCHER]', 'Captured', conversationHistory.length, 'messages from current agent');
-
   // Handle special case: "ally" returns to default main agent
   let agentConfig: AgentConfig;
   let isMainAgent = false;
@@ -144,7 +140,7 @@ export async function switchAgent(
   }
 
   // Validate ActivityStream is shared (critical assumption for skipping cleanup)
-  const oldAgentStream = 'activityStream' in currentAgent ? (currentAgent as any).activityStream : undefined;
+  const oldAgentStream = currentAgent.getActivityStream();
   const streamsMatch = oldAgentStream === activityStream;
 
   if (!streamsMatch) {
@@ -168,7 +164,10 @@ export async function switchAgent(
     modelClient,  // Use the potentially-dedicated model client
     toolManager!,
     activityStream!,
-    agentConfig,
+    { ...agentConfig, _resourceOwnership: {
+      modelClient: modelClient === mainModelClient ? 'borrowed' : 'owned',
+      activityStream: 'borrowed',
+    } },
     configManager || undefined,
     permissionManager || undefined
   );
@@ -186,15 +185,17 @@ export async function switchAgent(
 
   // Transfer conversation history to new agent
   // Load messages first (clears any existing), then add switch marker
+  await currentAgent.stopAndDrain();
+  const conversationHistory = currentAgent.getConversationHistory();
   await newAgent.loadMessages(conversationHistory);
   newAgent.addMessage(switchMessage);
   logger.debug('[AGENT_SWITCHER]', 'Transferred', conversationHistory.length, 'messages to new agent');
 
-  // NOTE: We intentionally DO NOT call currentAgent.cleanup() here
-  // because it would call activityStream.cleanup() which removes ALL
-  // listeners from the shared ActivityStream, breaking UI subscriptions.
-  // The old agent will be garbage collected naturally.
-  logger.debug('[AGENT_SWITCHER]', 'Skipping cleanup (shared ActivityStream)');
+  // Shared services belong to the composition root. The replaced agent still
+  // drains work and releases all of its own observers and any dedicated client.
+  currentAgent.relinquishSharedResources(mainModelClient, activityStream);
+  if (currentAgent.getModelClient() === modelClient) currentAgent.relinquishSharedResources(modelClient, null);
+  await currentAgent.cleanup();
 
   // Register new agent in ServiceRegistry
   registry.registerInstance('agent', newAgent);

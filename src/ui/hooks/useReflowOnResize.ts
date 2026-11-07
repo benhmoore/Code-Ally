@@ -30,6 +30,7 @@ import { LAYOUT } from '@config/constants.js';
 import { wrapAnsiText } from '@utils/terminalText.js';
 import { useTerminalContext } from '../contexts/TerminalContext.js';
 import { useAppContext } from '../contexts/AppContext.js';
+import type { ConversationSource } from './useConversationSelector.js';
 
 /** How long to wait after the last resize event before repainting. */
 const REFLOW_DEBOUNCE_MS = 150;
@@ -78,16 +79,16 @@ function transcriptFits(messages: Message[], contentWidth: number, budget: numbe
   return rows <= budget;
 }
 
-export function useReflowOnResize(): void {
+export function useReflowOnResize(source: ConversationSource, enabled = true): void {
   const { contentWidth, rows } = useTerminalContext();
-  const { state, actions } = useAppContext();
-  const { messages } = state;
+  const { actions } = useAppContext();
   const { repaintConversationSurface } = actions;
 
   // Latest values read at debounce-fire time, kept in refs so they don't
   // re-arm the timer on every message append.
   const widthRef = useRef(contentWidth);
-  const messagesRef = useRef(messages);
+  const sourceRef = useRef(source);
+  const enabledRef = useRef(enabled);
   const rowsRef = useRef(rows);
   const resetRef = useRef(repaintConversationSurface);
 
@@ -97,7 +98,8 @@ export function useReflowOnResize(): void {
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   widthRef.current = contentWidth;
-  messagesRef.current = messages;
+  sourceRef.current = source;
+  enabledRef.current = enabled;
   rowsRef.current = rows;
   resetRef.current = repaintConversationSurface;
 
@@ -118,7 +120,8 @@ export function useReflowOnResize(): void {
         return;
       }
 
-      const msgs = messagesRef.current;
+      if (!enabledRef.current) return;
+      const msgs = sourceRef.current.getSnapshot().messages;
       if (msgs.length === 0) {
         lastReflowedWidthRef.current = width;
         return;

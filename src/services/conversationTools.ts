@@ -1,6 +1,18 @@
-import type { Message, ToolCallState } from '../types/index.js';
+import type { Message, ToolCallAnnotation, ToolCallState } from '../types/index.js';
 import type { ToolManager } from '../tools/ToolManager.js';
 import { resolveDisplayContent } from '../utils/toolResultContent.js';
+
+/** Merge replayed and live annotations without depending on a mounted row. */
+export function mergeToolAnnotations(...groups: ReadonlyArray<readonly ToolCallAnnotation[] | undefined>): ToolCallAnnotation[] {
+  const merged: ToolCallAnnotation[] = [];
+  for (const group of groups) for (const entry of group ?? []) {
+    if (!entry.message.trim() || merged.some(previous =>
+      (entry.id !== undefined && previous.id === entry.id)
+      || (Math.abs(previous.timestamp - entry.timestamp) < 100 && previous.message === entry.message))) continue;
+    merged.push(entry);
+  }
+  return merged.sort((left, right) => left.timestamp - right.timestamp);
+}
 
 /**
  * Reconstruct ToolCallState objects from message history
@@ -19,6 +31,7 @@ import { resolveDisplayContent } from '../utils/toolResultContent.js';
  */
 export function reconstructToolCallsFromMessages(messages: Message[], serviceRegistry: { get: (name: 'tool_manager') => ToolManager | null | undefined }): ToolCallState[] {
   const toolCalls: ToolCallState[] = [];
+  const interjections = new Map<string, ToolCallAnnotation[]>();
   const toolResultsMap = new Map<string, {
     output: string;
     error?: string;
@@ -35,6 +48,12 @@ export function reconstructToolCallsFromMessages(messages: Message[], serviceReg
   // never from msg.content — that field holds the LLM wire format
   // ([Tool Call ID]\n<JSON> / <error> wrappers) and must not reach the UI.
   messages.forEach(msg => {
+    if (msg.role === 'user' && msg.metadata?.isInterjection && msg.metadata.parentId) {
+      const parent = msg.metadata.parentId;
+      interjections.set(parent, mergeToolAnnotations(interjections.get(parent), [{
+        id: msg.id, message: msg.metadata.submittedContent ?? msg.content, timestamp: msg.timestamp ?? 0,
+      }]));
+    }
     if (msg.role === 'tool' && msg.tool_call_id) {
       const display = msg.metadata?.tool_result?.[msg.tool_call_id];
       toolResultsMap.set(msg.tool_call_id, {
@@ -152,6 +171,7 @@ export function reconstructToolCallsFromMessages(messages: Message[], serviceReg
           visibleInChat: visibleInChat,
           hideOutput,
           alwaysShowFullOutput,
+          ...(interjections.has(tc.id) ? { interjections: interjections.get(tc.id) } : {}),
           // Add reconstructed tool context fields
           ...(parentId !== undefined && { parentId }),
           ...(thinking !== undefined && { thinking }),

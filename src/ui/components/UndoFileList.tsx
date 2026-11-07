@@ -10,7 +10,6 @@
 
 import React from 'react';
 import { Box, Text } from 'ink';
-import type { UndoFileEntry } from '@services/PatchManager.js';
 import { SelectionIndicator } from './SelectionIndicator.js';
 import { Clickable } from './Clickable.js';
 import { KeyboardHintFooter } from './KeyboardHintFooter.js';
@@ -21,14 +20,7 @@ import { InteractiveSurface } from './InteractiveSurface.js';
 import { useTerminalRows } from '../hooks/useTerminalRows.js';
 import { centeredWindow, visibleItemBudget } from '../utils/layout.js';
 
-export interface UndoFileListRequest {
-  /** Request ID for tracking */
-  requestId: string;
-  /** List of files with diff stats */
-  fileList: UndoFileEntry[];
-  /** Currently selected file index */
-  selectedIndex: number;
-}
+import type { UndoFileListRequest } from '../hooks/useModalState.js';
 
 export interface UndoFileListProps {
   /** File list request details */

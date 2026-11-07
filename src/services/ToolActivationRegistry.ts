@@ -1,3 +1,5 @@
+import type { FunctionDefinition } from '../types/index.js';
+
 /**
  * Tracks which deferred tools an agent has loaded.
  *
@@ -8,8 +10,18 @@
  * actually been using are the ones that survive.
  */
 export class ToolActivationRegistry {
+  private available = new Map<string, () => readonly FunctionDefinition[]>();
   private activations = new Map<string, string[]>();
   private requested = new Map<string, string[]>();
+
+  /** Publish the owner's authorized, state-eligible discovery surface. */
+  setAvailable(agentId: string, definitions: () => readonly FunctionDefinition[]): void {
+    this.available.set(agentId, definitions);
+  }
+
+  getAvailable(agentId: string): readonly FunctionDefinition[] | undefined {
+    return this.available.get(agentId)?.();
+  }
 
   /** Explicitly load tools for this agent and keep that requested batch pinned. */
   activate(agentId: string, toolNames: readonly string[]): void {
@@ -38,6 +50,7 @@ export class ToolActivationRegistry {
   }
 
   clear(agentId: string): void {
+    this.available.delete(agentId);
     this.activations.delete(agentId);
     this.requested.delete(agentId);
   }

@@ -64,7 +64,7 @@ export class ProjectContextDetector implements IService {
   /**
    * Set cached context (for loading from session)
    */
-  setCached(context: ProjectContext): void {
+  setCached(context: ProjectContext | null): void {
     this.cachedContext = context;
   }
 

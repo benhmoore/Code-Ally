@@ -11,7 +11,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { Box, Text, useInput } from 'ink';
-import { FormRequest, FormField } from '../../types/index.js';
+import { FormRequest, FormField, FormValue, FormValues } from '../../types/index.js';
 import { ChickAnimation } from './ChickAnimation.js';
 import { InteractiveSurface } from './InteractiveSurface.js';
 import { SelectionIndicator } from './SelectionIndicator.js';
@@ -21,13 +21,13 @@ import { UI_COLORS } from '../constants/colors.js';
 interface ToolFormWizardProps {
   request: FormRequest;
   fieldIndex: number;
-  values: Record<string, any>;
+  values: FormValues;
   errors: Record<string, string>;
   queueLength: number;
   onFieldIndexChange: (index: number) => void;
-  onValueChange: (field: string, value: any) => void;
+  onValueChange: (field: string, value: FormValue) => void;
   onErrorChange: (field: string, error: string | null) => void;
-  onComplete: (data: Record<string, any>) => void;
+  onComplete: (data: FormValues) => void;
   onCancel: () => void;
 }
 
@@ -133,7 +133,7 @@ export const ToolFormWizard: React.FC<ToolFormWizardProps> = ({
   };
 
   // Validate a field value
-  const validateField = (field: FormField, value: any): string | null => {
+  const validateField = (field: FormField, value: FormValue): string | null => {
     // Label fields have no user input, skip validation
     if (field.type === 'label') return null;
 
@@ -149,7 +149,7 @@ export const ToolFormWizard: React.FC<ToolFormWizardProps> = ({
 
     // Type-specific validation
     if (field.type === 'number') {
-      const numValue = typeof value === 'number' ? value : parseFloat(value);
+      const numValue = typeof value === 'number' ? value : parseFloat(String(value));
       if (isNaN(numValue)) {
         return 'Please enter a valid number';
       }
@@ -185,13 +185,13 @@ export const ToolFormWizard: React.FC<ToolFormWizardProps> = ({
   };
 
   // Handle field submission (Enter or moving to next field)
-  const handleFieldSubmit = (value: any) => {
+  const handleFieldSubmit = (value: FormValue) => {
     if (!currentField) return;
 
     // Process value based on type
     let processedValue = value;
     if (currentField.type === 'number') {
-      processedValue = value === '' ? undefined : parseFloat(value);
+      processedValue = value === '' ? undefined : parseFloat(String(value));
     }
 
     // Validate
@@ -253,9 +253,9 @@ export const ToolFormWizard: React.FC<ToolFormWizardProps> = ({
   };
 
   // Handle form submission (validates all fields)
-  const handleFormSubmit = (currentFieldName?: string, currentFieldValue?: any) => {
+  const handleFormSubmit = (currentFieldName?: string, currentFieldValue?: FormValue) => {
     const allErrors: Record<string, string> = {};
-    const finalValues: Record<string, any> = { ...values };
+    const finalValues: FormValues = { ...values };
 
     // Include the current field's value (may not be in values yet due to async state)
     if (currentFieldName !== undefined) {

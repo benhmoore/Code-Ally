@@ -6,8 +6,8 @@
  */
 
 // Main App Component
-export { App, AppWithMessages } from './App.js';
-export type { AppProps, AppWithMessagesProps } from './App.js';
+export { App } from './App.js';
+export type { AppProps } from './App.js';
 
 // Contexts
 export { ActivityProvider, useActivityStreamContext } from './contexts/ActivityContext.js';

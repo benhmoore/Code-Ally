@@ -28,6 +28,9 @@ export class IdleTaskCoordinator implements IService {
   private lastModelResponseTimestamp: number = 0;
   private retryTimeoutId: NodeJS.Timeout | null = null;
   private activeAgentCount: number = 0; // Track nested agent activity with reference counting
+  private closed = false;
+  private generation = 0;
+  private admission?: Promise<void>;
 
   constructor(
     private sessionTitleGenerator: SessionTitleGenerator | null,
@@ -41,6 +44,9 @@ export class IdleTaskCoordinator implements IService {
   }
 
   async cleanup(): Promise<void> {
+    this.closed = true;
+    this.cancel();
+    await this.admission;
     logger.debug('[IDLE_COORD] IdleTaskCoordinator cleanup');
 
     // Clear any pending retry timeout
@@ -48,6 +54,18 @@ export class IdleTaskCoordinator implements IService {
       clearTimeout(this.retryTimeoutId);
       this.retryTimeoutId = null;
     }
+  }
+
+  /** Replace live optional owners without retaining detached generators. */
+  setIdleMessageGenerator(generator: IdleMessageGenerator | null): void {
+    this.generation++;
+    this.idleMessageGenerator?.cancel();
+    this.idleMessageGenerator = generator;
+  }
+
+  setSessionTitleGenerator(generator: SessionTitleGenerator | null): void {
+    this.generation++;
+    this.sessionTitleGenerator = generator;
   }
 
   /**
@@ -135,10 +153,20 @@ export class IdleTaskCoordinator implements IService {
    * @param context - Additional context for idle message generation
    */
   async checkAndRunIdleTasks(messages: Message[], context?: IdleContext): Promise<void> {
+    if (this.closed || this.admission) return;
+    const generation = this.generation;
+    const admitted = () => !this.closed && !this.isOllamaActive && this.generation === generation;
+    const operation = this.runIdleAdmission(messages, context, admitted);
+    this.admission = operation;
+    try { await operation; }
+    finally { if (this.admission === operation) this.admission = undefined; }
+  }
+
+  private async runIdleAdmission(messages: Message[], context: IdleContext | undefined, admitted: () => boolean): Promise<void> {
     logger.debug('[IDLE_COORD] checkAndRunIdleTasks called');
 
     // Return immediately if Ollama is active
-    if (this.isOllamaActive) {
+    if (!admitted()) {
       logger.debug('[IDLE_COORD] Skipping idle tasks - Ollama is active');
       return;
     }
@@ -177,12 +205,14 @@ export class IdleTaskCoordinator implements IService {
     // Priority 1: Check if title needs generation or regeneration
     logger.debug('[IDLE_COORD] Checking if title work needed...');
     if (await this.needsTitleWork()) {
+      if (!admitted()) return;
       logger.debug('[IDLE_COORD] Title work needed, running regeneration');
-      this.runTitleRegeneration(messages);
+      await this.runTitleRegeneration(messages, admitted);
       return; // Only run one task at a time
     }
 
     // Priority 2: Check if idle messages needed
+    if (!admitted()) return;
     if (this.needsIdleMessages()) {
       this.runIdleMessageGeneration(messages, context);
       return;
@@ -190,6 +220,7 @@ export class IdleTaskCoordinator implements IService {
 
     // Priority 3: Check if tool cleanup needed
     if (await this.needsToolCleanup(messages)) {
+      if (!admitted()) return;
       this.runToolCleanup(messages);
       return;
     }
@@ -278,7 +309,7 @@ export class IdleTaskCoordinator implements IService {
    *
    * @param messages - Current conversation messages
    */
-  private async runTitleRegeneration(messages: Message[]): Promise<void> {
+  private async runTitleRegeneration(messages: Message[], admitted: () => boolean): Promise<void> {
     if (!this.sessionTitleGenerator) {
       logger.warn('[IDLE_COORD] Title generator not initialized');
       return;
@@ -292,6 +323,7 @@ export class IdleTaskCoordinator implements IService {
 
     // Check if user manually set the title - skip auto-regeneration if so
     const session = await this.sessionManager.loadSession(currentSession);
+    if (!admitted()) return;
     if (session?.metadata?.userSetTitle) {
       logger.debug('[IDLE_COORD] User manually set title, skipping auto-regeneration');
       return;
@@ -434,6 +466,7 @@ export class IdleTaskCoordinator implements IService {
    * Called when main agent needs exclusive access to resources
    */
   cancel(): void {
+    this.generation++;
     logger.debug('[IDLE_COORD] Cancelling all idle tasks');
 
     // Clear any pending retry timeout

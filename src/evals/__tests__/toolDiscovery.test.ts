@@ -16,16 +16,27 @@ describe('tool discovery evaluation', () => {
       requests.push({ messages: structuredClone(messages), functions });
       return requests.length === 1
         ? response('tool-search', { query })
-        : response('memory', { action: 'save', name: 'package-manager', type: 'feedback', body: 'Use pnpm for this project.' });
+        : response('memory', { action: 'save', name: 'package-manager', description: 'Use pnpm for workspace compatibility', type: 'feedback', body: 'Use pnpm for this project.' });
     });
     const result = await evaluateToolDiscovery(send, 'Complete the request.', DEFAULT_CONFIG);
     expect(result.score).toBe(7);
     expect(requests[0]!.functions).toEqual(createRuntimeCoreToolDefinitions());
     expect(requests[0]!.functions.map(definition => definition.function.name)).not.toContain('memory');
-    expect(requests[0]!.messages[0]!.content).toContain('- memory:');
+    expect(requests[0]!.messages.some(message => message.content.includes('- memory:'))).toBe(true);
+    expect(requests[1]!.messages[0]).toEqual(requests[0]!.messages[0]);
+    expect(requests[1]!.messages.slice(0, requests[0]!.messages.length)).toEqual(requests[0]!.messages);
     expect(requests[1]!.functions.map(definition => definition.function.name)).toContain('memory');
     expect(requests[1]!.messages.find(message => message.role === 'tool')!.content).toContain('Loaded');
     expect(result.notes).toContain('Target capability inspected only; no memory write executed');
+  });
+
+  it('rejects target arguments that look semantically correct but fail runtime validation', async () => {
+    const send = vi.fn()
+      .mockResolvedValueOnce(response('tool-search', { query: 'select:memory' }))
+      .mockResolvedValueOnce(response('memory', { action: 'save', name: 'package-manager', body: 'Use pnpm', type: 'feedback' }));
+    const result = await evaluateToolDiscovery(send, 'Complete the request.', DEFAULT_CONFIG);
+    expect(result.score).toBe(2);
+    expect(result.notes.join(' ')).toContain('description');
   });
 
   it('does not award a direct call to a tool whose schema was deferred', async () => {

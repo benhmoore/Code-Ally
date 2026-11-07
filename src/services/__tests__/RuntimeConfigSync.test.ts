@@ -5,10 +5,30 @@ import { ServiceRegistry } from '../ServiceRegistry.js';
 import { applyRuntimeConfigUpdates } from '../RuntimeConfigSync.js';
 import { ModelCapabilitiesIndex } from '../ModelCapabilitiesIndex.js';
 import type { Config } from '../../types/index.js';
+import { IdleTaskCoordinator } from '../IdleTaskCoordinator.js';
+import type { SessionManager } from '../SessionManager.js';
 
 describe('applyRuntimeConfigUpdates', () => {
   let registry: ServiceRegistry;
   let config: Config;
+
+  it('changes the coordinator dependency when idle messages are enabled and disabled live', async () => {
+    const send = vi.fn().mockResolvedValue({ role: 'assistant', content: 'A generated message' });
+    registry.registerInstance('service_model_client', { send } as any);
+    const coordinator = new IdleTaskCoordinator(null, null, null, {} as SessionManager);
+    registry.registerInstance('idle_task_coordinator', coordinator);
+    config.enable_idle_messages = true;
+    applyRuntimeConfigUpdates(registry, { enable_idle_messages: true });
+    const enabled = registry.get('idle_message_generator')!;
+    await coordinator.checkAndRunIdleTasks([]);
+    expect(send).toHaveBeenCalledOnce();
+    config.enable_idle_messages = false;
+    applyRuntimeConfigUpdates(registry, { enable_idle_messages: false });
+    await coordinator.checkAndRunIdleTasks([]);
+    expect(registry.get('idle_message_generator')).toBeNull();
+    expect(send).toHaveBeenCalledOnce();
+    await enabled.cleanup();
+  });
 
   beforeEach(async () => {
     registry = ServiceRegistry.getInstance();

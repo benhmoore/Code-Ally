@@ -25,7 +25,11 @@ export class SessionPersistence {
     private conversationManager: ConversationManager,
     private instanceId: string,
     private agentDepth: number = 0
-  ) {}
+  ) {
+    if (agentDepth === 0) conversationManager.enableTranscriptPersistence(() => {
+      ServiceRegistry.getInstance().get('session_manager')?.capturePendingContext();
+    });
+  }
 
   /**
    * Auto-save session to disk (messages and todos)
@@ -58,12 +62,14 @@ export class SessionPersistence {
       return;
     }
 
+    const appends = this.conversationManager.captureTranscriptAppends();
     const registry = ServiceRegistry.getInstance();
     const sessionManager = registry.get('session_manager');
     const todoManager = registry.get('todo_manager');
 
     if (!sessionManager) {
-      return; // Session manager not available
+      this.conversationManager.acknowledgeTranscriptAppends(appends);
+      return;
     }
 
     // Get current session
@@ -82,54 +88,32 @@ export class SessionPersistence {
 
           // Notify PatchManager about the new session
           const patchManager = registry.get('patch_manager');
-          if (patchManager && typeof (patchManager as any).onSessionChange === 'function') {
-            await (patchManager as any).onSessionChange();
-          }
+          await patchManager?.onSessionChange();
         }
       } else {
         return; // No user messages yet, don't create session
       }
     }
 
-    // Get todos if TodoManager is available
-    let todos: any[] | undefined;
-    if (todoManager && typeof (todoManager as any).getTodos === 'function') {
-      todos = (todoManager as any).getTodos();
-    }
+    const todos = todoManager?.getTodos();
+    const idleMessages = registry.get('idle_message_generator')?.getQueue();
+    const projectContext = registry.get('project_context_detector')?.getCached() ?? undefined;
+    const additionalDirectories = registry.get('additional_dirs_manager')?.getAdditionalDirectories();
 
-    // Get idle messages if IdleMessageGenerator is available
-    let idleMessages: string[] | undefined;
-    const idleMessageGenerator = registry.get('idle_message_generator');
-    if (idleMessageGenerator && typeof (idleMessageGenerator as any).getQueue === 'function') {
-      idleMessages = (idleMessageGenerator as any).getQueue();
-    }
-
-    // Get project context if ProjectContextDetector is available
-    let projectContext: any | undefined;
-    const projectContextDetector = registry.get('project_context_detector');
-    if (projectContextDetector && typeof (projectContextDetector as any).getCached === 'function') {
-      projectContext = (projectContextDetector as any).getCached();
-    }
-
-    // Get additional directories if AdditionalDirectoriesManager is available
-    let additionalDirectories: string[] | undefined;
-    const additionalDirsManager = registry.get('additional_dirs_manager');
-    if (additionalDirsManager && typeof (additionalDirsManager as any).getAdditionalDirectories === 'function') {
-      additionalDirectories = (additionalDirsManager as any).getAdditionalDirectories();
-    }
-
+    if (!this.conversationManager.isTranscriptSnapshotCurrent(appends)) return;
     // Admission is asynchronous even though the eventual disk write is debounced.
-    const admitted = await sessionManager.autoSave(
-      this.conversationManager.getMessages(),
+    const admitted = await sessionManager.autoSaveFromOwner(
+      () => this.conversationManager.getMessages(),
       todos,
       idleMessages,
       projectContext,
       additionalDirectories,
-      this.conversationManager.getTranscript(),
+      appends.messages.length ? appends.messages : this.conversationManager.getTranscript(),
       this.conversationManager.getCheckpoint() ?? undefined,
       this.conversationManager.getProviderState(),
     );
     if (!admitted) throw new Error('Session autosave snapshot was not admitted');
+    this.conversationManager.acknowledgeTranscriptAppends(appends);
   }
 
   /** Persist a turn boundary before any model/tool side effect is attempted. */

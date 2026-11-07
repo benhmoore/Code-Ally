@@ -8,7 +8,7 @@ export class AgentLifecycleHandler {
   private coordinator?: IdleTaskCoordinator;
   private completedMessages?: readonly Message[];
 
-  constructor(private readonly instanceId: string) {}
+  constructor(private readonly instanceId: string, private readonly ownsSession = true) {}
 
   notifyUserMessageStart(): void {
     if (this.coordinator) return;
@@ -28,7 +28,7 @@ export class AgentLifecycleHandler {
     // until the whole admitted turn settles, including its final hooks.
     this.completedMessages = messages;
     const registry = ServiceRegistry.getInstance();
-    if (!registry.get('auto_tool_cleanup')) return;
+    if (!this.ownsSession || !registry.get('auto_tool_cleanup')) return;
     const sessionManager = registry.get('session_manager');
     const sessionName = sessionManager?.getCurrentSession();
     if (!sessionManager || !sessionName) return;
@@ -52,7 +52,7 @@ export class AgentLifecycleHandler {
     this.completedMessages = undefined;
     if (!coordinator) return;
     coordinator.setOllamaActive(false);
-    if (!messages) return;
+    if (!messages || !this.ownsSession) return;
     const detector = ServiceRegistry.getInstance().get('project_context_detector');
     void coordinator.checkAndRunIdleTasks([...messages], {
       os: process.platform,

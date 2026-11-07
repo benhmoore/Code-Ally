@@ -14,14 +14,26 @@
  * services exist and never touches ServiceRegistry itself.
  */
 
+import type { SessionManager } from './SessionManager.js';
+import type { SessionResumeState } from './SessionRuntime.js';
 import type { SessionInfo } from '../types/index.js';
 import { logger } from './Logger.js';
+
+export type SessionReplayData = SessionResumeState &
+  Partial<
+    Pick<
+      Awaited<ReturnType<SessionManager['getSessionData']>>,
+      'todos' | 'idleMessages' | 'projectContext' | 'metadata' | 'additional_directories'
+    >
+  >;
 
 /** Subset of SessionManager the session picker depends on */
 export interface RestorableSessionManager {
   getSessionsInfoByDirectory(workingDir?: string): Promise<SessionInfo[]>;
   setCurrentSession(sessionName: string | null): void;
-  getSessionData(sessionName: string): Promise<unknown>;
+  getCurrentSession(): string | null;
+  forceSave(): Promise<boolean>;
+  getSessionData(sessionName: string): Promise<SessionReplayData>;
 }
 
 /** Subset of PatchManager notified when the active session changes */
@@ -35,7 +47,17 @@ export interface SessionAwarePatchManager {
  * Passed per call rather than constructor-injected because it closes over the
  * currently foreground agent, which is swapped at runtime.
  */
-export type SessionDataLoader = (sessionData: unknown) => Promise<void>;
+export type SessionResume = (state: SessionResumeState) => void;
+export type SessionDataLoader = (sessionData: SessionReplayData, resume?: SessionResume) => Promise<void>;
+export interface SessionRestoreOptions {
+  ownsRequest?: () => boolean;
+  runExclusive?: (
+    operation: (resume: SessionResume) => Promise<SessionRestoreOutcome>
+  ) => Promise<SessionRestoreOutcome>;
+  captureRollback?: () => (resume?: SessionResume) => Promise<void>;
+  onRollbackFailure?: (error: Error) => void;
+}
+const restoreQueues = new WeakMap<RestorableSessionManager, Promise<void>>();
 
 export interface SessionRestoreCoordinatorDeps {
   getSessionManager: () => RestorableSessionManager | null | undefined;
@@ -51,23 +73,13 @@ export interface SessionRestoreCoordinatorDeps {
  * message so the oddity stays visible in the type.
  */
 export type SessionListOutcome =
-  | { status: 'ok'; sessions: SessionInfo[] }
-  | { status: 'unavailable' }
-  | { status: 'error'; message: string };
+  { status: 'ok'; sessions: SessionInfo[] } | { status: 'unavailable' } | { status: 'error'; message: string };
 
-/**
- * Result of restoring a session.
- *
- * `sessionSwitched` reports a hazard in the ordering: `setCurrentSession()` and
- * the patch manager rebind happen before the session data is read, so a failure
- * while reading or replaying leaves the app pointed at the newly selected
- * session while the visible transcript still belongs to the previous one.
- * Nothing rolls that back, because a rollback would change which session
- * subsequent writes land in - so the caller is told instead.
- */
+/** A failed admission/read leaves ownership untouched; an admitted failure is rolled back. */
 export type SessionRestoreOutcome =
   | { status: 'ok' }
   | { status: 'unavailable' }
+  | { status: 'superseded' }
   | { status: 'error'; message: string; sessionSwitched: boolean };
 
 function describeError(error: unknown): string {
@@ -96,48 +108,68 @@ export class SessionRestoreCoordinator {
     }
   }
 
-  /**
-   * Switch the active session and replay it.
-   *
-   * Order is load-bearing:
-   *   1. point the session manager at the selected session
-   *   2. let the patch manager rebind to that session's patch history
-   *   3. read the session data
-   *   4. replay it into the conversation/UI via `loadSession`
-   */
+  /** Stage reads without changing ownership, then commit under the session's idle lease. */
   async restoreSession(
     sessionId: string,
-    loadSession: SessionDataLoader
+    loadSession: SessionDataLoader,
+    options: SessionRestoreOptions = {}
   ): Promise<SessionRestoreOutcome> {
-    const sessionManager = this.deps.getSessionManager();
-    if (!sessionManager) {
-      return { status: 'unavailable' };
-    }
-
+    const manager = this.deps.getSessionManager();
+    if (!manager) return { status: 'unavailable' };
+    const ownsRequest = options.ownsRequest ?? (() => true);
     let sessionSwitched = false;
     try {
-      sessionManager.setCurrentSession(sessionId);
-      sessionSwitched = true;
-
-      const patchManager = this.deps.getPatchManager();
-      if (patchManager) {
-        await patchManager.onSessionChange();
+      if (!ownsRequest()) return { status: 'superseded' };
+      const previous = restoreQueues.get(manager) ?? Promise.resolve();
+      let release!: () => void;
+      const tail = new Promise<void>(resolve => {
+        release = resolve;
+      });
+      restoreQueues.set(manager, tail);
+      try {
+        await previous;
+        if (!ownsRequest()) return { status: 'superseded' };
+        const commit = async (resume?: SessionResume): Promise<SessionRestoreOutcome> => {
+          if (!ownsRequest()) return { status: 'superseded' };
+          if (!(await manager.forceSave())) throw new Error('Session snapshot could not be persisted before restore');
+          const data = await manager.getSessionData(sessionId);
+          if (!ownsRequest()) return { status: 'superseded' };
+          const previousSession = manager.getCurrentSession();
+          const rollback = options.captureRollback?.();
+          const patchManager = this.deps.getPatchManager();
+          try {
+            manager.setCurrentSession(sessionId);
+            sessionSwitched = true;
+            await patchManager?.onSessionChange();
+            // Admission is irrevocable: navigation can suppress picker effects,
+            // but the selected binding and owner replay must complete together.
+            await loadSession(data, resume);
+            return { status: 'ok' };
+          } catch (error) {
+            if (!sessionSwitched) throw error;
+            try {
+              manager.setCurrentSession(previousSession);
+              await rollback?.(resume);
+              await patchManager?.onSessionChange();
+              sessionSwitched = false;
+            } catch (rollbackError) {
+              const failure = new AggregateError([error, rollbackError], 'Session restore and rollback failed', {
+                cause: error,
+              });
+              options.onRollbackFailure?.(failure);
+              throw failure;
+            }
+            throw error;
+          }
+        };
+        return options.runExclusive ? await options.runExclusive(commit) : await commit();
+      } finally {
+        release();
+        if (restoreQueues.get(manager) === tail) restoreQueues.delete(manager);
       }
-
-      const sessionData = await sessionManager.getSessionData(sessionId);
-
-      await loadSession(sessionData);
-
-      return { status: 'ok' };
     } catch (error) {
-      // Surface the failure instead of leaving the UI in an indeterminate
-      // state with no feedback about why the session didn't load.
       logger.error('[ACTIVITY] Failed to load selected session:', error);
-      return {
-        status: 'error',
-        message: `Failed to load session: ${describeError(error)}`,
-        sessionSwitched,
-      };
+      return { status: 'error', message: `Failed to load session: ${describeError(error)}`, sessionSwitched };
     }
   }
 }

@@ -14,14 +14,13 @@
 import React, { useState, useEffect, useLayoutEffect, useRef } from 'react';
 import { useBottomLayout } from './BottomAlignedLayout.js';
 import { useTerminalRows } from '../hooks/useTerminalRows.js';
+import { useForceQuit } from '../hooks/useForceQuit.js';
+import { usePromptDraft, type PromptDraft } from '../hooks/usePromptDraft.js';
 import { Box, useInput, useApp, type Key } from 'ink';
 import { TextInput } from './TextInput.js';
 import { CommandHistory } from '@services/CommandHistory.js';
 import { CompletionProvider, Completion } from '@services/CompletionProvider.js';
 import { CompletionDropdown } from './CompletionDropdown.js';
-import { PermissionRequest } from './PermissionPrompt.js';
-import { ModelOption } from './ModelSelector.js';
-import type { ModalActivation } from '../hooks/useModalActivation.js';
 import { ActivityStream } from '@services/ActivityStream.js';
 import { ActivityEventType } from '@shared/index.js';
 import { logger } from '@services/Logger.js';
@@ -81,12 +80,6 @@ interface InputPromptProps {
   commandHistory?: CommandHistory;
   /** Completion provider instance */
   completionProvider?: CompletionProvider;
-  /** Permission prompt data (if active) */
-  permissionRequest?: PermissionRequest & { requestId: string };
-  /** Selected permission option index */
-  permissionSelectedIndex?: number;
-  /** Callback when permission selection changes */
-  onPermissionNavigate?: (newIndex: number) => void;
   /** Callback to toggle auto-allow mode during permission prompts */
   onAutoAllowToggle?: () => void;
   /** Callback to switch back to default agent (Esc shortcut) */
@@ -95,52 +88,6 @@ interface InputPromptProps {
   currentAgent?: string;
   /** Default agent from config (Esc won't switch if already on default) */
   defaultAgent?: string;
-  /** Model selector data (if active) */
-  modelSelectRequest?: {
-    requestId: string;
-    models: ModelOption[];
-    currentModel?: string;
-    modelType?: 'ally' | 'service';
-    typeName?: string;
-  };
-  /** Selected model index */
-  modelSelectedIndex?: number;
-  /** Callback when model selection changes */
-  onModelNavigate?: (newIndex: number) => void;
-  /** Session selector data (if active) */
-  sessionSelectRequest?: {
-    requestId: string;
-    sessions: import('@shared/index.js').SessionInfo[];
-    selectedIndex: number;
-  };
-  /** Callback when session selection changes */
-  onSessionNavigate?: (newIndex: number) => void;
-  /** Library selector data (if active) */
-  librarySelectRequest?: import('../hooks/useModalState.js').LibrarySelectRequest;
-  /** Callback when library selection changes */
-  onLibraryNavigate?: (newIndex: number) => void;
-  /** Message selector data (for prompt creation - if active) */
-  messageSelectRequest?: import('../hooks/useModalState.js').MessageSelectRequest;
-  /** Callback when message selection changes */
-  onMessageNavigate?: (newIndex: number) => void;
-  /** Rewind selector data (if active) */
-  rewindRequest?: { requestId: string; userMessagesCount: number; selectedIndex: number };
-  /** Callback when rewind selection changes */
-  onRewindNavigate?: (newIndex: number) => void;
-  /** Undo prompt data (if active) */
-  undoRequest?: { requestId: string; count: number; patches: any[]; previewData: any[] };
-  /** Selected undo option index */
-  undoSelectedIndex?: number;
-  /** Callback when undo selection changes */
-  onUndoNavigate?: (newIndex: number) => void;
-  /** Undo file list (two-stage flow) */
-  undoFileListRequest?: { requestId: string; fileList: any[]; selectedIndex: number };
-  /** Callback when undo file list selection changes */
-  onUndoFileListNavigate?: (newIndex: number) => void;
-  /** Library clear confirmation data (if active) */
-  libraryClearConfirmRequest?: import('../hooks/useModalState.js').LibraryClearConfirmRequest;
-  /** Callback when library clear confirmation selection changes */
-  onLibraryClearConfirmNavigate?: (newIndex: number) => void;
   /** Activity stream for emitting events */
   activityStream?: ActivityStream;
   /** Agent instance for interruption */
@@ -151,28 +98,16 @@ interface InputPromptProps {
   onPrefillConsumed?: () => void;
   /** Callback when exit confirmation state changes */
   onExitConfirmationChange?: (isWaitingForConfirmation: boolean) => void;
-  /** External buffer value (for preserving across renders) */
-  bufferValue?: string;
-  /** Callback when buffer changes */
-  onBufferChange?: (value: string) => void;
+  /** Conversation-owned editing state, retained while a modal or another agent is selected. */
+  draft?: PromptDraft;
+  onDraftChange?: (draft: PromptDraft) => void;
   /** Whether auto-allow mode is enabled (changes border color to danger) */
   autoAllowMode?: boolean;
   /** Whether the input was prefilled from prompt library (changes border color to primary) */
   promptPrefilled?: boolean;
   /** Callback when prompt prefill state should be cleared (user modified buffer) */
   onPromptPrefilledClear?: () => void;
-  /** Plan approval request data (if active) */
-  planApprovalRequest?: import('./PlanApprovalPrompt.js').PlanApprovalRequest;
-  /** Selected plan approval option index */
-  planApprovalSelectedIndex?: number;
-  /** Callback when plan approval selection changes */
-  onPlanApprovalNavigate?: (newIndex: number) => void;
-  /**
-   * Answers modal requests. Enter and Escape in every selector go through
-   * it, as does a click on an option row, so both input paths share one
-   * implementation.
-   */
-  modalActivation?: ModalActivation;
+
 }
 
 /**
@@ -201,65 +136,29 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
   placeholder = 'Type a message...',
   commandHistory,
   completionProvider,
-  permissionRequest,
-  permissionSelectedIndex = 0,
-  onPermissionNavigate,
   onAutoAllowToggle,
   onSwitchToDefault,
   currentAgent,
   defaultAgent = 'ally',
-  modelSelectRequest,
-  modelSelectedIndex = 0,
-  onModelNavigate,
-  sessionSelectRequest,
-  onSessionNavigate,
-  librarySelectRequest,
-  onLibraryNavigate,
-  messageSelectRequest,
-  onMessageNavigate,
-  rewindRequest,
-  onRewindNavigate,
-  undoRequest,
-  undoSelectedIndex = 0,
-  onUndoNavigate,
-  undoFileListRequest,
-  onUndoFileListNavigate,
-  libraryClearConfirmRequest,
-  onLibraryClearConfirmNavigate,
   activityStream,
   agent,
   prefillText,
   onPrefillConsumed,
   onExitConfirmationChange,
-  bufferValue,
-  onBufferChange,
+  draft,
+  onDraftChange,
   autoAllowMode = false,
   promptPrefilled = false,
   onPromptPrefilledClear,
-  planApprovalRequest,
-  planApprovalSelectedIndex = 0,
-  onPlanApprovalNavigate,
-  modalActivation,
 }) => {
   const bottomLayout = useBottomLayout();
   const terminalRows = useTerminalRows();
   useLayoutEffect(() => { bottomLayout?.measure(); });
   const { exit } = useApp();
-  const [buffer, setBuffer] = useState(bufferValue || '');
-  const [cursorPosition, setCursorPosition] = useState(0);
-  const bufferRef = useRef(buffer);
+  useForceQuit(isActive);
+  const { buffer, cursorPosition, bufferRef, cursorPositionRef, updateBuffer, setCursorPosition } =
+    usePromptDraft(draft, onDraftChange);
   const onPrefillConsumedRef = useRef(onPrefillConsumed);
-
-  /**
-   * Buffer invariant: local editing state and the parent-owned preservation
-   * buffer advance in the same event. Effect-based two-way synchronization
-   * can exchange stale values forever when a keystroke causes both to render.
-   */
-  const updateBuffer = React.useCallback((nextBuffer: string) => {
-    bufferRef.current = nextBuffer;
-    setBuffer(nextBuffer);
-    onBufferChange?.(nextBuffer);
-  }, [onBufferChange]);
 
   useEffect(() => {
     onPrefillConsumedRef.current = onPrefillConsumed;
@@ -272,16 +171,7 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
       setCursorPosition(prefillText.length);
       onPrefillConsumedRef.current?.();
     }
-  }, [prefillText, updateBuffer]);
-
-  // Use refs to track current buffer and cursor position (avoids stale closure issues with paste)
-  const cursorPositionRef = useRef(cursorPosition);
-  useEffect(() => {
-    bufferRef.current = buffer;
-  }, [buffer]);
-  useEffect(() => {
-    cursorPositionRef.current = cursorPosition;
-  }, [cursorPosition]);
+  }, [prefillText, updateBuffer, setCursorPosition]);
 
   // Use refs for agent and activityStream to avoid stale closures in useInput
   // This is critical for interrupt handling - a stale agent reference can cause
@@ -344,12 +234,6 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
     setCompletionIndex(0);
   }, []);
 
-  // Debounce timer for completions
-
-  // Force-quit mechanism (3x Ctrl+C within 2s)
-  const [ctrlCCount, setCtrlCCount] = useState(0);
-  const ctrlCTimerRef = useRef<NodeJS.Timeout | null>(null);
-
   // Double-escape mechanism for rewind (2x Esc within 500ms)
   const escCountRef = useRef(0);
   const escTimerRef = useRef<NodeJS.Timeout | null>(null);
@@ -358,23 +242,13 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
   const [isWaitingForExitConfirmation, setIsWaitingForExitConfirmation] = useState(false);
   const exitConfirmationTimerRef = useRef<NodeJS.Timeout | null>(null);
 
-  // Track last cancelled request IDs to prevent duplicates
-
   // Notify parent when exit confirmation state changes
   useEffect(() => {
     onExitConfirmationChange?.(isWaitingForExitConfirmation);
   }, [isWaitingForExitConfirmation, onExitConfirmationChange]);
 
-  // Sync with external buffer value (when parent changes it)
-  useEffect(() => {
-    if (bufferValue !== undefined && bufferValue !== bufferRef.current) {
-      completionRequestIdRef.current++;
-      bufferRef.current = bufferValue;
-      setBuffer(bufferValue);
-      cursorPositionRef.current = bufferValue.length;
-      setCursorPosition(bufferValue.length);
-    }
-  }, [bufferValue]);
+  // A replacement provider must invalidate in-flight completion results.
+  useEffect(() => () => { completionRequestIdRef.current++; }, [completionProvider]);
 
   const refreshCompletions = React.useCallback(async (
     input: string,
@@ -599,20 +473,7 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
     (followUp && onFollowUp ? onFollowUp : onSubmit)(trimmed, Object.keys(mentions).length > 0 ? mentions : undefined);
   };
 
-  // Track whether TextInput is active (inactive when modals are open)
-  const textInputActive =
-    isActive &&
-    !fleetFocused &&
-    !permissionRequest &&
-    !planApprovalRequest &&
-    !modelSelectRequest &&
-    !sessionSelectRequest &&
-    !librarySelectRequest &&
-    !messageSelectRequest &&
-    !rewindRequest &&
-    !undoRequest &&
-    !undoFileListRequest &&
-    !libraryClearConfirmRequest;
+  const textInputActive = isActive && !fleetFocused;
 
   /**
    * Handle value changes from TextInput
@@ -692,7 +553,6 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
 
   useEffect(() => () => {
     completionRequestIdRef.current++;
-    if (ctrlCTimerRef.current) clearTimeout(ctrlCTimerRef.current);
     if (escTimerRef.current) clearTimeout(escTimerRef.current);
     if (exitConfirmationTimerRef.current) clearTimeout(exitConfirmationTimerRef.current);
   }, []);
@@ -853,384 +713,13 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
     return false;
   };
 
-  // Handle keyboard input for special features (history, completion, modals, etc.)
-  // TextInput handles basic editing, we only intercept for our special features
+  // Fleet focus and application shortcuts are separate from editor key capture.
   useInput(
     (input, key) => {
-      if (!isActive) return;
-
-      // ===== Force Quit (3x Ctrl+C within 2s) - Highest Priority =====
-      if (key.ctrl && input === 'c') {
-        const newCount = ctrlCCount + 1;
-        setCtrlCCount(newCount);
-
-        // Reset counter after configured delay
-        if (ctrlCTimerRef.current) clearTimeout(ctrlCTimerRef.current);
-        ctrlCTimerRef.current = setTimeout(() => setCtrlCCount(0), UI_DELAYS.CTRL_C_RESET);
-
-        // Force quit on 3rd press
-        if (newCount >= 3) {
-          logger.debug('[InputPrompt] Force quit - 3x Ctrl+C');
-          exit();
-          return;
-        }
-      }
-
-      // ===== Model Selector Navigation (second priority after force-quit) =====
-      if (modelSelectRequest && onModelNavigate && modalActivation) {
-        const modelsCount = modelSelectRequest.models.length;
-
-        // Up arrow - navigate to previous model
-        if (key.upArrow) {
-          const newIndex = Math.max(0, modelSelectedIndex - 1);
-          onModelNavigate(newIndex);
-          return;
-        }
-
-        // Down arrow - navigate to next model
-        if (key.downArrow) {
-          const newIndex = Math.min(modelsCount - 1, modelSelectedIndex + 1);
-          onModelNavigate(newIndex);
-          return;
-        }
-
-        // Enter - answer with the selected option
-        if (key.return) {
-          modalActivation.model.activate(modelSelectedIndex);
-          return;
-        }
-
-        // Escape or Ctrl+C - cancel
-        if (key.escape || (key.ctrl && input === 'c')) {
-          modalActivation.model.cancel();
-          return;
-        }
-
-        // Block all other input when model selector is active
-        return;
-      }
-
-      // ===== Session Selector Navigation =====
-      if (sessionSelectRequest && onSessionNavigate && modalActivation) {
-        const sessionsCount = sessionSelectRequest.sessions.length;
-        const currentIndex = sessionSelectRequest.selectedIndex;
-
-        // Up arrow - navigate to previous session
-        if (key.upArrow) {
-          const newIndex = Math.max(0, currentIndex - 1);
-          onSessionNavigate(newIndex);
-          return;
-        }
-
-        // Down arrow - navigate to next session
-        if (key.downArrow) {
-          const newIndex = Math.min(sessionsCount - 1, currentIndex + 1);
-          onSessionNavigate(newIndex);
-          return;
-        }
-
-        // Enter - answer with the selected option
-        if (key.return) {
-          modalActivation.session.activate(currentIndex);
-          return;
-        }
-
-        // Escape or Ctrl+C - cancel
-        if (key.escape || (key.ctrl && input === 'c')) {
-          modalActivation.session.cancel();
-          return;
-        }
-
-        // Block all other input when session selector is active
-        return;
-      }
-
-      // ===== Message Selector Navigation (for prompt creation) =====
-      if (messageSelectRequest && onMessageNavigate && modalActivation) {
-        const messagesCount = messageSelectRequest.messages.length;
-        const currentIndex = messageSelectRequest.selectedIndex;
-
-        // Up arrow - navigate to previous message
-        if (key.upArrow) {
-          const newIndex = Math.max(0, currentIndex - 1);
-          onMessageNavigate(newIndex);
-          return;
-        }
-
-        // Down arrow - navigate to next message
-        if (key.downArrow) {
-          const newIndex = Math.min(messagesCount - 1, currentIndex + 1);
-          onMessageNavigate(newIndex);
-          return;
-        }
-
-        // Enter - answer with the selected option
-        if (key.return) {
-          modalActivation.message.activate(currentIndex);
-          return;
-        }
-
-        // 'N' key - create new prompt (skip message selection)
-        if (input.toLowerCase() === 'n') {
-          modalActivation.message.createNew();
-          return;
-        }
-
-        // Escape or Ctrl+C - cancel
-        if (key.escape || (key.ctrl && input === 'c')) {
-          modalActivation.message.cancel();
-          return;
-        }
-
-        // Block all other input when message selector is active
-        return;
-      }
-
-      // ===== Library Selector Navigation =====
-      if (librarySelectRequest && onLibraryNavigate && modalActivation) {
-        const promptsCount = librarySelectRequest.prompts.length;
-        const currentIndex = librarySelectRequest.selectedIndex;
-
-        // Up arrow - navigate to previous prompt
-        if (key.upArrow) {
-          const newIndex = Math.max(0, currentIndex - 1);
-          onLibraryNavigate(newIndex);
-          return;
-        }
-
-        // Down arrow - navigate to next prompt
-        if (key.downArrow) {
-          const newIndex = Math.min(promptsCount - 1, currentIndex + 1);
-          onLibraryNavigate(newIndex);
-          return;
-        }
-
-        // Enter - answer with the selected option
-        if (key.return) {
-          modalActivation.library.activate(currentIndex);
-          return;
-        }
-
-        // Escape or Ctrl+C - cancel
-        if (key.escape || (key.ctrl && input === 'c')) {
-          modalActivation.library.cancel();
-          return;
-        }
-
-        // Block all other input when library selector is active
-        return;
-      }
-
-      // ===== Rewind Selector Navigation =====
-      if (rewindRequest && onRewindNavigate && modalActivation) {
-        const messagesCount = rewindRequest.userMessagesCount;
-        const currentIndex = rewindRequest.selectedIndex;
-
-        // Up arrow - navigate to previous message (older)
-        if (key.upArrow) {
-          const newIndex = Math.max(0, currentIndex - 1);
-          onRewindNavigate(newIndex);
-          return;
-        }
-
-        // Down arrow - navigate to next message (newer)
-        if (key.downArrow) {
-          const newIndex = Math.min(messagesCount - 1, currentIndex + 1);
-          onRewindNavigate(newIndex);
-          return;
-        }
-
-        // Enter - open the options step for the selected message
-        if (key.return) {
-          modalActivation.rewind.activate(currentIndex);
-          return;
-        }
-
-        // Escape or Ctrl+C - cancel
-        if (key.escape || (key.ctrl && input === 'c')) {
-          modalActivation.rewind.cancel();
-          return;
-        }
-
-        // Block all other input when rewind selector is active
-        return;
-      }
-
-      // ===== Library Clear Confirmation Navigation =====
-      if (libraryClearConfirmRequest && onLibraryClearConfirmNavigate && modalActivation) {
-        const optionsCount = 2; // Confirm and Cancel
-        const currentIndex = libraryClearConfirmRequest.selectedIndex;
-
-        // Up arrow - navigate to previous option
-        if (key.upArrow) {
-          const newIndex = Math.max(0, currentIndex - 1);
-          onLibraryClearConfirmNavigate(newIndex);
-          return;
-        }
-
-        // Down arrow - navigate to next option
-        if (key.downArrow) {
-          const newIndex = Math.min(optionsCount - 1, currentIndex + 1);
-          onLibraryClearConfirmNavigate(newIndex);
-          return;
-        }
-
-        // Enter - answer with the selected option
-        if (key.return) {
-          modalActivation.libraryClearConfirm.activate(currentIndex);
-          return;
-        }
-
-        // Escape or Ctrl+C - cancel
-        if (key.escape || (key.ctrl && input === 'c')) {
-          modalActivation.libraryClearConfirm.cancel();
-          return;
-        }
-
-        // Block all other input when confirmation is active
-        return;
-      }
-
-      // ===== Undo File List Navigation (Two-Stage Flow - Stage 1) =====
-      if (undoFileListRequest && onUndoFileListNavigate && modalActivation) {
-        const filesCount = undoFileListRequest.fileList.length;
-        const currentIndex = undoFileListRequest.selectedIndex;
-
-        // Up arrow - navigate to previous file
-        if (key.upArrow) {
-          const newIndex = Math.max(0, currentIndex - 1);
-          onUndoFileListNavigate(newIndex);
-          return;
-        }
-
-        // Down arrow - navigate to next file
-        if (key.downArrow) {
-          const newIndex = Math.min(filesCount - 1, currentIndex + 1);
-          onUndoFileListNavigate(newIndex);
-          return;
-        }
-
-        // Enter - answer with the selected option
-        if (key.return) {
-          modalActivation.undoFileList.activate(currentIndex);
-          return;
-        }
-
-        // Escape or Ctrl+C - cancel
-        if (key.escape || (key.ctrl && input === 'c')) {
-          modalActivation.undoFileList.cancel();
-          return;
-        }
-
-        // Block all other input when file list is active
-        return;
-      }
-
-      // ===== Undo Prompt Navigation (Two-Stage Flow - Stage 2) =====
-      if (undoRequest && onUndoNavigate && modalActivation) {
-        const optionsCount = 2; // Confirm and Cancel
-
-        // Up arrow - navigate to previous option
-        if (key.upArrow) {
-          const newIndex = Math.max(0, undoSelectedIndex - 1);
-          onUndoNavigate(newIndex);
-          return;
-        }
-
-        // Down arrow - navigate to next option
-        if (key.downArrow) {
-          const newIndex = Math.min(optionsCount - 1, undoSelectedIndex + 1);
-          onUndoNavigate(newIndex);
-          return;
-        }
-
-        // Enter - answer with the selected option
-        if (key.return) {
-          modalActivation.undo.activate(undoSelectedIndex);
-          return;
-        }
-
-        // Escape or Ctrl+C - cancel
-        if (key.escape || (key.ctrl && input === 'c')) {
-          modalActivation.undo.cancel();
-          return;
-        }
-
-        // Block all other input when undo prompt is active
-        return;
-      }
-
-      // ===== Plan Approval Navigation =====
-      if (planApprovalRequest && onPlanApprovalNavigate && modalActivation) {
-        const optionsCount = 3; // Approve, Approve + clear context, Provide feedback
-
-        // Up arrow
-        if (key.upArrow) {
-          const newIndex = Math.max(0, planApprovalSelectedIndex - 1);
-          onPlanApprovalNavigate(newIndex);
-          return;
-        }
-
-        // Down arrow
-        if (key.downArrow) {
-          const newIndex = Math.min(optionsCount - 1, planApprovalSelectedIndex + 1);
-          onPlanApprovalNavigate(newIndex);
-          return;
-        }
-
-        // Enter - answer with the selected option
-        if (key.return) {
-          modalActivation.planApproval.activate(planApprovalSelectedIndex);
-          return;
-        }
-
-        // Escape or Ctrl+C - cancel
-        if (key.escape || (key.ctrl && input === 'c')) {
-          modalActivation.planApproval.cancel();
-          return;
-        }
-
-        // Block all other input when plan approval is active
-        return;
-      }
-
-      // ===== Permission Prompt Navigation =====
-      if (permissionRequest && onPermissionNavigate && modalActivation) {
-        const optionsCount = permissionRequest.options.length;
-
-        // Up arrow - navigate to previous option (even from INSTRUCT)
-        if (key.upArrow) {
-          const newIndex = Math.max(0, permissionSelectedIndex - 1);
-          onPermissionNavigate(newIndex);
-          return;
-        }
-
-        // Down arrow - navigate to next option (even from INSTRUCT)
-        if (key.downArrow) {
-          const newIndex = Math.min(optionsCount - 1, permissionSelectedIndex + 1);
-          onPermissionNavigate(newIndex);
-          return;
-        }
-
-        // Enter - answer with the selected option
-        if (key.return) {
-          modalActivation.permission.activate(permissionSelectedIndex);
-          return;
-        }
-
-        // Escape or Ctrl+C - cancel
-        if (key.escape || (key.ctrl && input === 'c')) {
-          modalActivation.permission.cancel();
-          return;
-        }
-
-        // Block all other input when permission prompt is active
-        return;
-      }
+      if (!isActive || key.eventType === 'release') return;
 
       // ===== Background Agent Fleet Navigation =====
       // A focus region (NOT a modal) that coexists with the live prompt.
-      // Placed after all modal branches but before normal text/history handling.
       if (fleetFocused && onFleetNavigate) {
         const listSize = fleetCount + 1; // [main, ...agents]
         if (key.upArrow) {

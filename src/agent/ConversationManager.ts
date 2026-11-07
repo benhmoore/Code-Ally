@@ -20,9 +20,12 @@ import { createToolResultMessage } from '../llm/FunctionCalling.js';
 import { reconcileToolCallPairs } from '../utils/conversationRecovery.js';
 import type { ConversationCheckpointV1, ProviderCheckpointState } from './compaction/types.js';
 
-/**
- * Configuration for ConversationManager
- */
+/** Detached durable append records from one conversation branch. */
+export interface TranscriptAppendSnapshot {
+  generation: number;
+  messages: readonly Message[];
+}
+
 export interface ConversationManagerConfig {
   /** Agent instance ID for logging */
   instanceId?: string;
@@ -68,6 +71,39 @@ export class ConversationManager {
    * integrity without retaining the complete conversation in memory.
    */
   private canonicalActiveMessages = new Map<string, Message>();
+
+  private retainTranscriptAppends = false;
+  private persistenceBoundary?: () => void;
+
+  /** Install the root persistence owner's synchronous branch boundary. */
+  enableTranscriptPersistence(boundary: () => void): void {
+    this.retainTranscriptAppends = true;
+    this.persistenceBoundary = boundary;
+  }
+
+  private transcriptGeneration = 0;
+  private transcriptOutbox = new Map<string, Message>();
+
+  /** Capture unadmitted durable records before asynchronous session setup. */
+  captureTranscriptAppends(): TranscriptAppendSnapshot {
+    return { generation: this.transcriptGeneration, messages: [...this.transcriptOutbox.values()] };
+  }
+
+  isTranscriptSnapshotCurrent(snapshot: TranscriptAppendSnapshot): boolean {
+    return snapshot.generation === this.transcriptGeneration;
+  }
+
+  /** Release records only once the persistence owner has admitted their snapshot. */
+  acknowledgeTranscriptAppends(snapshot: TranscriptAppendSnapshot): void {
+    if (!this.isTranscriptSnapshotCurrent(snapshot)) return;
+    for (const message of snapshot.messages) if (message.id) this.transcriptOutbox.delete(message.id);
+  }
+
+  private resetTranscriptOutbox(): void {
+    this.persistenceBoundary?.();
+    this.transcriptGeneration++;
+    this.transcriptOutbox.clear();
+  }
 
   private checkpoint: ConversationCheckpointV1 | null = null;
   private providerState: ProviderCheckpointState = { kind: 'chat' };
@@ -142,6 +178,7 @@ export class ConversationManager {
 
     const durableMessage = persistentMessage(messageWithMetadata);
     if (durableMessage) {
+      if (this.retainTranscriptAppends && durableMessage.id) this.transcriptOutbox.set(durableMessage.id, structuredClone(durableMessage));
       this.transcript.push(durableMessage);
       if (this.transcript.length > ConversationManager.MAX_TRANSCRIPT_TAIL) {
         this.transcript.splice(0, this.transcript.length - ConversationManager.MAX_TRANSCRIPT_TAIL);
@@ -273,6 +310,7 @@ export class ConversationManager {
    * @param messages - New message array to replace current messages
    */
   setMessages(messages: Message[]): void {
+    this.resetTranscriptOutbox();
     // Ensure all messages have IDs
     this.messages = messages.map(msg => ({
       ...msg,
@@ -308,6 +346,7 @@ export class ConversationManager {
     providerState: ProviderCheckpointState = checkpoint?.providerState ?? { kind: 'chat' },
     canonicalMessages: readonly Message[] = [],
   ): void {
+    this.resetTranscriptOutbox();
     this.messages = activeMessages.map(msg => ({ ...msg, id: msg.id || generateMessageId() }));
     this.transcript = persistentMessages(transcript)
       .slice(-ConversationManager.MAX_TRANSCRIPT_TAIL)
@@ -332,6 +371,7 @@ export class ConversationManager {
    * Clear all messages
    */
   clearMessages(): void {
+    this.resetTranscriptOutbox();
     this.messages = [];
     this.transcript = [];
     this.canonicalActiveMessages.clear();

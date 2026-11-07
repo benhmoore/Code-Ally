@@ -1,5 +1,8 @@
 export const DURABLE_OBJECTIVE_TOOLS = ['objective-state', 'complete-objective', 'block-objective', 'reconcile-effect'] as const;
 
+import { selectExposedTools, type ToolExposureInput, type ToolExposureResult } from './ToolExposurePolicy.js';
+import { matchesAnyToolGlob } from './toolNameAliases.js';
+import type { FunctionDefinition } from '../types/index.js';
 import type { BackgroundTask } from '../services/BackgroundTaskRegistry.js';
 
 const SCHEDULE_INTENT = /\b(schedule(?:d|s|ing)?|recurr(?:ing|ence)?|cron|daily|weekly|monthly|every\s+(?:day|morning|evening|night|week|month)|remind\s+me)\b/i;
@@ -28,10 +31,9 @@ export interface RuntimeToolSelectionContext {
  * to an explicit user intent. Execution policy remains the authority; this is
  * a context/performance optimization for the provider request.
  */
-export function getRuntimeToolExclusions(context: RuntimeToolSelectionContext): string[] {
+export function getRuntimeToolEligibilityExclusions(context: RuntimeToolSelectionContext): string[] {
   const exclusions: string[] = [];
   const tasks = context.backgroundTasks ?? [];
-  const userText = context.latestUserText ?? '';
 
   if (!context.planModeActive) exclusions.push('write-plan', 'exit-plan-mode');
   if (!context.hasPersistentAgent) exclusions.push('agent-ask');
@@ -50,10 +52,31 @@ export function getRuntimeToolExclusions(context: RuntimeToolSelectionContext): 
   const hasRunningTask = tasks.some(task => task.status === 'running');
   if (!hasRunningTask) exclusions.push('wait');
 
-  if (!SCHEDULE_INTENT.test(userText) && !DELAYED_ACTION_INTENT.test(userText)) exclusions.push('scheduled-tasks');
-  if (!WATCH_INTENT.test(userText)) exclusions.push('watch');
-  if (!AGENT_MANAGEMENT_INTENT.test(userText)) exclusions.push('manage-agents');
-  if (!SESSION_INTENT.test(userText)) exclusions.push('sessions');
-
   return exclusions;
+}
+
+/** Explicitly loaded tools bypass relevance heuristics, never state prerequisites. */
+export function getRuntimeToolExclusions(context: RuntimeToolSelectionContext, loaded: readonly string[] = []): string[] {
+  const userText = context.latestUserText ?? '';
+  const irrelevant: string[] = [];
+  if (!SCHEDULE_INTENT.test(userText) && !DELAYED_ACTION_INTENT.test(userText)) irrelevant.push('scheduled-tasks');
+  if (!WATCH_INTENT.test(userText)) irrelevant.push('watch');
+  if (!AGENT_MANAGEMENT_INTENT.test(userText)) irrelevant.push('manage-agents');
+  if (!SESSION_INTENT.test(userText)) irrelevant.push('sessions');
+  return [...getRuntimeToolEligibilityExclusions(context), ...irrelevant.filter(name => !loaded.includes(name))];
+}
+
+/** Select one eligible discovery catalogue and its transmitted request surface. */
+export function selectRuntimeToolSurface(input: ToolExposureInput & {
+  context: RuntimeToolSelectionContext;
+}): ToolExposureResult & { eligible: FunctionDefinition[] } {
+  const unavailable = new Set(getRuntimeToolEligibilityExclusions(input.context));
+  const eligible = input.definitions.filter(definition => !unavailable.has(definition.function.name)
+    && !matchesAnyToolGlob(definition.function.name, input.disallowed ?? []));
+  const excluded = new Set(getRuntimeToolExclusions(input.context, [
+    ...(input.requested ?? []), ...(input.activated ?? []), ...(input.pinned ?? []),
+  ]));
+  return { ...selectExposedTools({ ...input,
+    definitions: eligible.filter(definition => !excluded.has(definition.function.name)),
+  }), eligible };
 }

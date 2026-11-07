@@ -37,6 +37,39 @@ class ServiceImplementingIService implements IService {
 describe('ServiceRegistry', () => {
   let registry: ServiceRegistry;
 
+  it('initializes and cleans every transient instance', async () => {
+    registry.registerTransient('transient', ServiceImplementingIService);
+    const first = registry.get('transient') as ServiceImplementingIService;
+    const second = registry.get('transient') as ServiceImplementingIService;
+    await registry.ensureServiceInitialized('transient');
+    expect(first.initialized && second.initialized).toBe(true);
+    await registry.shutdown();
+    expect(first.cleaned && second.cleaned).toBe(true);
+  });
+
+  it('drains cleanup-only owners exactly once across aliases', async () => {
+    const resource = { cleanup: vi.fn().mockResolvedValue(undefined) };
+    registry.registerInstance('first', resource);
+    registry.registerInstance('second', resource);
+    await registry.shutdown();
+    expect(resource.cleanup).toHaveBeenCalledOnce();
+  });
+
+  it('owns replaced resource cleanup through settlement before completing shutdown', async () => {
+    let finish!: () => void;
+    const old = { cleanup: vi.fn(() => new Promise<void>(resolve => { finish = resolve; })) };
+    registry.registerInstance('owner', old);
+    registry.registerInstance('owner', null);
+    await Promise.resolve();
+    let settled = false;
+    const shutdown = registry.shutdown().then(() => { settled = true; });
+    await Promise.resolve();
+    expect(settled).toBe(false);
+    finish();
+    await shutdown;
+    expect(old.cleanup).toHaveBeenCalledOnce();
+  });
+
   beforeEach(() => {
     // Create a fresh registry for each test
     ServiceRegistry['_instance'] = undefined;

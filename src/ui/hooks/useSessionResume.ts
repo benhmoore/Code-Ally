@@ -7,42 +7,21 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { Agent } from '@agent/Agent.js';
-import { ActivityStream } from '@services/ActivityStream.js';
 import { ServiceRegistry } from '@services/ServiceRegistry.js';
 import { AppActions } from '../contexts/AppContext.js';
-import { Message } from '@shared/index.js';
 export { reconstructToolCallsFromMessages } from '@services/conversationTools.js';
 import { SessionSelectRequest } from './useModalState.js';
 import { setTerminalTitle } from '../../utils/terminal.js';
+import {
+  SessionRestoreCoordinator,
+  type SessionResume,
+  type SessionReplayData,
+  type SessionRestoreOutcome,
+  type SessionListOutcome,
+} from '@services/SessionRestoreCoordinator.js';
+import { logger } from '@services/Logger.js';
 import { prepareConversationResume } from '@services/ConversationResume.js';
 export { supplementTranscriptToolResults } from '@services/ConversationResume.js';
-
-/**
- * Reconstruct USER_INTERJECTION events from message history
- *
- * When loading a session from disk, interjection messages have metadata with parentId,
- * but we need to re-emit USER_INTERJECTION events so ToolCallDisplay can capture them.
- *
- * @param messages - Array of messages from the session
- * @param activityStream - ActivityStream to emit events to
- */
-export function reconstructInterjectionsFromMessages(messages: Message[], activityStream: ActivityStream): void {
-  messages.forEach((msg) => {
-    if (msg.role === 'user' && msg.metadata?.isInterjection && msg.metadata?.parentId) {
-      // Re-emit USER_INTERJECTION event for this interjection
-      activityStream.emit({
-        id: `interjection-reconstructed-${msg.timestamp || Date.now()}`,
-        type: 'USER_INTERJECTION' as any,
-        timestamp: msg.timestamp || Date.now(),
-        parentId: msg.metadata.parentId,
-        data: {
-          message: msg.content,
-          reconstructed: true,
-        },
-      });
-    }
-  });
-}
 
 /**
  * Result of session resume operation
@@ -57,56 +36,33 @@ export interface SessionResumeResult {
  * This consolidates the duplicated logic between useSessionResume and SESSION_SELECT_RESPONSE
  */
 export async function loadSessionData(
-  sessionData: any,
+  sessionData: SessionReplayData,
   agent: Agent,
   actions: AppActions,
-  activityStream: ActivityStream
+  resume?: SessionResume
 ): Promise<void> {
   const serviceRegistry = ServiceRegistry.getInstance();
 
   const { state: restoredState, interruption } = prepareConversationResume(sessionData);
-  const transcriptMessages = restoredState.transcript.filter((m: Message) => m.role !== 'system');
+  // Reject active/queued work before changing any global session services.
+  (resume ?? (state => agent.getSession().resume(state)))(restoredState);
 
-  // Load todos if present
-  const todoManager = serviceRegistry.get('todo_manager');
-  if (todoManager) {
-    if (sessionData.todos?.length > 0) {
-      (todoManager as any).setTodos(sessionData.todos);
-    } else {
-      (todoManager as any).setTodos([]);
-    }
-  }
+  serviceRegistry.get('todo_manager')?.setTodos(sessionData.todos ?? []);
+  serviceRegistry.get('idle_message_generator')?.setQueue(sessionData.idleMessages ?? []);
+  serviceRegistry.get('project_context_detector')?.setCached(sessionData.projectContext ?? null);
 
-  // Load idle messages if present
-  const idleMessageGenerator = serviceRegistry.get('idle_message_generator');
-  if (idleMessageGenerator && sessionData.idleMessages?.length > 0) {
-    (idleMessageGenerator as any).setQueue(sessionData.idleMessages);
-  }
-
-  // Load project context if present
-  const projectContextDetector = serviceRegistry.get('project_context_detector');
-  if (projectContextDetector && sessionData.projectContext) {
-    (projectContextDetector as any).setCached(sessionData.projectContext);
-  }
-
-  // Restore additional directories if present
-  if (sessionData.additional_directories?.length) {
-    const additionalDirsManager = serviceRegistry.get('additional_dirs_manager');
-    if (additionalDirsManager && typeof (additionalDirsManager as any).addDirectory === 'function') {
-      for (const dir of sessionData.additional_directories) {
-        await (additionalDirsManager as any).addDirectory(dir);
-      }
+  const additionalDirectories = serviceRegistry.get('additional_dirs_manager');
+  if (additionalDirectories) {
+    additionalDirectories.clear();
+    for (const path of sessionData.additional_directories ?? []) {
+      const result = await additionalDirectories.addDirectory(path);
+      if (!result.success) throw new Error(`Failed to restore directory '${path}': ${result.message}`);
     }
   }
 
   // Initialize idle task coordinator from session metadata
   const coordinator = serviceRegistry.get('idle_task_coordinator');
-  if (coordinator && typeof (coordinator as any).initializeFromSession === 'function') {
-    (coordinator as any).initializeFromSession(sessionData);
-  }
-
-  // Bulk load messages into agent (doesn't trigger auto-save)
-  agent.getSession().resume(restoredState);
+  coordinator?.initializeFromSession(sessionData);
 
   // If the session was interrupted mid-turn, inject a continuation prompt
   // so the model picks up where it left off on the next user message
@@ -127,9 +83,6 @@ export async function loadSessionData(
   // Resume already replaced the owner projection, including reconstructed tools.
   actions.repaintConversationSurface();
 
-  // Reconstruct interjection events from message history
-  reconstructInterjectionsFromMessages(transcriptMessages, activityStream);
-
   // Update context usage
   // loadConversationState already refreshed the agent-owned TokenManager. Read
   // that result directly instead of requesting a redundant full-history pass.
@@ -141,93 +94,151 @@ export async function loadSessionData(
   }
 }
 
-/**
- * Handle session resumption on mount
- *
- * @param resumeSession - Session to resume (session ID, 'interactive' for selector, or null)
- * @param agent - The agent instance
- * @param actions - App context actions
- * @param activityStream - ActivityStream to emit events
- * @param setSessionSelectRequest - Callback to show session selector
- * @returns Session resume state
- *
- * @example
- * ```tsx
- * const { sessionLoaded } = useSessionResume(
- *   props.resumeSession,
- *   agent,
- *   actions,
- *   activityStream,
- *   modal.setSessionSelectRequest
- * );
- * ```
- */
-export const useSessionResume = (
+/** Capture the live owner and service state for an admitted restore rollback. */
+export function captureSessionRollback(agent: Agent, actions: AppActions): (resume?: SessionResume) => Promise<void> {
+  const registry = ServiceRegistry.getInstance();
+  const conversation = agent.getConversationManager();
+  const messages = conversation.getMessages();
+  const state = structuredClone({
+    messages: [...messages],
+    transcript: [...conversation.getTranscript()],
+    checkpoint: conversation.getCheckpoint(),
+    providerState: conversation.getProviderState(),
+    canonicalMessages:
+      conversation.getCanonicalActiveMessages(messages.map(message => message.id).filter((id): id is string => !!id)) ??
+      [],
+  });
+  const todos = structuredClone(registry.get('todo_manager')?.getTodos());
+  const idle = structuredClone(registry.get('idle_message_generator')?.getQueue());
+  const project = structuredClone(registry.get('project_context_detector')?.getCached());
+  const directories = registry.get('additional_dirs_manager')?.getAdditionalDirectories();
+  return async resume => {
+    (resume ?? (saved => agent.getSession().resume(saved)))(state);
+    if (todos) registry.get('todo_manager')?.setTodos(todos);
+    if (idle) registry.get('idle_message_generator')?.setQueue(idle);
+    if (project !== undefined) registry.get('project_context_detector')?.setCached(project);
+    const manager = registry.get('additional_dirs_manager');
+    if (manager && directories) {
+      manager.clear();
+      for (const path of directories) {
+        const result = await manager.addDirectory(path);
+        if (!result.success) throw new Error(`Failed to restore directory '${path}': ${result.message}`);
+      }
+    }
+    actions.repaintConversationSurface();
+    actions.setContextUsage(agent.getContextUsagePercentage());
+  };
+}
+
+/** Share one admitted restore transaction between startup and the picker. */
+export function restoreSessionForAgent(
+  coordinator: SessionRestoreCoordinator,
+  sessionId: string,
+  agent: Agent,
+  actions: AppActions,
+  ownsRequest: () => boolean
+): Promise<SessionRestoreOutcome> {
+  return coordinator.restoreSession(sessionId, (data, resume) => loadSessionData(data, agent, actions, resume), {
+    ownsRequest,
+    runExclusive: operation => agent.getSession().withIdleMutation(operation),
+    captureRollback: () => captureSessionRollback(agent, actions),
+    onRollbackFailure: () => {
+      // Closing rejects queued/new work synchronously; teardown waits for the lease.
+      void agent
+        .getSession()
+        .close()
+        .catch(error => logger.error('[SessionRestore] Failed to close inconsistent owner:', error));
+    },
+  });
+}
+
+type StartupOutcome =
+  { kind: 'list'; outcome: SessionListOutcome } | { kind: 'restore'; outcome: SessionRestoreOutcome };
+interface StartupJob {
+  agent: Agent;
+  target: string;
+  active: boolean;
+  promise: Promise<StartupOutcome>;
+}
+
+/** Resume startup once per owner/target; stale completion cannot publish into a new route. */
+export function useSessionResume(
   resumeSession: string | 'interactive' | null | undefined,
   agent: Agent,
   actions: AppActions,
-  activityStream: ActivityStream,
   setSessionSelectRequest: (request?: SessionSelectRequest) => void
-): SessionResumeResult => {
-  const [sessionLoaded, setSessionLoaded] = useState(!resumeSession);
-  const sessionResumed = useRef(false);
+): SessionResumeResult {
+  const [readiness, setReadiness] = useState({ agent, target: resumeSession, loaded: !resumeSession });
+  const latest = useRef({ agent, target: resumeSession, actions, setSessionSelectRequest });
+  latest.current = { agent, target: resumeSession, actions, setSessionSelectRequest };
+  const pending = useRef<StartupJob | undefined>(undefined);
 
   useEffect(() => {
-    const handleSessionResume = async () => {
-      // Only run once
-      if (sessionResumed.current) {
-        return;
-      }
-
-      const serviceRegistry = ServiceRegistry.getInstance();
-      const sessionManager = serviceRegistry.get('session_manager');
-
-      if (!sessionManager) {
-        setSessionLoaded(true);
-        return;
-      }
-
-      // If resumeSession is 'interactive', show session selector
-      if (resumeSession === 'interactive') {
-        const sessions = await sessionManager.getSessionsInfoByDirectory();
-        setSessionSelectRequest({
-          requestId: `session_select_${Date.now()}`,
-          sessions,
-          selectedIndex: 0,
-        });
-        sessionResumed.current = true;
-        setSessionLoaded(true);
-        return;
-      }
-
-      // If resumeSession is a session ID, load it directly
-      if (resumeSession && typeof resumeSession === 'string') {
-        // CRITICAL: Set current session FIRST before loading messages
-        // This prevents auto-save from creating a new session
-        sessionManager.setCurrentSession(resumeSession);
-
-        // Reload patches for the new session
-        const patchManager = serviceRegistry.get('patch_manager');
-        if (patchManager) {
-          await patchManager.onSessionChange();
+    if (!resumeSession) {
+      setReadiness({ agent, target: resumeSession, loaded: true });
+      return;
+    }
+    let job = pending.current;
+    if (!job || job.agent !== agent || job.target !== resumeSession) {
+      const registry = ServiceRegistry.getInstance();
+      const coordinator = new SessionRestoreCoordinator({
+        getSessionManager: () => registry.get('session_manager'),
+        getPatchManager: () => registry.get('patch_manager'),
+      });
+      job = {
+        agent,
+        target: resumeSession,
+        active: true,
+        promise: Promise.resolve({ kind: 'list', outcome: { status: 'unavailable' } }),
+      };
+      const owner = job;
+      const ownsRequest = () =>
+        owner.active && latest.current.agent === owner.agent && latest.current.target === owner.target;
+      owner.promise =
+        resumeSession === 'interactive'
+          ? coordinator.listSessions().then(outcome => ({ kind: 'list', outcome }))
+          : restoreSessionForAgent(coordinator, resumeSession, agent, latest.current.actions, ownsRequest).then(
+              outcome => ({ kind: 'restore', outcome })
+            );
+      pending.current = owner;
+    }
+    job.active = true;
+    const owner = job;
+    let cancelled = false;
+    const current = () =>
+      !cancelled && owner.active && latest.current.agent === owner.agent && latest.current.target === owner.target;
+    void owner.promise
+      .then(result => {
+        if (!current()) return;
+        if (result.kind === 'list' && result.outcome.status === 'ok') {
+          latest.current.setSessionSelectRequest({
+            requestId: `session_select_${Date.now()}`,
+            sessions: result.outcome.sessions,
+            selectedIndex: 0,
+          });
+        } else if (result.outcome.status === 'error') {
+          latest.current.actions.addMessage({ role: 'assistant', content: result.outcome.message });
+        } else if (result.outcome.status === 'unavailable') {
+          latest.current.actions.addMessage({ role: 'assistant', content: 'Session restoration is unavailable.' });
         }
-
-        // Load all session data in a single read (optimization)
-        const sessionData = await sessionManager.getSessionData(resumeSession);
-
-        // Use shared session loading logic
-        await loadSessionData(sessionData, agent, actions, activityStream);
-
-        // Mark session as loaded
-        setSessionLoaded(true);
-        sessionResumed.current = true;
-      }
+        setReadiness({ agent: owner.agent, target: owner.target, loaded: true });
+      })
+      .catch(error => {
+        logger.error('[SessionRestore] Startup failed:', error);
+        if (!current()) return;
+        latest.current.actions.addMessage({
+          role: 'assistant',
+          content: `Failed to restore session: ${error instanceof Error ? error.message : String(error)}`,
+        });
+        setReadiness({ agent: owner.agent, target: owner.target, loaded: true });
+      });
+    return () => {
+      cancelled = true;
+      owner.active = false;
     };
-
-    handleSessionResume();
-  }, [resumeSession, agent, actions, activityStream, setSessionSelectRequest]);
+  }, [agent, resumeSession]);
 
   return {
-    sessionLoaded,
+    sessionLoaded: readiness.agent === agent && readiness.target === resumeSession ? readiness.loaded : !resumeSession,
   };
-};
+}

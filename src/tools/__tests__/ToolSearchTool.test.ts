@@ -1,8 +1,9 @@
-import { describe, expect, it, beforeEach, afterEach, vi } from 'vitest';
+import { describe, expect, it, beforeEach, afterEach } from 'vitest';
 import { ToolSearchTool } from '@tools/ToolSearchTool.js';
 import { ActivityStream } from '@services/ActivityStream.js';
 import { ServiceRegistry } from '@services/ServiceRegistry.js';
 import { ToolActivationRegistry } from '@services/ToolActivationRegistry.js';
+import { selectRuntimeToolSurface } from '../runtimeToolSelection.js';
 import type { FunctionDefinition } from '../../types/index.js';
 
 function definition(name: string, description: string): FunctionDefinition {
@@ -30,6 +31,7 @@ describe('ToolSearchTool', () => {
     registry['_descriptors'].clear();
     activations = new ToolActivationRegistry();
     registry.registerInstance('tool_activation_registry', activations);
+    activations.setAvailable('agent-a', () => CATALOGUE);
     registry.registerInstance('tool_manager', {
       getFunctionDefinitions: () => CATALOGUE,
     } as any);
@@ -54,11 +56,69 @@ describe('ToolSearchTool', () => {
     expect(activations.getRequested('agent-a')).toEqual(['chrome_take_screenshot']);
   });
 
-  it('searches definitions with the current agent visibility', async () => {
-    const manager = registry.get('tool_manager')!;
-    const definitions = vi.spyOn(manager, 'getFunctionDefinitions');
-    await tool.execute({ query: 'select:web-fetch' }, 'call-1', undefined, false, false, { agentId: 'agent-a', agentName: 'researcher' });
-    expect(definitions).toHaveBeenCalledWith(undefined, 'researcher', undefined);
+  it('uses the owner-published visibility instead of searching the unrestricted manager', async () => {
+    activations.setAvailable('agent-a', () => [CATALOGUE[0]!]);
+    const result = await tool.execute({ query: 'select:web-fetch' }, 'call-1', undefined, false, false,
+      { agentId: 'agent-a', agentName: 'researcher' });
+    expect(result.success).toBe(false);
+    expect(result.suggestion).not.toContain('web-fetch');
+    expect(activations.getRequested('agent-a')).toEqual([]);
+  });
+
+  it('caps exact-name selection just like keyword searches', async () => {
+    const result = await tool.execute({ query: 'select:web-fetch,chrome_take_screenshot', max_results: 1 },
+      'call-1', undefined, false, false, { agentId: 'agent-a' });
+    expect(result.success).toBe(true);
+    expect(activations.getRequested('agent-a')).toEqual(['web-fetch']);
+  });
+
+  it('does not report success before the owner publishes an eligible surface', async () => {
+    const result = await tool.execute({ query: 'select:read' }, 'call-1', undefined, false, false, { agentId: 'unpublished' });
+    expect(result.success).toBe(false);
+    expect(activations.getRequested('unpublished')).toEqual([]);
+  });
+
+  it('loads capabilities omitted by relevance without loading forbidden or unavailable tools', async () => {
+    const definitions = ['read', 'tool-search', 'scheduled-tasks', 'read-history', 'forbidden']
+      .map(name => definition(name, name));
+    const select = () => selectRuntimeToolSurface({ definitions,
+      context: { planModeActive: false, latestUserText: 'Run npm test after 30 minutes' },
+      schemaBudget: 100, estimateTokens: text => text.length,
+      requested: activations.getRequested('agent-a'), disallowed: ['forbidden'],
+    });
+    const initial = select();
+    activations.setAvailable('agent-a', () => select().eligible);
+    expect(initial.exposed.map(item => item.function.name)).not.toContain('scheduled-tasks');
+    expect((await tool.execute({ query: 'select:scheduled-tasks' }, 'call-1', undefined, false, false, { agentId: 'agent-a' })).success).toBe(true);
+    expect(select().exposed.map(item => item.function.name)).toContain('scheduled-tasks');
+    for (const unavailable of ['read-history', 'forbidden']) {
+      const result = await tool.execute({ query: `select:${unavailable}` }, 'call-2', undefined, false, false, { agentId: 'agent-a' });
+      expect(result.success).toBe(false);
+      expect(result.suggestion).not.toContain(unavailable);
+    }
+  });
+
+  it('refreshes eligibility after policy changes and releases the owner resolver on cleanup', async () => {
+    let permitted = CATALOGUE;
+    activations.setAvailable('agent-a', () => permitted);
+    const execute = () => tool.execute({ query: 'select:web-fetch' }, 'call', undefined, false, false, { agentId: 'agent-a' });
+    expect((await execute()).success).toBe(true);
+    permitted = [CATALOGUE[0]!];
+    expect((await execute()).success).toBe(false);
+    activations.clear('agent-a');
+    expect(activations.getAvailable('agent-a')).toBeUndefined();
+    expect(activations.get('agent-a')).toEqual([]);
+    expect(activations.getRequested('agent-a')).toEqual([]);
+    expect((await execute()).success).toBe(false);
+  });
+
+  it('enforces the hard result ceiling for explicit lists', async () => {
+    const definitions = Array.from({ length: 30 }, (_, index) => definition(`tool-${index}`, 'A tool'));
+    activations.setAvailable('agent-a', () => definitions);
+    const result = await tool.execute({ query: `select:${definitions.map(item => item.function.name).join(',')}`, max_results: 100 },
+      'call', undefined, false, false, { agentId: 'agent-a' });
+    expect(result.success).toBe(true);
+    expect(activations.getRequested('agent-a')).toHaveLength(15);
   });
 
   it('finds tools by keyword when the exact name is unknown', async () => {

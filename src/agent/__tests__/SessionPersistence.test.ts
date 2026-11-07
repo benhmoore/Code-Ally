@@ -19,18 +19,14 @@ describe('SessionPersistence.replaceConversation', () => {
     (registry as any)._descriptors.clear();
   });
 
-  const persistence = () => new SessionPersistence({} as never, 'test-agent');
+  const persistence = () => new SessionPersistence(new ConversationManager(), 'test-agent');
 
   function turnPersistence(autoSave: ReturnType<typeof vi.fn>) {
     const forceSave = vi.fn(async () => true);
     registry.registerInstance('session_manager', {
-      getCurrentSession: () => 'session-1', autoSave, forceSave,
+      getCurrentSession: () => 'session-1', autoSaveFromOwner: autoSave, forceSave,
     } as never);
-    const conversation = {
-      getMessages: () => [{ role: 'user', content: 'durable objective' }],
-      getTranscript: () => [], getCheckpoint: () => null,
-      getProviderState: () => ({ kind: 'chat' }),
-    };
+    const conversation = new ConversationManager({ initialMessages: [{ role: 'user', content: 'durable objective' }] });
     return { owner: new SessionPersistence(conversation as never, 'test-agent'), forceSave };
   }
 
@@ -80,7 +76,7 @@ describe('SessionPersistence.replaceConversation', () => {
     const autoSave = vi.fn(() => new Promise<boolean>(resolve => { admit = resolve; }));
     const commitConversationCheckpoint = vi.fn(async () => true);
     registry.registerInstance('session_manager', {
-      getCurrentSession: () => 'session-1', autoSave, commitConversationCheckpoint,
+      getCurrentSession: () => 'session-1', autoSaveFromOwner: autoSave, commitConversationCheckpoint,
     } as never);
     const owner = new SessionPersistence(conversation, 'test-agent');
     const expected = structuredClone([messages, conversation.getTranscript(), checkpoint]);

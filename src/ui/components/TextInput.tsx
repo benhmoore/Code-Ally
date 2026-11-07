@@ -419,7 +419,7 @@ export const TextInput: React.FC<TextInputProps> = ({
    */
   useInput(
     (input, key) => {
-      if (!isActive) return;
+      if (!isActive || key.eventType === 'release') return;
 
       const currentValue = valueRef.current;
       const currentCursor = cursorRef.current;

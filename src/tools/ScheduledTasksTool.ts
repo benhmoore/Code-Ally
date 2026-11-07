@@ -294,12 +294,28 @@ export class ScheduledTasksTool extends BaseTool {
     };
   }
 
+  validateArgs(args: Record<string, unknown>) {
+    if (!ACTIONS.includes(args.action as ScheduledTaskAction)) {
+      return { valid: false, error: `Invalid action: ${String(args.action)}`, error_type: 'validation_error' };
+    }
+    if (args.action === 'create') {
+      if (typeof args.title !== 'string' || !args.title.trim()
+        || typeof args.run_prompt !== 'string' || !args.run_prompt.trim() || !args.schedule) {
+        return { valid: false, error: 'create requires title, run_prompt, and schedule', error_type: 'validation_error' };
+      }
+    }
+    if (args.schedule) {
+      const normalized = normalizeToolSchedule(args, args.schedule as ToolScheduleInput);
+      if (!normalized.ok) return { valid: false, error: normalized.error, error_type: 'validation_error' };
+    }
+    return null;
+  }
+
   protected async executeImpl(args: any): Promise<ToolResult> {
     this.captureParams(args);
     const action = args.action as ScheduledTaskAction;
-    if (!ACTIONS.includes(action)) {
-      return this.formatErrorResponse(`Invalid action: ${String(args.action)}`, 'validation_error');
-    }
+    const validation = this.validateArgs(args);
+    if (validation) return this.formatErrorResponse(validation.error, 'validation_error');
 
     const registry = ServiceRegistry.getInstance();
     const manager = registry.get('scheduled_task_manager');
@@ -315,9 +331,6 @@ export class ScheduledTasksTool extends BaseTool {
         }
 
         case 'create': {
-          if (!args.title || !args.run_prompt || !args.schedule) {
-            return this.formatErrorResponse('create requires title, run_prompt, and schedule', 'validation_error');
-          }
           const enabled = args.enabled !== false;
           const enabledBefore = (await manager.listAll()).filter((task) => task.enabled).length;
           const normalizedSchedule = normalizeToolSchedule(args, args.schedule);

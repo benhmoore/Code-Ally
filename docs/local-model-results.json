@@ -578,5 +578,166 @@
         "verificationOutput": "\u2714 independent range cases (0.298375ms)\n\u2139 tests 1\n\u2139 suites 0\n\u2139 pass 1\n\u2139 fail 0\n\u2139 cancelled 0\n\u2139 skipped 0\n\u2139 todo 0\n\u2139 duration_ms 83.121625\n"
       }
     }
+  },
+  "validationCaveat": "Historical schema/discovery scorers omitted some runtime argument requirements. Offline rescoring with the corrected runtime validators found no changed scores in the saved baseline, compact, or remote32k responses. These remain narrow smoke probes; independent coding fixture results are unaffected.",
+  "runtimeValidationRescore": {
+    "method": "Offline replay of saved schema/discovery responses through shared runtime schema and semantic argument validation; no model inference.",
+    "runs": [
+      {
+        "file": "model-eval-results/qwen-review-baseline.json",
+        "before": 36,
+        "after": 36,
+        "max": 36,
+        "changed": 0,
+        "changes": []
+      },
+      {
+        "file": "model-eval-results/qwen-review-compact.json",
+        "before": 43,
+        "after": 43,
+        "max": 43,
+        "changed": 0,
+        "changes": []
+      },
+      {
+        "file": "model-eval-results/qwen-remote-32k.json",
+        "before": 129,
+        "after": 129,
+        "max": 129,
+        "changed": 0,
+        "changes": []
+      }
+    ]
+  },
+  "postAuditDiscovery32k": {
+    "suite": {
+      "id": "code-ally-harness-ablation",
+      "version": 14
+    },
+    "generatedAt": "2026-11-07T16:57:03.208Z",
+    "gitRevision": "355e595da7007fe879d265d7a972a6762508a483",
+    "gitDirty": true,
+    "worktreeSha256": "8103b92060272037c6ed08a167247ee531b22559aed45a6a2182377bced9b92e",
+    "settings": {
+      "endpoint": "http://100.68.102.73:11434",
+      "models": [
+        "qwen3.8:27b-mlx"
+      ],
+      "runs": 3,
+      "temperature": 0,
+      "contextSize": 32768,
+      "maxTokens": 4096,
+      "timeoutMs": 600000,
+      "sections": [
+        "discovery"
+      ]
+    },
+    "summaries": {
+      "batch": [],
+      "promptTooling": [],
+      "behavior": [],
+      "schemaReliability": [],
+      "reasoning": [],
+      "lateReminder": [],
+      "discovery": [
+        {
+          "model": "qwen3.8:27b-mlx",
+          "variant": "minimal",
+          "score": 21,
+          "maxScore": 21,
+          "accuracy": 1,
+          "meanElapsedMs": 19269,
+          "meanPromptTokens": 5635,
+          "meanCompletionTokens": 263,
+          "meanToolCalls": 2,
+          "samples": 3
+        },
+        {
+          "model": "qwen3.8:27b-mlx",
+          "variant": "current_core",
+          "score": 21,
+          "maxScore": 21,
+          "accuracy": 1,
+          "meanElapsedMs": 10773,
+          "meanPromptTokens": 6287,
+          "meanCompletionTokens": 270,
+          "meanToolCalls": 2,
+          "samples": 3
+        },
+        {
+          "model": "qwen3.8:27b-mlx",
+          "variant": "concise",
+          "score": 21,
+          "maxScore": 21,
+          "accuracy": 1,
+          "meanElapsedMs": 8203,
+          "meanPromptTokens": 5817,
+          "meanCompletionTokens": 308,
+          "meanToolCalls": 2,
+          "samples": 3
+        },
+        {
+          "model": "qwen3.8:27b-mlx",
+          "variant": "overlap_candidate",
+          "score": 21,
+          "maxScore": 21,
+          "accuracy": 1,
+          "meanElapsedMs": 6670,
+          "meanPromptTokens": 5823,
+          "meanCompletionTokens": 292,
+          "meanToolCalls": 2,
+          "samples": 3
+        },
+        {
+          "model": "qwen3.8:27b-mlx",
+          "variant": "decision_candidate",
+          "score": 21,
+          "maxScore": 21,
+          "accuracy": 1,
+          "meanElapsedMs": 6066,
+          "meanPromptTokens": 5841,
+          "meanCompletionTokens": 271,
+          "meanToolCalls": 2,
+          "samples": 3
+        },
+        {
+          "model": "qwen3.8:27b-mlx",
+          "variant": "ship_candidate",
+          "score": 21,
+          "maxScore": 21,
+          "accuracy": 1,
+          "meanElapsedMs": 6696,
+          "meanPromptTokens": 5905,
+          "meanCompletionTokens": 269,
+          "meanToolCalls": 2,
+          "samples": 3
+        }
+      ],
+      "structuredOutput": []
+    }
+  },
+  "postAuditCoding32k": {
+    "suite": {
+      "id": "code-ally-local-coding",
+      "version": 1
+    },
+    "model": "qwen3.8:27b-mlx",
+    "endpoint": "http://100.68.102.73:11434",
+    "contextSize": 32768,
+    "maxTokens": 2048,
+    "timeoutMs": 240000,
+    "elapsedMs": 27281,
+    "exitCode": 0,
+    "timedOut": false,
+    "score": 4,
+    "maxScore": 4,
+    "passed": true,
+    "verification": {
+      "source": "export function rangeSize(start, end) {\n  if (end < start) return 0;\n  return end - start + 1;\n}\n",
+      "sourceChanged": true,
+      "testsUnchanged": true,
+      "independentTestsPassed": true,
+      "verificationOutput": "\u2714 independent range cases (0.268042ms)\n\u2139 tests 1\n\u2139 suites 0\n\u2139 pass 1\n\u2139 fail 0\n\u2139 cancelled 0\n\u2139 skipped 0\n\u2139 todo 0\n\u2139 duration_ms 81.746167\n"
+    }
   }
 }

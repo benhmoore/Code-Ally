@@ -29,12 +29,20 @@ class Logger {
   private logLevel: LogLevel = LogLevel.ERROR;
   private logBuffer: LogEntry[] = [];
   private maxBufferSize: number = BUFFER_SIZES.MAX_LOG_BUFFER_SIZE;
+  private readonly levelListeners = new Set<() => void>();
+
+  subscribeLevel = (listener: () => void): (() => void) => {
+    this.levelListeners.add(listener);
+    return () => { this.levelListeners.delete(listener); };
+  };
 
   /**
    * Set the global log level
    */
   setLevel(level: LogLevel): void {
+    if (this.logLevel === level) return;
     this.logLevel = level;
+    this.levelListeners.forEach(listener => listener());
   }
 
   /**
@@ -43,13 +51,13 @@ class Logger {
    */
   configure(options: { verbose?: boolean; debug?: boolean }): void {
     if (options.debug) {
-      this.logLevel = LogLevel.DEBUG;
+      this.setLevel(LogLevel.DEBUG);
       console.log('[DEBUG] Debug logging enabled');
     } else if (options.verbose) {
-      this.logLevel = LogLevel.VERBOSE;
+      this.setLevel(LogLevel.VERBOSE);
       console.log('[VERBOSE] Verbose logging enabled');
     } else {
-      this.logLevel = LogLevel.ERROR;
+      this.setLevel(LogLevel.ERROR);
     }
   }
 

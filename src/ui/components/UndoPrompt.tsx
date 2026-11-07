@@ -11,7 +11,6 @@
 import React from 'react';
 import { Box, Text } from 'ink';
 import { DiffDisplay } from './DiffDisplay.js';
-import type { UndoPreview } from '@services/PatchManager.js';
 import { SelectionIndicator } from './SelectionIndicator.js';
 import { Clickable } from './Clickable.js';
 import { KeyboardHintFooter } from './KeyboardHintFooter.js';
@@ -19,22 +18,7 @@ import { UI_COLORS } from '../constants/colors.js';
 import { InteractiveSurface } from './InteractiveSurface.js';
 import { useTerminalRows } from '../hooks/useTerminalRows.js';
 
-export interface UndoRequest {
-  /** Request ID for tracking */
-  requestId: string;
-  /** Number of operations to undo */
-  count: number;
-  /** Patch metadata */
-  patches: Array<{
-    patch_number: number;
-    timestamp: string;
-    operation_type: string;
-    file_path: string;
-    patch_file: string;
-  }>;
-  /** Preview data with diffs */
-  previewData: UndoPreview[];
-}
+import type { UndoRequest } from '../hooks/useModalState.js';
 
 export interface UndoPromptProps {
   /** Undo request details */

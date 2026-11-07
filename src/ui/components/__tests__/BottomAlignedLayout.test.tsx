@@ -31,7 +31,7 @@ const strip = (value: string) => value.replace(/\x1b\[[0-9;?]*[A-Za-z]/g, '');
 function surface(messages: Message[] = [], options: { rows?: number; columns?: number; stream?: string; draft?: string; footer?: React.ReactNode } = {}) {
   return <TerminalContext.Provider value={deriveWidths(options.columns ?? 80, options.rows ?? 24)}>
     <BottomAlignedLayout historyKey={0} footer={options.footer ?? <Box flexDirection="column">
-      <Text>READY</Text><InputPrompt prominent onSubmit={() => {}} bufferValue={options.draft ?? ''} onBufferChange={() => {}}/><Text>MODEL</Text>
+      <Text>READY</Text><InputPrompt prominent onSubmit={() => {}} draft={{ text: options.draft ?? '', cursor: options.draft?.length ?? 0 }}/><Text>MODEL</Text>
     </Box>}>
       <ConversationView messages={messages} streamingContent={options.stream} staticRemountKey={0} config={{ model: 'test' }}/>
     </BottomAlignedLayout>

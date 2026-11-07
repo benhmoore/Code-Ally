@@ -135,3 +135,64 @@ describe('SessionRuntime', () => {
     expect(listener).toHaveBeenCalledTimes(notificationsAtClose);
   });
 });
+
+it('holds visible, cancellable input until a complete idle mutation finishes', async () => {
+  const { runtime, execute, steer } = setup();
+  let finish!: () => void;
+  const paused = new Promise<void>(resolve => { finish = resolve; });
+  let resumeOwned!: Parameters<Parameters<SessionRuntime['withIdleMutation']>[0]>[0];
+  const mutation = runtime.withIdleMutation(async resume => {
+    resumeOwned = resume;
+    await paused;
+    resume({ messages: [{ role: 'user', content: 'restored' }] });
+  });
+  const images = ['original-image'];
+  const next = runtime.submit('next', { images });
+  images[0] = 'caller mutation';
+  await tick();
+  expect(runtime.getSnapshot().pendingInputs[0]?.text).toBe('next');
+  expect(execute).not.toHaveBeenCalled();
+  expect(steer).not.toHaveBeenCalled();
+  expect(() => runtime.resume({ messages: [] })).toThrow('Wait for active');
+  await expect(runtime.withIdleMutation(async () => {})).rejects.toThrow('Wait for active');
+  finish();
+  await mutation;
+  expect(runtime.getSnapshot().messages[0]?.content).toBe('restored');
+  expect(await next).toEqual({ kind: 'completed', value: 'next' });
+  expect(execute).toHaveBeenCalledWith('next', ['original-image']);
+  expect(() => resumeOwned({ messages: [] })).toThrow('mutation has ended');
+});
+
+it('releases a failed mutation and lets cancellation discard its waiting submissions', async () => {
+  const { runtime, execute } = setup();
+  let fail!: (error: Error) => void;
+  const paused = new Promise<void>((_resolve, reject) => { fail = reject; });
+  const mutation = runtime.withIdleMutation(async () => paused);
+  const rejection = expect(mutation).rejects.toThrow('restore failed');
+  const next = runtime.submit('discard');
+  runtime.cancel();
+  expect(await next).toEqual({ kind: 'not_sent' });
+  fail(new Error('restore failed'));
+  await rejection;
+  expect(execute).not.toHaveBeenCalled();
+  expect(await runtime.submit('retry')).toEqual({ kind: 'completed', value: 'retry' });
+});
+
+it('drains an admitted mutation before teardown and rejects queued work at close', async () => {
+  const { runtime, close, execute } = setup();
+  let finish!: () => void;
+  const paused = new Promise<void>(resolve => { finish = resolve; });
+  const mutation = runtime.withIdleMutation(async resume => {
+    await paused;
+    resume({ messages: [{ role: 'user', content: 'consistent before close' }] });
+  });
+  const next = runtime.submit('discard on close');
+  const closing = runtime.close();
+  await tick();
+  expect(close).not.toHaveBeenCalled();
+  expect(await next).toEqual({ kind: 'not_sent' });
+  finish();
+  await Promise.all([mutation, closing]);
+  expect(close).toHaveBeenCalledOnce();
+  expect(execute).not.toHaveBeenCalled();
+});

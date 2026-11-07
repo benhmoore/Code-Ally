@@ -24,7 +24,9 @@ export type ModelSlot = 'ally' | 'service';
 
 /** Subset of ConfigManager the model switch depends on */
 export interface ModelConfigManager {
-  getConfig(): Readonly<Pick<Config, 'endpoint'>> & Partial<Pick<Config, 'provider' | 'api_key'>> & Record<string, unknown>;
+  getConfig(): Readonly<Pick<Config, 'endpoint'>> &
+    Partial<Pick<Config, 'provider' | 'api_key'>> &
+    Record<string, unknown>;
   setValue(key: 'model' | 'service_model', value: string): Promise<void>;
 }
 
@@ -35,10 +37,7 @@ export interface ModelCapabilities {
   fromCache: boolean;
 }
 
-export type ModelCapabilityProbe = (
-  endpoint: string,
-  modelName: string
-) => Promise<ModelCapabilities>;
+export type ModelCapabilityProbe = (endpoint: string, modelName: string) => Promise<ModelCapabilities>;
 
 export interface ModelConfigCoordinatorDeps {
   getConfigManager: () => ModelConfigManager | null | undefined;
@@ -67,12 +66,15 @@ export interface ModelConfigCoordinatorDeps {
  * to callers instead of being papered over.
  */
 export interface ModelSwitchOutcome {
-  status: 'unavailable' | 'unsupported' | 'switched' | 'error';
+  status: 'unavailable' | 'unsupported' | 'switched' | 'superseded' | 'error';
   /** Assistant messages to surface, in order. */
   messages: string[];
   /** Config patch for React state; only present on success. */
   configUpdate?: Partial<Config>;
 }
+
+// Commits share the config owner's lifetime, including across foreground routes.
+const modelCommitQueues = new WeakMap<ModelConfigManager, Promise<void>>();
 
 const DEFAULT_ENDPOINT = 'http://localhost:11434';
 
@@ -81,6 +83,7 @@ function describeError(error: unknown): string {
 }
 
 export class ModelConfigCoordinator {
+  private readonly selectionVersions = new Map<ModelSlot, number>();
   constructor(private readonly deps: ModelConfigCoordinatorDeps) {}
 
   /**
@@ -108,7 +111,15 @@ export class ModelConfigCoordinator {
    * work (titles, idle messages) never calls any; the probe still runs and its
    * cache/image notes are still reported.
    */
-  async switchModel(modelName: string, slot: ModelSlot): Promise<ModelSwitchOutcome> {
+  async switchModel(
+    modelName: string,
+    slot: ModelSlot,
+    ownsRequest: () => boolean = () => true
+  ): Promise<ModelSwitchOutcome> {
+    const version = (this.selectionVersions.get(slot) ?? 0) + 1;
+    this.selectionVersions.set(slot, version);
+    const isCurrent = () => this.selectionVersions.get(slot) === version && ownsRequest();
+    const superseded: ModelSwitchOutcome = { status: 'superseded', messages: [] };
     const configManager = this.deps.getConfigManager();
     if (!configManager) {
       return { status: 'unavailable', messages: [] };
@@ -124,22 +135,35 @@ export class ModelConfigCoordinator {
 
       const probe = this.deps.testModelCapabilities ?? (await loadDefaultProbe(config));
       const capabilities = await probe(endpoint, modelName);
+      if (!isCurrent()) return superseded;
 
       if (slot === 'ally' && !capabilities.supportsTools) {
         return {
           status: 'unsupported',
-          messages: [
-            `Model '${modelName}' does not support tools. Ally model requires tool support.`,
-          ],
+          messages: [`Model '${modelName}' does not support tools. Ally model requires tool support.`],
         };
       }
 
       const configKey = slot === 'service' ? 'service_model' : 'model';
 
-      await configManager.setValue(configKey, modelName);
-
+      const previous = modelCommitQueues.get(configManager) ?? Promise.resolve();
+      let release!: () => void;
+      const tail = new Promise<void>(resolve => {
+        release = resolve;
+      });
+      modelCommitQueues.set(configManager, tail);
       const updates = { [configKey]: modelName } as Partial<Config>;
-      this.deps.applyRuntimeConfig(updates);
+      try {
+        await previous;
+        if (!isCurrent()) return superseded;
+        // Once admitted, persistence and runtime adoption finish together. A
+        // newer selection waits, so an older write cannot finish after it.
+        await configManager.setValue(configKey, modelName);
+        this.deps.applyRuntimeConfig(updates);
+      } finally {
+        release();
+        if (modelCommitQueues.get(configManager) === tail) modelCommitQueues.delete(configManager);
+      }
 
       const typeName = slot === 'service' ? 'Service model' : 'Model';
       const capInfo = capabilities.fromCache ? ' (cached)' : '';
@@ -178,10 +202,16 @@ export class ModelConfigCoordinator {
   }
 }
 
-async function loadDefaultProbe(config: Pick<Config, 'endpoint' | 'provider'> & Partial<Pick<Config, 'api_key'>>): Promise<ModelCapabilityProbe> {
+async function loadDefaultProbe(
+  config: Pick<Config, 'endpoint' | 'provider'> & Partial<Pick<Config, 'api_key'>>
+): Promise<ModelCapabilityProbe> {
   const { probeModelCapabilities } = await import('../llm/ProviderAdapter.js');
   return async (_endpoint, model) => {
     const result = await probeModelCapabilities(config, model);
-    return { supportsTools: result.tools !== 'unsupported', supportsImages: result.images !== 'unsupported', fromCache: result.fromCache ?? false };
+    return {
+      supportsTools: result.tools !== 'unsupported',
+      supportsImages: result.images !== 'unsupported',
+      fromCache: result.fromCache ?? false,
+    };
   };
 }

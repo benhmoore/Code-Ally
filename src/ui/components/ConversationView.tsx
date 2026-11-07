@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Box, Text } from 'ink';
 import { CommittedTranscript, useBottomLayout } from './BottomAlignedLayout.js';
-import { Message, ToolCallState, ToolCallTreeNode } from '@shared/index.js';
+import { Message, ToolCallState, ToolCallTreeNode, Config } from '@shared/index.js';
 import { MessageDisplay } from './MessageDisplay.js';
 import { ToolCallDisplay } from './ToolCallDisplay.js';
 import { CompactionNotice, RewindNotice, StatusMessage } from '../contexts/AppContext.js';
@@ -65,7 +65,7 @@ interface ConversationViewProps {
   /** Key to force Static remount for compaction/rewind */
   staticRemountKey: number;
   /** Config for displaying model info */
-  config?: any;
+  config?: Partial<Config>;
   /** Number of active plugins */
   activePluginCount?: number;
   /** Total number of loaded plugins */
@@ -254,7 +254,7 @@ const ActiveContent = React.memo<{
   completedToolCalls: ToolCallTreeNode[];
   runningToolCalls: ToolCallTreeNode[];
   streamingContent?: string;
-  config?: any;
+  config?: Partial<Config>;
   compactionNotices?: CompactionNotice[];
   pendingSummary?: ToolCallSummary;
   width: number;

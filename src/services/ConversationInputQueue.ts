@@ -18,6 +18,7 @@ export class ConversationInputQueue {
   private snapshot: readonly PendingConversationInput[] = [];
   private readonly listeners = new Set<() => void>();
   private active = false;
+  private held = false;
   private closed = false;
   private activeController?: AbortController;
   private activeOperation?: PendingOperation;
@@ -25,13 +26,30 @@ export class ConversationInputQueue {
 
   constructor(private readonly isBusy: () => boolean) {}
 
-  isExecuting(): boolean { return this.active; }
+  isExecuting(): boolean { return this.active || this.held; }
+
+  /** Reserve an idle owner while its non-turn resources are rebound. */
+  holdWhileIdle(): () => void {
+    if (this.closed) throw new Error('Conversation is closed');
+    if (this.active || this.held || this.pending.length || this.isBusy()) {
+      throw new Error('Wait for active and queued work to finish before changing conversation state');
+    }
+    this.held = true;
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      this.held = false;
+      this.listeners.forEach(listener => listener());
+      this.drain();
+    };
+  }
 
   whenIdle(): Promise<void> {
-    if (!this.active && !this.pending.length) return Promise.resolve();
+    if (!this.active && !this.held && !this.pending.length) return Promise.resolve();
     return new Promise(resolve => {
       const unsubscribe = this.subscribe(() => {
-        if (!this.active && !this.pending.length) { unsubscribe(); resolve(); }
+        if (!this.active && !this.held && !this.pending.length) { unsubscribe(); resolve(); }
       });
     });
   }
@@ -92,7 +110,7 @@ export class ConversationInputQueue {
 
   /** Called after the entire turn has settled, including cleanup and persistence. */
   drain = (): void => {
-    if (this.closed || this.active || this.isBusy()) return;
+    if (this.closed || this.active || this.held || this.isBusy()) return;
     const operation = this.pending.shift();
     if (!operation) return;
     this.active = true;

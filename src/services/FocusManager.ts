@@ -48,6 +48,11 @@ function createFocusError(
 }
 
 export class FocusManager {
+  private readonly listeners = new Set<() => void>();
+  subscribe = (listener: () => void): (() => void) => {
+    this.listeners.add(listener);
+    return () => { this.listeners.delete(listener); };
+  };
   private focusDirectory: string | null = null;
   private excludedFiles: Set<string> = new Set();
   private readonly initialWorkingDirectory: string;
@@ -107,6 +112,7 @@ export class FocusManager {
       }
 
       this.focusDirectory = focusPath;
+      this.listeners.forEach(listener => listener());
       const relativeDisplay = relative(this.initialWorkingDirectory, focusPath);
 
       return {
@@ -152,6 +158,7 @@ export class FocusManager {
 
     const oldFocus = this.getFocusDisplay();
     this.focusDirectory = null;
+    this.listeners.forEach(listener => listener());
 
     return {
       success: true,

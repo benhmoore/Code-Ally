@@ -1,16 +1,12 @@
-import { ConversationViewStore } from '@services/ConversationViewStore.js';
+import { ConversationViewStore, type ConversationViewSnapshot } from '@services/ConversationViewStore.js';
 import React, { useEffect } from 'react';
 import { EventEmitter } from 'node:events';
 import { render } from 'ink';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { Agent } from '@agent/Agent.js';
 import { ActivityStream } from '@services/ActivityStream.js';
-import { ServiceRegistry } from '@services/ServiceRegistry.js';
 import { ActivityEventType, type Message } from '@shared/index.js';
-import {
-  type ForegroundConversationView,
-  useForegroundConversationView,
-} from '../useForegroundConversationView.js';
+import { useConversationSelector } from '../useConversationSelector.js';
+const selectView = (view: ConversationViewSnapshot) => view;
 
 class FakeStdout extends EventEmitter {
   columns = 100;
@@ -23,28 +19,20 @@ const mounted: Array<{ unmount: () => void }> = [];
 
 afterEach(() => {
   for (const instance of mounted.splice(0)) instance.unmount();
-  const registry = ServiceRegistry.getInstance() as any;
-  registry._services.clear();
-  registry._descriptors.clear();
 });
 
 // Stream events set state from outside React's event system, which commits on
 // a later scheduler task, so each step waits for the view it expects.
-describe('useForegroundConversationView', () => {
+describe('conversation source subscription', () => {
   it('projects child messages and live chunks without mutating root state', async () => {
     const stream = new ActivityStream('child-call');
     const messages: Message[] = [{ role: 'user', content: 'child task' }];
     const store = new ConversationViewStore(stream, () => messages, () => []);
     stream.emit({ id: 'start', type: ActivityEventType.AGENT_START, timestamp: Date.now(), data: { isSpecializedAgent: true } });
-    const child = {
-      getMessages: () => messages,
-      getActivityStream: () => stream,
-      getSession: () => store,
-    } as Agent;
-    const observed: Array<ForegroundConversationView | null> = [];
+    const observed: Array<ConversationViewSnapshot> = [];
 
     const Harness = () => {
-      const view = useForegroundConversationView('child-id', child);
+      const view = useConversationSelector(store, selectView);
       useEffect(() => { observed.push(view); }, [view]);
       return null;
     };
@@ -103,7 +91,9 @@ describe('useForegroundConversationView', () => {
     });
     await vi.waitFor(() => expect(observed.at(-1)?.streamingContent).toBe('replacement'));
 
-    messages.push({ role: 'assistant', content: 'done' });
+    messages.push({ id: 'done', role: 'assistant', content: 'done' });
+    stream.emit({ id: 'done', type: ActivityEventType.CONVERSATION_MESSAGE_ADDED,
+      timestamp: Date.now(), data: { message: messages.at(-1)! } });
 
     stream.emit({
       id: 'complete',

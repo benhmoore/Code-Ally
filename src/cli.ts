@@ -1574,6 +1574,10 @@ async function main() {
       };
     }
 
+    agentConfig._resourceOwnership = {
+      modelClient: agentModelClient === modelClient ? 'borrowed' : 'owned',
+      activityStream: 'borrowed',
+    };
     const agent = new Agent(
       agentModelClient,
       toolManager,

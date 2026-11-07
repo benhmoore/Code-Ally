@@ -40,6 +40,13 @@ export interface SessionManagerConfig {
 /**
  * SessionManager handles all session persistence operations
  */
+interface AutoSaveSnapshot {
+  sessionName: string;
+  updates: Partial<Session>;
+  failed?: boolean;
+  readMessages?: () => readonly Message[];
+}
+
 export class SessionManager implements IService {
   private static readonly TRANSCRIPT_SEGMENT_MESSAGES = 64;
   private currentSession: string | null = null;
@@ -55,9 +62,9 @@ export class SessionManager implements IService {
 
   // Debouncing for auto-save - reduces I/O by batching rapid saves
   private debounceTimer: NodeJS.Timeout | null = null;
-  private pendingAutoSave: { sessionName: string; updates: Partial<Session> } | null = null;
+  private pendingAutoSave: AutoSaveSnapshot | null = null;
   /** Owned writes outlive the debounce slot; failed writes remain visible to barriers. */
-  private autoSaveOperations = new Map<Promise<void>, string>();
+  private autoSaveOperations = new Map<Promise<void>, AutoSaveSnapshot>();
   private readonly DEBOUNCE_DELAY_MS = 2000; // 2 seconds
   private isShuttingDown: boolean = false;
 
@@ -214,8 +221,8 @@ export class SessionManager implements IService {
     // Prevent new auto-saves during shutdown
     this.isShuttingDown = true;
 
-    // Flush any pending debounced save before cleanup
-    await this.flushPendingAutoSave();
+    // Retry owned failures and flush admitted state before releasing storage.
+    await this.forceSave();
   }
 
   /**
@@ -892,20 +899,7 @@ export class SessionManager implements IService {
   }> {
     const session = await this.loadSessionManifest(sessionName);
 
-    if (!session) {
-      return {
-        messages: [],
-        transcript: [],
-        canonicalMessages: [],
-        checkpoint: null,
-        providerState: { kind: 'chat' },
-        todos: [],
-        idleMessages: [],
-        projectContext: null,
-        metadata: null,
-        additional_directories: [],
-      };
-    }
+    if (!session) throw new Error(`Session not found: ${sessionName}`);
 
     const recent = await this.getTranscriptPage(sessionName, undefined, 500, 4 * 1024 * 1024);
     const activeCanonicalIds = (session.messages ?? [])
@@ -1215,10 +1209,31 @@ export class SessionManager implements IService {
     }
   }
 
+  /** Freeze the pending owner window before its conversation branch changes. */
+  capturePendingContext(): void {
+    const pending = this.pendingAutoSave;
+    if (!pending?.readMessages) return;
+    pending.updates.messages = structuredClone(this.filterMessagesForPersistence(pending.readMessages()));
+    pending.readMessages = undefined;
+  }
+
+  private async retryFailedAutoSaves(sessionName?: string): Promise<void> {
+    for (const [operation, snapshot] of [...this.autoSaveOperations]) {
+      if (!snapshot.failed || (sessionName && snapshot.sessionName !== sessionName)) continue;
+      try {
+        await this.mutateSessionIncremental(snapshot.sessionName, snapshot.updates, snapshot.updates.transcript ?? []);
+        this.autoSaveOperations.delete(operation);
+      } catch (error) {
+        throw new AggregateError([error], 'Session autosave persistence failed', { cause: error });
+      }
+    }
+  }
+
   /** Transfer the debounce slot to an owned write without yielding admission. */
   private startPendingAutoSave(sessionName?: string): void {
     const pending = this.pendingAutoSave;
     if (pending && (!sessionName || pending.sessionName === sessionName)) {
+      this.capturePendingContext();
       this.pendingAutoSave = null;
       if (this.debounceTimer) {
         clearTimeout(this.debounceTimer);
@@ -1226,7 +1241,10 @@ export class SessionManager implements IService {
       }
       logger.debug('[SESSION] Flushing pending debounced save');
       // Install ownership before entering the asynchronous storage operation.
+      const prior = [...this.autoSaveOperations].filter(([, snapshot]) => snapshot.sessionName === pending.sessionName).map(([operation]) => operation);
       const operation = Promise.resolve().then(async () => {
+        await Promise.allSettled(prior);
+        await this.retryFailedAutoSaves(pending.sessionName);
         const transcript = pending.updates.transcript ?? pending.updates.messages ?? [];
         await this.mutateSessionIncremental(
           pending.sessionName,
@@ -1234,10 +1252,10 @@ export class SessionManager implements IService {
           transcript,
         );
       });
-      this.autoSaveOperations.set(operation, pending.sessionName);
+      this.autoSaveOperations.set(operation, pending);
       // Observe rejection but retain its authoritative promise. A later barrier
       // must not report success merely because a timer already logged failure.
-      void operation.then(() => this.autoSaveOperations.delete(operation), () => {});
+      void operation.then(() => this.autoSaveOperations.delete(operation), () => { pending.failed = true; });
     }
   }
 
@@ -1245,7 +1263,7 @@ export class SessionManager implements IService {
   private async flushPendingAutoSave(sessionName?: string): Promise<void> {
     this.startPendingAutoSave(sessionName);
     const operations = [...this.autoSaveOperations]
-      .filter(([, name]) => !sessionName || name === sessionName)
+      .filter(([, snapshot]) => !sessionName || snapshot.sessionName === sessionName)
       .map(([operation]) => operation);
     const settled = await Promise.allSettled(operations);
     const failures = settled.filter(result => result.status === 'rejected').map(result => result.reason);
@@ -1259,6 +1277,9 @@ export class SessionManager implements IService {
    * @returns True if saved successfully
    */
   async forceSave(): Promise<boolean> {
+    this.startPendingAutoSave();
+    await Promise.allSettled([...this.autoSaveOperations.keys()]);
+    await this.retryFailedAutoSaves();
     await this.flushPendingAutoSave();
     return true;
   }
@@ -1336,6 +1357,23 @@ export class SessionManager implements IService {
     }
   }
 
+  /** Queue owner-held context; capture its current payload only at write transfer.
+   * Transcript records are already detached immutable outbox snapshots.
+   */
+  async autoSaveFromOwner(
+    readMessages: () => readonly Message[],
+    todos?: TodoItem[],
+    idleMessages?: string[],
+    projectContext?: Session['project_context'],
+    additionalDirectories?: string[],
+    transcript: readonly Message[] = [],
+    checkpoint?: ConversationCheckpointV1,
+    providerState?: ProviderCheckpointState,
+  ): Promise<boolean> {
+    return this.autoSave([], todos, idleMessages, projectContext, additionalDirectories,
+      transcript, checkpoint, providerState, readMessages);
+  }
+
   /**
    * Auto-save current session (messages and todos)
    *
@@ -1359,6 +1397,7 @@ export class SessionManager implements IService {
     transcript: readonly Message[] = messages,
     checkpoint?: ConversationCheckpointV1,
     providerState?: ProviderCheckpointState,
+    readMessages?: () => readonly Message[],
   ): Promise<boolean> {
     const name = this.currentSession;
     if (!name || this.isShuttingDown) {
@@ -1367,7 +1406,7 @@ export class SessionManager implements IService {
 
     const filteredMessages = this.filterMessagesForPersistence(messages);
 
-    if (filteredMessages.length === 0 && (!todos || todos.length === 0)) {
+    if (!readMessages && filteredMessages.length === 0 && (!todos || todos.length === 0)) {
       return false; // Nothing to save
     }
 
@@ -1397,14 +1436,26 @@ export class SessionManager implements IService {
       }
       // Capture caller-owned state before any await. The debounce slot owns a
       // snapshot, not live message/metadata objects that can change afterward.
-      const snapshot = structuredClone(updates);
+      const snapshot = readMessages
+        ? { ...structuredClone({ ...updates, messages: undefined, transcript: undefined }), transcript: [...transcript] }
+        : structuredClone(updates);
       // Transfer the previous slot synchronously. Waiting here would allow a
       // concurrent admission to occupy the slot and then be overwritten below.
       if (this.pendingAutoSave && this.pendingAutoSave.sessionName !== name) {
         this.startPendingAutoSave();
       }
+      const previous = this.pendingAutoSave?.sessionName === name ? this.pendingAutoSave.updates.transcript ?? [] : [];
+      const transcriptOutbox = [...previous];
+      const admittedIds = new Set(previous.map(message => message.id).filter(Boolean));
+      for (const message of snapshot.transcript ?? []) {
+        if (message.id && admittedIds.has(message.id)) continue;
+        transcriptOutbox.push(message);
+        if (message.id) admittedIds.add(message.id);
+      }
+      snapshot.transcript = transcriptOutbox;
       this.pendingAutoSave = {
         sessionName: name,
+        readMessages,
         updates: {
           ...(this.pendingAutoSave?.sessionName === name ? this.pendingAutoSave.updates : {}),
           ...snapshot,

@@ -9,11 +9,7 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { ModelConfigCoordinator } from '../ModelConfigCoordinator.js';
-import type {
-  ModelConfigManager,
-  ModelCapabilities,
-  ModelCapabilityProbe,
-} from '../ModelConfigCoordinator.js';
+import type { ModelConfigManager, ModelCapabilities, ModelCapabilityProbe } from '../ModelConfigCoordinator.js';
 
 function makeCapabilities(overrides: Partial<ModelCapabilities> = {}): ModelCapabilities {
   return { supportsTools: true, supportsImages: true, fromCache: false, ...overrides };
@@ -70,6 +66,50 @@ describe('ModelConfigCoordinator', () => {
   });
 
   describe('switchModel', () => {
+    it('does not persist a late probe from a superseded selection', async () => {
+      let finishOld!: (value: ModelCapabilities) => void;
+      const config = makeConfigManager();
+      const probe = vi.fn((_endpoint: string, model: string) =>
+        model === 'old'
+          ? new Promise<ModelCapabilities>(resolve => {
+              finishOld = resolve;
+            })
+          : Promise.resolve(makeCapabilities())
+      );
+      const { coordinator, applyRuntimeConfig } = makeCoordinator(config, probe);
+      const old = coordinator.switchModel('old', 'ally');
+      await coordinator.switchModel('new', 'ally');
+      finishOld(makeCapabilities());
+      expect((await old).status).toBe('superseded');
+      expect(config.setValue).toHaveBeenCalledExactlyOnceWith('model', 'new');
+      expect(applyRuntimeConfig).toHaveBeenCalledExactlyOnceWith({ model: 'new' });
+    });
+
+    it('serializes admitted writes across coordinator instances sharing one config owner', async () => {
+      let finishOld!: () => void;
+      let persisted = '';
+      const config = makeConfigManager({
+        setValue: vi.fn(async (_key, model) => {
+          if (model === 'old')
+            await new Promise<void>(resolve => {
+              finishOld = resolve;
+            });
+          persisted = model;
+        }),
+      });
+      const first = makeCoordinator(config);
+      const second = makeCoordinator(config);
+      const old = first.coordinator.switchModel('old', 'ally');
+      await vi.waitFor(() => expect(finishOld).toBeDefined());
+      const newer = second.coordinator.switchModel('new', 'ally');
+      await new Promise<void>(resolve => setImmediate(resolve));
+      expect(config.setValue).toHaveBeenCalledTimes(1);
+      finishOld();
+      await Promise.all([old, newer]);
+      expect(persisted).toBe('new');
+      expect(second.applyRuntimeConfig).toHaveBeenLastCalledWith({ model: 'new' });
+    });
+
     it('probes, persists and syncs the ally model', async () => {
       const configManager = makeConfigManager();
       const probe = vi.fn(async () => makeCapabilities());
@@ -117,9 +157,8 @@ describe('ModelConfigCoordinator', () => {
     });
 
     it('annotates a cached probe and missing image support', async () => {
-      const { coordinator } = makeCoordinator(
-        makeConfigManager(),
-        async () => makeCapabilities({ fromCache: true, supportsImages: false })
+      const { coordinator } = makeCoordinator(makeConfigManager(), async () =>
+        makeCapabilities({ fromCache: true, supportsImages: false })
       );
 
       const outcome = await coordinator.switchModel('llama3', 'ally');
@@ -151,9 +190,7 @@ describe('ModelConfigCoordinator', () => {
 
       expect(outcome.status).toBe('unsupported');
       expect(outcome.configUpdate).toBeUndefined();
-      expect(outcome.messages).toEqual([
-        "Model 'toyllm' does not support tools. Ally model requires tool support.",
-      ]);
+      expect(outcome.messages).toEqual(["Model 'toyllm' does not support tools. Ally model requires tool support."]);
       expect(configManager.setValue).not.toHaveBeenCalled();
       expect(applyRuntimeConfig).not.toHaveBeenCalled();
     });
@@ -162,9 +199,7 @@ describe('ModelConfigCoordinator', () => {
     // (titles, idle messages) never calls tools.
     it('accepts a tool-less model for the service slot', async () => {
       const configManager = makeConfigManager();
-      const { coordinator } = makeCoordinator(configManager, async () =>
-        makeCapabilities({ supportsTools: false })
-      );
+      const { coordinator } = makeCoordinator(configManager, async () => makeCapabilities({ supportsTools: false }));
 
       const outcome = await coordinator.switchModel('toyllm', 'service');
 
@@ -229,13 +264,10 @@ describe('ModelConfigCoordinator', () => {
       expect(coordinator.normalizeConfigUpdates({ model: 'llama3' })).toEqual({ model: 'llama3' });
     });
 
-    it.each([[null], [undefined], ['model=llama3'], [42]])(
-      'rejects %p as a config patch',
-      (input) => {
-        const { coordinator } = makeCoordinator(makeConfigManager());
-        expect(coordinator.normalizeConfigUpdates(input)).toBeNull();
-      }
-    );
+    it.each([[null], [undefined], ['model=llama3'], [42]])('rejects %p as a config patch', input => {
+      const { coordinator } = makeCoordinator(makeConfigManager());
+      expect(coordinator.normalizeConfigUpdates(input)).toBeNull();
+    });
 
     it('forwards a patch to the live services', () => {
       const { coordinator, applyRuntimeConfig } = makeCoordinator(makeConfigManager());

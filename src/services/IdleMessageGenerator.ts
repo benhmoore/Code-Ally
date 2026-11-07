@@ -12,7 +12,6 @@ import { logger } from './Logger.js';
 import {
   POLLING_INTERVALS,
   BUFFER_SIZES,
-  API_TIMEOUTS,
   TEXT_LIMITS,
   IDLE_MESSAGE_GENERATION,
   COMMAND_TIPS,
@@ -65,6 +64,9 @@ export interface IdleMessageGeneratorConfig {
  */
 export class IdleMessageGenerator implements CancellableService, BackgroundTask {
   private modelClient: ModelClient;
+  private readonly background = new Set<Promise<void>>();
+  private closed = false;
+  private generation = 0;
   private messageQueue: string[] = [];
   private currentMessageIndex: number = 0;
   private isGenerating: boolean = false;
@@ -103,16 +105,9 @@ export class IdleMessageGenerator implements CancellableService, BackgroundTask 
    * The service will naturally retry later when idle conditions are met.
    */
   cancel(): void {
-    if (this.isGenerating) {
-      logger.debug('[IDLE_MSG] 🛑 Cancelling ongoing generation (user interaction started)');
-
-      // Cancel all active requests on the model client
-      // This is safe because we call this BEFORE the agent starts its request
-      this.currentAbort?.abort();
-
-      // Reset flag - the background promise will handle cleanup in finally block
-      this.isGenerating = false;
-    }
+    this.generation++;
+    this.currentAbort?.abort();
+    // Pending ownership is released by settlement, never by cancellation.
   }
 
   /**
@@ -240,6 +235,7 @@ export class IdleMessageGenerator implements CancellableService, BackgroundTask 
    * @param force - Force generation even if time interval hasn't passed (for initial startup)
    */
   generateMessageBackground(recentMessages: Message[] = [], context?: IdleContext, force: boolean = false): void {
+    if (this.closed) return;
     // Only generate if queue is running low (less than 5 messages)
     if (this.messageQueue.length >= this.refillThreshold) {
       logger.debug(`[IDLE_MSG] ⏭️  Skipping generation - queue has ${this.messageQueue.length} messages (threshold: ${this.refillThreshold})`);
@@ -265,7 +261,7 @@ export class IdleMessageGenerator implements CancellableService, BackgroundTask 
     this.lastGenerationTime = now;
 
     // Run in background
-    this.generateAndRefillQueueAsync(recentMessages, context)
+    const operation = this.generateAndRefillQueueAsync(recentMessages, context)
       .catch(error => {
         // Ignore abort/interrupt errors (expected when cancelled)
         if (error.name === 'AbortError' || error.message?.includes('abort') || error.message?.includes('interrupt')) {
@@ -276,15 +272,19 @@ export class IdleMessageGenerator implements CancellableService, BackgroundTask 
       })
       .finally(() => {
         this.isGenerating = false;
+        this.background.delete(operation);
         logger.debug('[IDLE_MSG] ✅ Generation completed, isGenerating reset to false');
       });
+    this.background.add(operation);
   }
 
   /**
    * Generate batch of messages and refill queue asynchronously
    */
   private async generateAndRefillQueueAsync(recentMessages: Message[], context?: IdleContext): Promise<void> {
+    const generation = this.generation;
     const messages = await this.generateMessageBatch(recentMessages, context);
+    if (this.closed || generation !== this.generation) return;
     logger.debug(`[IDLE_MSG] 💬 Generated ${messages.length} new messages - first: "${messages[0]}"`);
 
     // Occasionally inject a command tip to help users discover features
@@ -446,11 +446,8 @@ Reply with ONLY the numbered list, nothing else. No quotes around messages, no p
    * Cleanup any pending operations
    */
   async cleanup(): Promise<void> {
-    // Wait for pending generation to complete
-    const startTime = Date.now();
-
-    while (this.isGenerating && Date.now() - startTime < API_TIMEOUTS.CLEANUP_MAX_WAIT) {
-      await new Promise(resolve => setTimeout(resolve, POLLING_INTERVALS.CLEANUP));
-    }
+    this.closed = true;
+    this.cancel();
+    await Promise.allSettled(this.background);
   }
 }

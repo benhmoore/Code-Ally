@@ -165,6 +165,12 @@ describe('SessionManager', () => {
       expect(session).toBeNull();
     });
 
+    it('rejects a missing restore target instead of returning an empty conversation', async () => {
+      await sessionManager.createSession('current');
+      await expect(sessionManager.getSessionData('does-not-exist')).rejects.toThrow('Session not found');
+      expect(sessionManager.getCurrentSession()).toBe('current');
+    });
+
     it.each(['invalid json{', ''])('refuses invalid manifest %j without moving or deleting the source', async content => {
       const sessionPath = join(tempDir, 'corrupted.json');
       await fs.writeFile(sessionPath, content, 'utf-8');

@@ -8,6 +8,23 @@ import { Agent } from '../../agent/Agent.js';
 afterEach(() => vi.unstubAllGlobals());
 
 describe('live provider transport changes', () => {
+  it('observes retired transport cleanup failures and closes each transport once', async () => {
+    const failure = new Error('close failed');
+    const old = { close: vi.fn().mockRejectedValue(failure) } as unknown as ModelClient;
+    const next = { close: vi.fn().mockResolvedValue(undefined) } as unknown as ModelClient;
+    const client = new ConfigurableModelClient('ollama',
+      { endpoint: 'test', modelName: 'test', maxTokens: 64, contextSize: 4096 },
+      vi.fn().mockReturnValueOnce(old).mockReturnValue(next));
+    client.setModelName('next');
+    await Promise.resolve();
+    const closing = client.close();
+    expect(client.close()).toBe(closing);
+    await expect(closing).rejects.toThrow('Model transport cleanup failed');
+    expect(old.close).toHaveBeenCalledOnce();
+    expect(next.close).toHaveBeenCalledOnce();
+    await expect(client.send([], { signal: new AbortController().signal })).rejects.toThrow('closed');
+  });
+
   it('finishes an existing request on its original transport and uses the new transport next', async () => {
     let finish!: (response: LLMResponse) => void;
     const old = {

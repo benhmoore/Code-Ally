@@ -9,9 +9,9 @@
  * - Displays user interjections nested under running tool calls
  */
 
-import React, { useState } from 'react';
+import React from 'react';
 import { Box, Text } from 'ink';
-import { ToolCallState, ActivityEventType } from '@shared/index.js';
+import { ToolCallState } from '@shared/index.js';
 import type { ToolCallTreeNode } from '@shared/index.js';
 import { CompactionNotice } from '../contexts/AppContext.js';
 import { DiffDisplay } from './DiffDisplay.js';
@@ -19,7 +19,6 @@ import { formatDuration } from '../utils/timeUtils.js';
 import { getStatusColor, getStatusIcon } from '../utils/statusUtils.js';
 import { formatDisplayName } from '../utils/uiHelpers.js';
 import { TEXT_LIMITS, isAgentDelegationTool, UI_DELAYS, BUFFER_SIZES } from '@config/constants.js';
-import { useActivityEvent } from '../hooks/useActivityEvent.js';
 import { UI_SYMBOLS } from '@config/uiSymbols.js';
 import { UI_COLORS } from '../constants/colors.js';
 import { ServiceRegistry } from '@services/ServiceRegistry.js';
@@ -240,54 +239,8 @@ const ToolCallDisplayComponent: React.FC<ToolCallDisplayProps> = ({
   const isRunning = toolCall.status === 'executing' || toolCall.status === 'pending';
   const visibility = resolveToolVisibility(toolCall, config);
 
-  // Track interjections for this tool call
-  const [interjections, setInterjections] = useState<Array<{ message: string; timestamp: number }>>([]);
-
-  // Track acknowledgments for this tool call
-  const [acknowledgments, setAcknowledgments] = useState<Array<{ message: string; timestamp: number }>>([]);
-
-  // Subscribe to USER_INTERJECTION events to capture interjections for this tool call
-  useActivityEvent(ActivityEventType.USER_INTERJECTION, (event) => {
-    // Only add interjections that belong to this tool call
-    if (event.parentId === toolCall.id) {
-      const message = event.data?.message || '';
-      const timestamp = event.timestamp || Date.now();
-
-      setInterjections((prev) => {
-        // Avoid duplicates by checking if we already have this exact interjection
-        const exists = prev.some(
-          (i) => i.message === message && Math.abs(i.timestamp - timestamp) < 100
-        );
-        if (exists) return prev;
-
-        // Add new interjection, sorted by timestamp
-        return [...prev, { message, timestamp }].sort((a, b) => a.timestamp - b.timestamp);
-      });
-    }
-  });
-
-  // Subscribe to INTERJECTION_ACKNOWLEDGMENT events to capture acknowledgments for this tool call
-  useActivityEvent(ActivityEventType.INTERJECTION_ACKNOWLEDGMENT, (event) => {
-    // Only add acknowledgments that belong to this tool call
-    if (event.parentId === toolCall.id) {
-      const message = event.data?.acknowledgment || '';
-      const timestamp = event.timestamp || Date.now();
-
-      // Skip empty acknowledgments
-      if (!message.trim()) return;
-
-      setAcknowledgments((prev) => {
-        // Avoid duplicates by checking if we already have this exact acknowledgment
-        const exists = prev.some(
-          (a) => a.message === message && Math.abs(a.timestamp - timestamp) < 100
-        );
-        if (exists) return prev;
-
-        // Add new acknowledgment, sorted by timestamp
-        return [...prev, { message, timestamp }].sort((a, b) => a.timestamp - b.timestamp);
-      });
-    }
-  });
+  const interjections = toolCall.interjections ?? [];
+  const acknowledgments = toolCall.acknowledgments ?? [];
 
   // Calculate execution duration (no live updates - just shows duration at render time).
   // Pre-execution validation and permission time are intentionally excluded.

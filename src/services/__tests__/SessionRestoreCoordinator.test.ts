@@ -9,10 +9,7 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { SessionRestoreCoordinator } from '../SessionRestoreCoordinator.js';
-import type {
-  RestorableSessionManager,
-  SessionAwarePatchManager,
-} from '../SessionRestoreCoordinator.js';
+import type { RestorableSessionManager, SessionAwarePatchManager } from '../SessionRestoreCoordinator.js';
 import type { SessionInfo } from '../../types/index.js';
 
 vi.mock('../Logger.js', () => ({
@@ -28,15 +25,15 @@ function makeSessionInfo(name: string): SessionInfo {
   return { name, messageCount: 2 } as SessionInfo;
 }
 
-function makeSessionManager(
-  overrides: Partial<RestorableSessionManager> = {}
-): RestorableSessionManager & {
+function makeSessionManager(overrides: Partial<RestorableSessionManager> = {}): RestorableSessionManager & {
   setCurrentSession: ReturnType<typeof vi.fn>;
   getSessionData: ReturnType<typeof vi.fn>;
 } {
   return {
     getSessionsInfoByDirectory: vi.fn(async () => [makeSessionInfo('yesterday')]),
     setCurrentSession: vi.fn(),
+    getCurrentSession: vi.fn(() => 'original'),
+    forceSave: vi.fn(async () => true),
     getSessionData: vi.fn(async () => ({ messages: [] })),
     ...overrides,
   } as RestorableSessionManager & {
@@ -114,25 +111,19 @@ describe('SessionRestoreCoordinator', () => {
         order.push('replay');
       });
 
-      const outcome = await makeCoordinator(sessionManager, patchManager).restoreSession(
-        'yesterday',
-        loadSession
-      );
+      const outcome = await makeCoordinator(sessionManager, patchManager).restoreSession('yesterday', loadSession);
 
       expect(outcome).toEqual({ status: 'ok' });
-      expect(order).toEqual(['switch', 'rebind', 'read', 'replay']);
+      expect(order).toEqual(['read', 'switch', 'rebind', 'replay']);
       expect(sessionManager.setCurrentSession).toHaveBeenCalledWith('yesterday');
       expect(sessionManager.getSessionData).toHaveBeenCalledWith('yesterday');
-      expect(loadSession).toHaveBeenCalledWith(sessionData);
+      expect(loadSession).toHaveBeenCalledWith(sessionData, undefined);
     });
 
     it('restores without a patch manager registered', async () => {
       const loadSession = vi.fn(async () => {});
 
-      const outcome = await makeCoordinator(makeSessionManager(), null).restoreSession(
-        'yesterday',
-        loadSession
-      );
+      const outcome = await makeCoordinator(makeSessionManager(), null).restoreSession('yesterday', loadSession);
 
       expect(outcome).toEqual({ status: 'ok' });
       expect(loadSession).toHaveBeenCalled();
@@ -151,7 +142,7 @@ describe('SessionRestoreCoordinator', () => {
     // a later failure leaves the app pointed at the new session while the
     // visible transcript still belongs to the old one. Nothing rolls that back;
     // `sessionSwitched` is how the caller learns it happened.
-    it('reports that the session already switched when reading fails', async () => {
+    it('leaves the original session selected when reading fails', async () => {
       const sessionManager = makeSessionManager({
         getSessionData: vi.fn(async () => {
           throw new Error('session file corrupt');
@@ -166,9 +157,9 @@ describe('SessionRestoreCoordinator', () => {
       expect(outcome).toEqual({
         status: 'error',
         message: 'Failed to load session: session file corrupt',
-        sessionSwitched: true,
+        sessionSwitched: false,
       });
-      expect(sessionManager.setCurrentSession).toHaveBeenCalledWith('yesterday');
+      expect(sessionManager.setCurrentSession).not.toHaveBeenCalled();
     });
 
     it('reports that the session already switched when the replay fails', async () => {
@@ -182,7 +173,7 @@ describe('SessionRestoreCoordinator', () => {
       expect(outcome).toEqual({
         status: 'error',
         message: 'Failed to load session: recovery pipeline blew up',
-        sessionSwitched: true,
+        sessionSwitched: false,
       });
     });
 

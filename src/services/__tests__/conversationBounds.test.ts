@@ -3,6 +3,20 @@ import type { Message, ToolCallState } from '../../types/index.js';
 import { boundVisibleMessages, boundToolCalls } from '../conversationBounds.js';
 
 describe('live conversation bounds', () => {
+  it('bounds nested arguments, display payloads, attachments and reasoning without mutating sources', () => {
+    const bulk = '\u0000é😀'.repeat(500_000);
+    const call = {
+      id: 'large', toolName: 'write', status: 'success', startTime: 1,
+      arguments: { content: bulk }, result: { success: true, display_content: bulk, images: [{ data: bulk }] },
+    } as ToolCallState;
+    const bounded = boundToolCalls([call])[0]!;
+    expect(Buffer.byteLength(JSON.stringify(bounded))).toBeLessThanOrEqual(64 * 1024);
+    expect(call.arguments.content).toBe(bulk);
+    const messages = boundVisibleMessages([{ id: 'latest', role: 'assistant', content: 'done', thinking: bulk, metadata: { payload: bulk }, images: [{ data: bulk }] } as Message]);
+    expect(messages).toHaveLength(1);
+    expect(Buffer.byteLength(JSON.stringify(messages))).toBeLessThanOrEqual(4 * 1024 * 1024);
+  });
+
   it('preserves settled row identity after output has been bounded', () => {
     const call = { id: 'done', status: 'success', output: 'x'.repeat(100_000) } as ToolCallState;
     const first = boundToolCalls([call])[0]!;

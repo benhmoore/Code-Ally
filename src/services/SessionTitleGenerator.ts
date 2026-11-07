@@ -9,7 +9,7 @@ import { ModelClient } from '../llm/ModelClient.js';
 import { Message, BackgroundTask } from '../types/index.js';
 import { CancellableService } from '../types/CancellableService.js';
 import { logger } from './Logger.js';
-import { POLLING_INTERVALS, TEXT_LIMITS, API_TIMEOUTS } from '../config/constants.js';
+import { TEXT_LIMITS } from '../config/constants.js';
 import type { SessionManager } from './SessionManager.js';
 
 /**
@@ -27,6 +27,9 @@ export interface SessionTitleGeneratorConfig {
  */
 export class SessionTitleGenerator implements CancellableService, BackgroundTask {
   private modelClient: ModelClient;
+  private readonly background = new Set<Promise<void>>();
+  private closed = false;
+  private generation = 0;
   private sessionManager: SessionManager;
   private pendingGenerations = new Set<string>();
   private aborts = new Set<AbortController>();
@@ -86,17 +89,9 @@ export class SessionTitleGenerator implements CancellableService, BackgroundTask
    * The service will naturally retry later when a new session is created.
    */
   cancel(): void {
-    if (this.isGenerating) {
-      logger.debug('[TITLE_GEN] 🛑 Cancelling ongoing generation (user interaction started)');
-
-      // Cancel all active requests by aborting their signals
-      for (const a of this.aborts) a.abort();
-      this.aborts.clear();
-
-      // Reset flag and clear pending
-      this.isGenerating = false;
-      this.pendingGenerations.clear();
-    }
+    this.generation++;
+    for (const controller of this.aborts) controller.abort();
+    // Pending ownership is released by settlement, never by cancellation.
   }
 
   /**
@@ -170,6 +165,7 @@ export class SessionTitleGenerator implements CancellableService, BackgroundTask
     sessionName: string,
     firstUserMessage: string
   ): void {
+    if (this.closed) return;
     // Prevent duplicate generations
     if (this.pendingGenerations.has(sessionName)) {
       logger.debug(`[TITLE_GEN] ⏭️  Skipping - already generating title for ${sessionName}`);
@@ -181,7 +177,7 @@ export class SessionTitleGenerator implements CancellableService, BackgroundTask
     this.isGenerating = true;
 
     // Run in background
-    this.generateAndSaveTitleAsync(sessionName, firstUserMessage)
+    const operation = this.generateAndSaveTitleAsync(sessionName, firstUserMessage)
       .catch(error => {
         // Ignore abort/interrupt errors (expected when cancelled)
         if (error.name === 'AbortError' || error.message?.includes('abort') || error.message?.includes('interrupt')) {
@@ -190,11 +186,16 @@ export class SessionTitleGenerator implements CancellableService, BackgroundTask
           logger.error(`[TITLE_GEN] ❌ Generation failed for ${sessionName}:`, error);
         }
       })
-      .finally(() => {
+      .finally(async () => {
         this.pendingGenerations.delete(sessionName);
-        this.isGenerating = false;
+        this.isGenerating = this.pendingGenerations.size > 0;
         logger.debug(`[TITLE_GEN] ✅ Generation completed for ${sessionName}`);
       });
+    this.background.add(operation);
+    void operation.then(() => this.background.delete(operation), error => {
+      this.background.delete(operation);
+      logger.warn('[TITLE_GEN] Background completion failed:', error);
+    });
   }
 
   /**
@@ -226,7 +227,8 @@ export class SessionTitleGenerator implements CancellableService, BackgroundTask
     this.isGenerating = true;
 
     // Run in background
-    this.generateAndSaveTitleAsync(sessionName, messages, true)
+    const generation = this.generation;
+    const operation = this.generateAndSaveTitleAsync(sessionName, messages, true)
       .catch(error => {
         // Ignore abort/interrupt errors (expected when cancelled)
         if (error.name === 'AbortError' || error.message?.includes('abort') || error.message?.includes('interrupt')) {
@@ -235,14 +237,19 @@ export class SessionTitleGenerator implements CancellableService, BackgroundTask
           logger.error(`[TITLE_GEN] ❌ Regeneration failed for ${sessionName}:`, error);
         }
       })
-      .finally(() => {
+      .finally(async () => {
         this.pendingGenerations.delete(sessionName);
-        this.isGenerating = false;
+        this.isGenerating = this.pendingGenerations.size > 0;
         logger.debug(`[TITLE_GEN] ✅ Regeneration completed for ${sessionName}`);
-        if (onComplete) {
-          onComplete();
+        if (onComplete && !this.closed && generation === this.generation) {
+          await onComplete();
         }
       });
+    this.background.add(operation);
+    void operation.then(() => this.background.delete(operation), error => {
+      this.background.delete(operation);
+      logger.warn('[TITLE_GEN] Background completion failed:', error);
+    });
   }
 
   /**
@@ -253,6 +260,7 @@ export class SessionTitleGenerator implements CancellableService, BackgroundTask
     messagesOrFirstMessage: Message[] | string,
     forceRegenerate: boolean = false
   ): Promise<void> {
+    const generation = this.generation;
     // Generate title based on whether this is initial generation or regeneration
     let title: string;
     if (forceRegenerate && Array.isArray(messagesOrFirstMessage)) {
@@ -266,6 +274,7 @@ export class SessionTitleGenerator implements CancellableService, BackgroundTask
         { role: 'user', content: firstMessage },
       ]);
     }
+    if (this.closed || generation !== this.generation) return;
     logger.debug(`[TITLE_GEN] 📝 Generated title: "${title}"`);
 
     // Update session metadata using SessionManager's serialized write
@@ -280,6 +289,7 @@ export class SessionTitleGenerator implements CancellableService, BackgroundTask
       }
 
       // Use SessionManager's updateMetadata to ensure serialized writes
+      if (this.closed || generation !== this.generation) return;
       const success = await this.sessionManager.updateMetadata(sessionName, {
         title,
         lastTitleGeneratedAt: Date.now(),
@@ -392,11 +402,8 @@ Reply with ONLY the title, nothing else. No quotes, no punctuation at the end.`;
    * Cleanup any pending operations
    */
   async cleanup(): Promise<void> {
-    // Wait for pending generations to complete
-    const startTime = Date.now();
-
-    while (this.pendingGenerations.size > 0 && Date.now() - startTime < API_TIMEOUTS.CLEANUP_MAX_WAIT) {
-      await new Promise(resolve => setTimeout(resolve, POLLING_INTERVALS.CLEANUP));
-    }
+    this.closed = true;
+    this.cancel();
+    await Promise.allSettled(this.background);
   }
 }

@@ -138,6 +138,7 @@ export function applyRuntimeConfigUpdates(
       idleMessageGenerator?.cancel?.();
       serviceRegistry.registerInstance('idle_message_generator', null);
     }
+    serviceRegistry.get('idle_task_coordinator')?.setIdleMessageGenerator(serviceRegistry.get('idle_message_generator'));
   }
 
   if (hasUpdate(updates, 'enable_session_title_generation')) {
@@ -157,6 +158,7 @@ export function applyRuntimeConfigUpdates(
       sessionTitleGenerator?.cancel?.();
     }
     setIfAvailable(sessionTitleGenerator, 'setEnabled', fullConfig.enable_session_title_generation);
+    serviceRegistry.get('idle_task_coordinator')?.setSessionTitleGenerator(sessionTitleGenerator);
   }
 
   return fullConfig;

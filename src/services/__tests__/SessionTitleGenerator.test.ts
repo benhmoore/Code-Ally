@@ -405,48 +405,30 @@ describe('SessionTitleGenerator', () => {
       await fs.rm(tempDir, { recursive: true, force: true });
     });
 
-    it('should timeout if generations take too long', async () => {
-      const verySlowClient = new MockModelClient();
-      verySlowClient.send = async () => {
-        await new Promise(resolve => setTimeout(resolve, 10000)); // 10 seconds
-        return {
-          role: 'assistant',
-          content: 'Title',
-        };
+    it('cancels a slow request and waits for its actual settlement', async () => {
+      let release!: () => void;
+      let receivedSignal: AbortSignal | undefined;
+      const client = new MockModelClient();
+      client.send = async (_messages, options) => {
+        receivedSignal = options.signal;
+        await new Promise<void>(resolve => { release = resolve; });
+        return { role: 'assistant', content: 'late title' };
       };
+      const save = vi.fn();
+      const owner = new SessionTitleGenerator(client, { updateMetadata: save } as any);
+      owner.generateTitleBackground('session', 'Request');
+      let finished = false;
+      const closing = owner.cleanup().then(() => { finished = true; });
+      await Promise.resolve();
+      expect(receivedSignal?.aborted).toBe(true);
+      expect(finished).toBe(false);
+      release();
+      await closing;
+      expect(save).not.toHaveBeenCalled();
+      owner.generateTitleBackground('session', 'Another request');
+      expect(finished).toBe(true);
+    });
 
-      const verySlowGenerator = new SessionTitleGenerator(verySlowClient);
-
-      // Create temp dir and session
-      const tempDir = join(tmpdir(), `timeout-test-${Date.now()}-${Math.random().toString(36).substring(7)}`);
-      await fs.mkdir(tempDir, { recursive: true });
-
-      const sessionPath = join(tempDir, 'test.json');
-      await fs.writeFile(
-        sessionPath,
-        JSON.stringify({
-          id: 'test',
-          name: 'test',
-          created_at: new Date().toISOString(),
-          updated_at: new Date().toISOString(),
-          messages: [],
-          metadata: {},
-        })
-      );
-
-      // Start background generation
-      verySlowGenerator.generateTitleBackground('test', 'Test', tempDir);
-
-      const startTime = Date.now();
-      await verySlowGenerator.cleanup();
-      const endTime = Date.now();
-
-      // Should timeout within 5-6 seconds, not wait 10 seconds
-      expect(endTime - startTime).toBeLessThan(7000);
-
-      // Cleanup temp dir
-      await fs.rm(tempDir, { recursive: true, force: true });
-    }, 10000); // Increase test timeout to 10 seconds
   });
 
   describe('configuration', () => {

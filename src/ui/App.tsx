@@ -12,63 +12,51 @@ import { ActivityStream } from '../services/ActivityStream.js';
 import { ActivityProvider, useActivityStreamContext } from './contexts/ActivityContext.js';
 import { AppProvider, useAppContext } from './contexts/AppContext.js';
 import { TerminalProvider } from './contexts/TerminalContext.js';
-import { ActivityEventType, Config, Message } from '../types/index.js';
+import { ActivityEventType, Config } from '../types/index.js';
 import { BottomAlignedLayout } from './components/BottomAlignedLayout.js';
 import { useProviderDiagnostics } from './hooks/useProviderDiagnostics.js';
 import { useTerminalRows } from './hooks/useTerminalRows.js';
+import { ModalHost } from './components/ModalHost.js';
 import { InputPrompt } from './components/InputPrompt.js';
+import { EMPTY_DRAFT, type PromptDraft } from './hooks/usePromptDraft.js';
 import { AgentFleetView } from './components/AgentFleetView.js';
-import { ConversationView } from './components/ConversationView.js';
-import { PermissionPrompt } from './components/PermissionPrompt.js';
-import { ModelSelector } from './components/ModelSelector.js';
-import { SetupWizardView } from './components/SetupWizardView.js';
-import { ProjectWizardView } from './components/ProjectWizardView.js';
-import { AgentWizardView } from './components/AgentWizardView.js';
-import { RewindSelector } from './components/RewindSelector.js';
-import { RewindOptionsSelector } from './components/RewindOptionsSelector.js';
-import { SessionSelector } from './components/SessionSelector.js';
-import { PromptLibrarySelector } from './components/PromptLibrarySelector.js';
-import { MessageSelector } from './components/MessageSelector.js';
-import { PromptAddWizard } from './components/PromptAddWizard.js';
-import { StatusIndicator } from './components/StatusIndicator.js';
-import { UndoPrompt } from './components/UndoPrompt.js';
-import { UndoFileList } from './components/UndoFileList.js';
-import { LibraryClearConfirmation } from './components/LibraryClearConfirmation.js';
-import { ToolFormWizard } from './components/ToolFormWizard.js';
-import { PlanApprovalPrompt } from './components/PlanApprovalPrompt.js';
-import { CONTEXT_THRESHOLDS } from '../config/toolDefaults.js';
+import { ConversationPane } from './components/ConversationPane.js';
+import { ConversationStatus } from './components/ConversationStatus.js';
+import { ConversationMetrics } from './components/ConversationMetrics.js';
 import { Agent } from '../agent/Agent.js';
-import { PatchMetadata } from '../services/PatchManager.js';
 import { ServiceRegistry } from '../services/ServiceRegistry.js';
-import { logger, LogLevel } from '../services/Logger.js';
+import { logger } from '../services/Logger.js';
 import { useServiceInitialization } from './hooks/useServiceInitialization.js';
 import { useModalState } from './hooks/useModalState.js';
-import { useModalActivation, type ModalChoice } from './hooks/useModalActivation.js';
 import { useSessionResume } from './hooks/useSessionResume.js';
 import { useInputHandlers } from './hooks/useInputHandlers.js';
 import { useActivitySubscriptions } from './hooks/useActivitySubscriptions.js';
-import { useContentWidth } from './hooks/useContentWidth.js';
 import { useTerminalWidth } from './hooks/useTerminalWidth.js';
 import { useReflowOnResize } from './hooks/useReflowOnResize.js';
 import { useBackgroundProcesses } from './hooks/useBackgroundProcesses.js';
-import { useBackgroundAgents } from './hooks/useBackgroundAgents.js';
+import { useFleetNavigation } from './hooks/useFleetNavigation.js';
+import { useAgentDiagnostics } from './hooks/useAgentDiagnostics.js';
 import { useScheduledTaskCount } from './hooks/useScheduledTaskCount.js';
 import { useTaskWake } from './hooks/useTaskWake.js';
-import { useAgentRouting } from './hooks/useAgentRouting.js';
-import { useForegroundConversationView } from './hooks/useForegroundConversationView.js';
-import { ErrorBoundary } from './components/ErrorBoundary.js';
+import { useAgentRouting, type AgentRouting } from './hooks/useAgentRouting.js';
+import { useConversationSelector, selectThinking, selectActivity, shallowEqual } from './hooks/useConversationSelector.js';
 import { switchAgent } from '../services/AgentSwitcher.js';
 import { SyntaxHighlighter } from '../services/SyntaxHighlighter.js';
 import { clearMarkdownCache } from './components/MarkdownText.js';
 import { getActiveProfile } from '../config/paths.js';
 import { UI_COLORS } from './constants/colors.js';
-import { shouldRestoreMainView } from './utils/agentViewLifecycle.js';
 import { PointerProvider } from './contexts/PointerContext.js';
 import type { TerminalInputStream } from '@utils/terminalInput.js';
 
 /**
  * Props for the App component
  */
+interface AdvertisedModel {
+  name: string;
+  size?: number;
+  modified_at?: string;
+}
+
 export interface AppProps {
   /** Initial configuration */
   config: Config;
@@ -92,7 +80,7 @@ export interface AppProps {
   showModelSelector?: boolean;
 
   /** Available models from startup validation */
-  availableModels?: any[];
+  availableModels?: AdvertisedModel[];
 
   /** Number of active plugins */
   activePluginCount?: number;
@@ -121,25 +109,9 @@ export interface AppProps {
  * It subscribes to activity events and updates the app state accordingly.
  * Memoized to prevent unnecessary re-renders when children update.
  */
-const AppContentComponent: React.FC<{
-  foregroundAgent: Agent;
-  foregroundAgentId: string;
-  primaryAgent: Agent;
-  selectForegroundConversation: (agent: Agent, agentId: string) => void;
-  returnToPrimaryConversation: () => void;
-  resumeSession?: string | 'interactive' | null;
-  showSetupWizard?: boolean;
-  showModelSelector?: boolean;
-  availableModels?: any[];
-  activePluginCount?: number;
-  totalPluginCount?: number;
-  activeMcpCount?: number;
-  totalMcpCount?: number;
-  onInteractiveReady?: () => void;
-  startupNotices?: string[];
-  terminalInput?: TerminalInputStream;
-  validateProviderOnStartup?: boolean;
-}> = ({
+type AppContentProps = Omit<AppProps, 'config' | 'activityStream' | 'agent'> & AgentRouting;
+
+const AppContentComponent: React.FC<AppContentProps> = ({
   foregroundAgent,
   foregroundAgentId,
   primaryAgent,
@@ -171,14 +143,18 @@ const AppContentComponent: React.FC<{
 
   // Manage all modal and selector state
   const modal = useModalState();
-  const [drafts, setDrafts] = React.useState<Record<string, string>>({});
-  const inputBuffer = drafts[state.activeAgentId] ?? '';
-  const setInputBuffer = React.useCallback((text: string) => {
-    setDrafts(current => ({ ...current, [state.activeAgentId]: text }));
+  const [drafts, setDrafts] = React.useState<Record<string, PromptDraft>>({});
+  const inputDraft = drafts[state.activeAgentId] ?? EMPTY_DRAFT;
+  const setInputDraft = React.useCallback((draft: PromptDraft) => {
+    setDrafts(current => ({ ...current, [state.activeAgentId]: draft }));
   }, [state.activeAgentId]);
-  const selectedTask = state.activeAgentId === 'main' ? undefined
-    : ServiceRegistry.getInstance().get('background_agent_manager')?.getTask(state.activeAgentId);
-  const completedChild = !!selectedTask && selectedTask.status !== 'running';
+  const fleet = useFleetNavigation({
+    activeAgentId: state.activeAgentId, primaryAgent, foregroundAgent, foregroundAgentId,
+    selectForegroundConversation, returnToPrimaryConversation, actions,
+  });
+  const { backgroundAgents, selectedTask, completedChild, isChildSelected, conversationSource, conversationControls,
+    returnToMain, handleEnterFleet, handleFleetNavigate, handleExitFleet, handleEnterAgent,
+    handleBackgroundAgents, handleKillAgent } = fleet;
   const queue = selectedTask?.inputQueue ?? foregroundAgent.getInputQueue();
   const pendingInput = React.useSyncExternalStore(queue.subscribe, queue.getSnapshot);
   const recallFollowUp = React.useCallback(() => {
@@ -224,7 +200,6 @@ const AppContentComponent: React.FC<{
     resumeSession,
     primaryAgent,
     actions,
-    activityStream,
     modal.setSessionSelectRequest
   );
 
@@ -277,104 +252,11 @@ const AppContentComponent: React.FC<{
   );
 
   // Auto-wake the idle main agent when a watched task completes.
-  useTaskWake({ isThinking: state.isThinking, activeAgentId: state.activeAgentId, submit: handleInput });
+  const primaryThinking = useConversationSelector(primaryAgent.getSession(), selectThinking);
+  useTaskWake({ isThinking: primaryThinking, activeAgentId: state.activeAgentId, submit: handleInput });
 
-  // ===== Background-agent fleet (live list + enter/exit) =====
-  const backgroundAgents = useBackgroundAgents();
-
-  // An entered child owns a separate render projection. The root AppContext is
-  // never replaced, so root events can continue updating it without leaking
-  // into the child or requiring a lossy reconstruction on return.
-  const foregroundView = useForegroundConversationView(
-    state.activeAgentId,
-    foregroundAgentId === state.activeAgentId ? foregroundAgent : null,
-    selectedTask?.completedView,
-  );
-  const previousConversationViewRef = useRef(state.activeAgentId);
-
-  useEffect(() => {
-    if (previousConversationViewRef.current === state.activeAgentId) return;
-    previousConversationViewRef.current = state.activeAgentId;
-    actions.repaintConversationSurface();
-  }, [state.activeAgentId, actions]);
-
-  const returnToMain = React.useCallback(() => {
-    returnToPrimaryConversation();
-    actions.setActiveAgentId('main');
-  }, [returnToPrimaryConversation, actions]);
-
-  const handleEnterFleet = React.useCallback(() => {
-    modal.setFleetSelectedIndex(0);
-    modal.setFleetFocused(true);
-  }, [modal]);
-
-  const handleFleetNavigate = React.useCallback((index: number) => {
-    modal.setFleetSelectedIndex(index);
-  }, [modal]);
-
-  const handleExitFleet = React.useCallback(() => {
-    modal.setFleetFocused(false);
-  }, [modal]);
-
-  const handleEnterAgent = React.useCallback((selectedIndex: number) => {
-    // Keep focus in the fleet on the selected agent after Enter (the view
-    // switches to it, but the selection stays — the user can keep navigating;
-    // Esc returns focus to the prompt to type to the viewed agent).
-    // Index 0 is the 'main' row → return to the primary conversation.
-    if (selectedIndex === 0) {
-      if (state.activeAgentId !== 'main') returnToMain();
-      return;
-    }
-    const target = backgroundAgents[selectedIndex - 1];
-    if (!target) return;
-    const manager = ServiceRegistry.getInstance().get('background_agent_manager');
-    const task = manager?.getTask(target.id);
-    if (!task) return;
-    // Swap foreground input routing. Rendering is independently projected from
-    // the child and never mutates the root conversation state.
-    selectForegroundConversation(task.subAgent, target.id);
-    actions.setActiveAgentId(target.id);
-  }, [backgroundAgents, state.activeAgentId, actions, returnToMain, selectForegroundConversation]);
-
-  // Ctrl+B: background all running foreground agents (they keep running; the
-  // main loop returns and they appear in the fleet).
-  const handleBackgroundAgents = React.useCallback(() => {
-    const manager = ServiceRegistry.getInstance().get('background_agent_manager');
-    manager?.requestDetachAll();
-  }, []);
-
-  // 'x' on a focused fleet row: kill that agent (never 'main' at index 0).
-  const handleKillAgent = React.useCallback((selectedIndex: number) => {
-    if (selectedIndex === 0) return;
-    const target = backgroundAgents[selectedIndex - 1];
-    if (!target) return;
-    const manager = ServiceRegistry.getInstance().get('background_agent_manager');
-    manager?.cancelTask(target.id);
-    // If we were viewing the agent we just killed, return to the main view.
-    if (state.activeAgentId === target.id) returnToMain();
-  }, [backgroundAgents, state.activeAgentId, returnToMain]);
-
-  // Keep fleet selection valid as the list changes; drop focus if it empties.
-  React.useEffect(() => {
-    const listSize = backgroundAgents.length + 1; // + 'main' row
-    if (modal.fleetSelectedIndex > listSize - 1) {
-      modal.setFleetSelectedIndex(Math.max(0, listSize - 1));
-    }
-    if (modal.fleetFocused && backgroundAgents.length === 0) {
-      modal.setFleetFocused(false);
-    }
-  }, [backgroundAgents.length, modal]);
-
-  // Completed conversations remain inspectable. Only removal of the tracked
-  // task returns the user to main; its frozen view cannot follow pool reuse.
-  React.useEffect(() => {
-    if (state.activeAgentId === 'main') return;
-    const manager = ServiceRegistry.getInstance().get('background_agent_manager');
-    const status = manager?.getTask(state.activeAgentId)?.status ?? null;
-    if (shouldRestoreMainView(state.activeAgentId, status)) {
-      returnToMain();
-    }
-  }, [backgroundAgents, state.activeAgentId, returnToMain]);
+  const { isThinking: displayedIsThinking, isCompacting: displayedIsCompacting } =
+    useConversationSelector(conversationSource, selectActivity, shallowEqual);
 
   // Default agent from config (determines Esc behavior and footer hint)
   const defaultAgent = state.config.default_agent || 'ally';
@@ -448,123 +330,17 @@ const AppContentComponent: React.FC<{
     }
   }, [showModelSelector, activityStream, availableModels, modal.setupWizardOpen, state.config]);
 
-  // State for patches to pass to RewindSelector
-  const [patches, setPatches] = useState<PatchMetadata[]>([]);
 
-  // Track debug mode state and stats
-  const [isDebugMode, setIsDebugMode] = useState<boolean>(logger.getLevel() === LogLevel.DEBUG);
-  const [debugStats, setDebugStats] = useState<{
-    sessionId: string;
-    heapMB: number;
-    rssMB: number;
-    tokensUsed: number;
-    tokensTotal: number;
-    todoPending: number;
-    todoCompleted: number;
-    todoTotal: number;
-  }>({
-    sessionId: '',
-    heapMB: 0,
-    rssMB: 0,
-    tokensUsed: 0,
-    tokensTotal: 0,
-    todoPending: 0,
-    todoCompleted: 0,
-    todoTotal: 0,
-  });
+  const diagnosticAgent = !completedChild && foregroundAgentId === state.activeAgentId ? foregroundAgent : undefined;
+  const { isDebugMode, debugStats, currentFocus } = useAgentDiagnostics(diagnosticAgent,
+    completedChild ? selectedTask?.tokens : undefined);
 
-  // Poll logger level and collect debug stats
-  useEffect(() => {
-    // Always check debug mode state
-    const debugMode = logger.getLevel() === LogLevel.DEBUG;
-    setIsDebugMode(debugMode);
-
-    // Only run polling if debug mode is active
-    if (!debugMode) return;
-
-    const updateDebugStats = () => {
-      try {
-        const registry = ServiceRegistry.getInstance();
-
-        // Get session ID
-        const sessionManager = registry.get('session_manager');
-        const sessionId = sessionManager?.getCurrentSession() || 'none';
-
-        // Get memory stats
-        const memUsage = process.memoryUsage();
-        const heapMB = Math.round(memUsage.heapUsed / 1024 / 1024);
-        const rssMB = Math.round(memUsage.rss / 1024 / 1024);
-
-        // Get token stats
-        const tokenManager = registry.get('token_manager');
-        const tokensUsed = tokenManager?.getCurrentTokenCount() || 0;
-        const tokensTotal = tokenManager?.getContextSize() || 200000;
-
-        // Get todo stats
-        const todoManager = registry.get('todo_manager');
-        const todos = todoManager?.getTodos() || [];
-        const todoPending = todos.filter((t: any) => t.status === 'pending').length;
-        const todoCompleted = todos.filter((t: any) => t.status === 'completed').length;
-        const todoTotal = todos.length;
-
-        setDebugStats({
-          sessionId,
-          heapMB,
-          rssMB,
-          tokensUsed,
-          tokensTotal,
-          todoPending,
-          todoCompleted,
-          todoTotal,
-        });
-      } catch (error) {
-        // Silently handle errors
-      }
-    };
-
-    // Run immediately when debug mode becomes active
-    updateDebugStats();
-    // Then update every second
-    const interval = setInterval(updateDebugStats, 1000);
-
-    return () => clearInterval(interval);
-  }, [isDebugMode]);
-
-  // Fetch patches when rewind request is shown
-  useEffect(() => {
-    if (modal.rewindRequest) {
-      const fetchPatches = async () => {
-        const serviceRegistry = ServiceRegistry.getInstance();
-        const patchManager = serviceRegistry.get('patch_manager');
-
-        if (patchManager) {
-          // Get all patches from the beginning of the session (timestamp 0)
-          const allPatches = await patchManager.getPatchesSinceTimestamp(0);
-          setPatches(allPatches);
-        } else {
-          setPatches([]);
-        }
-      };
-
-      fetchPatches();
-    } else {
-      // Clear patches when rewind request is closed
-      setPatches([]);
-    }
-  }, [modal.rewindRequest]);
-
-  // Get current focus display (if any)
-  const focusManager = ServiceRegistry.getInstance().get('focus_manager');
-  const currentFocus = focusManager?.getFocusDisplay() ?? null;
-
-  // Get content width with max width constraint for readability (conversation view)
-  const contentWidth = useContentWidth();
   // Get full terminal width for elements that should expand (input, footer, modals)
   const terminalWidth = useTerminalWidth();
   const terminalRows = useTerminalRows();
 
   // Reflow the committed transcript when the terminal narrows.
-  useReflowOnResize();
+  useReflowOnResize(conversationSource, !isChildSelected);
 
   // Create debug-enhanced config when debug mode is active
   const effectiveConfig = useMemo(() => {
@@ -581,591 +357,45 @@ const AppContentComponent: React.FC<{
     };
   }, [isDebugMode, state.config]);
 
-  // Shared status indicator — rendered above every modal and the input prompt
-  // so the todo list and activity status stay visible in ALL UI states. This
-  // was previously hand-copied into most branches but omitted from the setup/
-  // project/agent wizard branches, which made the todo list vanish whenever a
-  // wizard opened. Defining it once guarantees consistency. Only one branch
-  // renders per pass, so reusing a single element instance is safe.
-  const isChildSelected = state.activeAgentId !== 'main';
-  const selectedChildView = isChildSelected && foregroundView?.agentId === state.activeAgentId
-    ? foregroundView
-    : null;
-  // Never fall through to another conversation while a projection is changing.
-  // A pending child renders an empty surface; main renders root state directly.
-  const displayedMessages = isChildSelected ? selectedChildView?.messages ?? [] : state.messages;
-  const displayedToolCalls = isChildSelected ? selectedChildView?.activeToolCalls ?? [] : state.activeToolCalls;
-  const displayedStreamingContent = isChildSelected ? selectedChildView?.streamingContent : state.streamingContent;
-  const displayedIsThinking = isChildSelected ? selectedChildView?.isThinking ?? false : state.isThinking;
-  const displayedIsCompacting = isChildSelected ? selectedChildView?.isCompacting ?? false : state.isCompacting;
-  const displayedAgentName = !isChildSelected
-    ? state.currentAgent
-    : selectedTask?.agentType ?? state.activeAgentId;
-  const displayedContextUsage = !isChildSelected
-    ? state.contextUsage
-    : selectedChildView?.contextUsage ?? 0;
-  const displayedGenerationRate = isChildSelected ? selectedChildView?.generationRate : state.generationRate;
-  const displayedModel = !isChildSelected
-    ? state.currentAgentModel || state.config.model
-    : selectedTask?.completedModel ?? (selectedChildView ? foregroundAgent.getModelClient().modelName : state.config.model);
-
+  const displayedAgentName = isChildSelected
+    ? selectedTask?.agentType ?? state.activeAgentId : state.currentAgent;
+  const displayedModel = isChildSelected
+    ? completedChild ? selectedTask?.completedModel : foregroundAgentId === state.activeAgentId
+      ? foregroundAgent.getModelClient().modelName : undefined
+    : state.currentAgentModel || state.config.model;
   const statusIndicator = completedChild ? null : (
-    <StatusIndicator
-      isProcessing={displayedIsThinking}
-      isCompacting={displayedIsCompacting}
+    <ConversationStatus
+      source={conversationSource}
       isCancelling={isCancelling}
-      activeToolCalls={displayedToolCalls}
       activeSubAgents={isChildSelected ? [] : state.activeSubAgents}
-      activityStream={selectedChildView ? foregroundAgent.getActivityStream?.() : undefined}
+      activityStream={isChildSelected ? foregroundAgent.getActivityStream() : undefined}
       hideTodos={isChildSelected}
     />
   );
 
-  // Hidden InputPrompt used purely for keyboard handling behind modal selectors.
-  // Every modal branch shares the same base wiring and passes only its own
-  // request + navigation props via `extra`. Implemented as a function (not a
-  // component) so it renders inline without remounting InputPrompt each render
-  // (which would drop the input buffer / cursor state).
-  // Ctrl+O alternates between opening and closing every tool call.
-  const toolOutputExpandedRef = useRef(false);
+  // Expansion belongs to the selected live session; completed views are frozen.
   const handleToggleToolOutput = React.useCallback(() => {
-    toolOutputExpandedRef.current = !toolOutputExpandedRef.current;
-    actions.setToolCallsExpanded(toolOutputExpandedRef.current);
-  }, [actions]);
-
-  // Rewind's Enter opens the options step for the chosen message.
-  const handleRewindSelect = (selectedIndex: number) => {
-    const targetMessage = (modal.rewindRequest?.targets ?? [])[selectedIndex];
-    if (!targetMessage) return;
-
-    // Calculate file changes for this message
-    const patchManager = ServiceRegistry.getInstance().get('patch_manager');
-
-    const calculateFileChanges = async () => {
-      if (!patchManager || !targetMessage.timestamp) {
-        return { fileCount: 0, files: [], previewData: undefined };
-      }
-
-      const patchesSince = await patchManager.getPatchesSinceTimestamp(targetMessage.timestamp);
-      const uniqueFiles = new Set<string>();
-      patchesSince.forEach(p => uniqueFiles.add(p.file_path));
-
-      // Fetch preview data for diff stats
-      const previewData = await patchManager.previewUndoSinceTimestamp(targetMessage.timestamp);
-
-      return {
-        fileCount: uniqueFiles.size,
-        files: Array.from(uniqueFiles).map(path => ({ path })),
-        previewData: previewData || undefined,
-      };
-    };
-
-    calculateFileChanges().then(result => {
-      modal.setRewindOptionsRequest({
-        selectedIndex,
-        targetMessage,
-        fileChanges: { fileCount: result.fileCount, files: result.files },
-        previewData: result.previewData,
-      });
-    });
-  };
-
-  const modalActivation = useModalActivation({
-    activityStream,
-    modal,
-    onRewindSelect: handleRewindSelect,
-    onPermissionInstruct: handleInterjection,
-  });
-
-  // Selection lives inside these requests; moving it rewrites the request.
-  const navigateSession = (newIndex: number) => {
-    if (modal.sessionSelectRequest) modal.setSessionSelectRequest({ ...modal.sessionSelectRequest, selectedIndex: newIndex });
-  };
-  const navigateLibrary = (newIndex: number) => {
-    if (modal.librarySelectRequest) modal.setLibrarySelectRequest({ ...modal.librarySelectRequest, selectedIndex: newIndex });
-  };
-  const navigateMessage = (newIndex: number) => {
-    if (modal.messageSelectRequest) modal.setMessageSelectRequest({ ...modal.messageSelectRequest, selectedIndex: newIndex });
-  };
-  const navigateRewind = (newIndex: number) => {
-    if (modal.rewindRequest) modal.setRewindRequest({ ...modal.rewindRequest, selectedIndex: newIndex });
-  };
-  const navigateUndoFileList = (newIndex: number) => {
-    if (modal.undoFileListRequest) modal.setUndoFileListRequest({ ...modal.undoFileListRequest, selectedIndex: newIndex });
-  };
-  const navigateLibraryClearConfirm = (newIndex: number) => {
-    if (modal.libraryClearConfirmRequest) modal.setLibraryClearConfirmRequest({ ...modal.libraryClearConfirmRequest, selectedIndex: newIndex });
-  };
-
-  /** A click on an option row selects it and answers with it, as Enter would. */
-  const pressOption = (navigate: (index: number) => void, choice: ModalChoice) => (index: number) => {
-    navigate(index);
-    choice.activate(index);
-  };
-
-  const renderKeyboardInput = (extra: Partial<React.ComponentProps<typeof InputPrompt>>) => (
-    <Box height={0} overflow="hidden">
-      <InputPrompt
-            key={state.activeAgentId}
-        onSubmit={handleInput}
-        onInterjection={handleInterjection}
-            conversationReadOnly={completedChild}
-            onFollowUp={state.activeAgentId === 'main' ? handleFollowUp : undefined}
-            onRecallFollowUp={recallFollowUp}
-        isActive={true}
-        commandHistory={commandHistory || undefined}
-        completionProvider={completionProvider || undefined}
-        activityStream={activityStream}
-        agent={foregroundAgent}
-        prefillText={modal.inputPrefillText}
-        onPrefillConsumed={() => modal.setInputPrefillText(undefined)}
-        bufferValue={inputBuffer}
-        onBufferChange={setInputBuffer}
-        modalActivation={modalActivation}
-        {...extra}
-      />
-    </Box>
-  );
+    if (!conversationControls) return;
+    const calls = conversationControls.getSnapshot().activeToolCalls;
+    const expand = calls.some(call => !(call.expanded ?? !call.collapsed));
+    conversationControls.setToolCallsExpanded(expand);
+  }, [conversationControls]);
 
   // The terminal only reports clicks while an interactive surface is up
   // (or always, by preference), because tracking also takes the scroll wheel
   // away from the terminal's own scrollback.
   const mouseSupport = effectiveConfig.mouse_support ?? 'dialogs';
-  const pointerTracking = mouseSupport === 'always' || (mouseSupport === 'dialogs' && (modal.hasOpenModal || modal.fleetFocused));
+  const pointerTracking = mouseSupport === 'always' || (mouseSupport === 'dialogs' && (modal.hasOpenModal || fleet.fleetFocused));
 
   return (
     <PointerProvider input={terminalInput} tracking={pointerTracking}>
     <BottomAlignedLayout historyKey={state.staticRemountKey} footer={
       <>
 
-      {/*
-        Modal render chain. Exactly one exclusive modal can be open at a time
-        (enforced by the modal stack in useModalState), so this fixed-priority
-        ternary surfaces it. IMPORTANT: the two layered pairs depend on this
-        ORDER, not on stack order — `rewindOptions` must be checked before
-        `rewind`, and the `undoFileList && !undoRequest` guard must come before
-        `undoRequest`. Do not reorder those arms or render purely off the stack
-        top without preserving this precedence, or the layered flows will break.
-      */}
-      {/* Setup Wizard (modal - replaces input when active) */}
-      {modal.setupWizardOpen ? (
-        <Box marginTop={1} flexDirection="column">
-          {statusIndicator}
-          <SetupWizardView
-            onComplete={() => {
-              if (activityStream) {
-                activityStream.emit({
-                  id: `setup_wizard_complete_${Date.now()}`,
-                  type: ActivityEventType.SETUP_WIZARD_COMPLETE,
-                  timestamp: Date.now(),
-                  data: {},
-                });
-              }
-            }}
-            onSkip={() => {
-              if (activityStream) {
-                activityStream.emit({
-                  id: `setup_wizard_skip_${Date.now()}`,
-                  type: ActivityEventType.SETUP_WIZARD_SKIP,
-                  timestamp: Date.now(),
-                  data: {},
-                });
-              }
-            }}
-          />
-        </Box>
-      ) : /* Project Wizard (modal - replaces input when active) */
-      modal.projectWizardOpen ? (
-        <Box marginTop={1} flexDirection="column">
-          {statusIndicator}
-          <ProjectWizardView
-            onComplete={() => {
-              if (activityStream) {
-                activityStream.emit({
-                  id: `project_wizard_complete_${Date.now()}`,
-                  type: ActivityEventType.PROJECT_WIZARD_COMPLETE,
-                  timestamp: Date.now(),
-                  data: {},
-                });
-              }
-            }}
-            onSkip={() => {
-              if (activityStream) {
-                activityStream.emit({
-                  id: `project_wizard_skip_${Date.now()}`,
-                  type: ActivityEventType.PROJECT_WIZARD_SKIP,
-                  timestamp: Date.now(),
-                  data: {},
-                });
-              }
-            }}
-          />
-        </Box>
-      ) : /* Agent Wizard (modal - replaces input when active) */
-      modal.agentWizardOpen ? (
-        <Box marginTop={1} flexDirection="column">
-          {statusIndicator}
-          <AgentWizardView
-            initialDescription={modal.agentWizardData.initialDescription}
-            onComplete={agentData => {
-              if (activityStream) {
-                activityStream.emit({
-                  id: `agent_wizard_complete_${Date.now()}`,
-                  type: ActivityEventType.AGENT_WIZARD_COMPLETE,
-                  timestamp: Date.now(),
-                  data: agentData,
-                });
-              }
-            }}
-            onCancel={() => {
-              if (activityStream) {
-                activityStream.emit({
-                  id: `agent_wizard_skip_${Date.now()}`,
-                  type: ActivityEventType.AGENT_WIZARD_SKIP,
-                  timestamp: Date.now(),
-                  data: {},
-                });
-              }
-            }}
-          />
-        </Box>
-      ) : /* Session Selector (replaces input when active) */
-      modal.sessionSelectRequest ? (
-        <Box marginTop={1} flexDirection="column">
-          {statusIndicator}
-
-          <SessionSelector
-            sessions={modal.sessionSelectRequest.sessions}
-            selectedIndex={modal.sessionSelectRequest.selectedIndex}
-            visible={true}
-            onOptionPress={pressOption(navigateSession, modalActivation.session)}
-          />
-          {renderKeyboardInput({
-            sessionSelectRequest: modal.sessionSelectRequest,
-            onSessionNavigate: navigateSession,
-          })}
-        </Box>
-      ) : /* Library Selector (replaces input when active) */
-      modal.librarySelectRequest ? (
-        <Box marginTop={1} flexDirection="column">
-          {statusIndicator}
-
-          <PromptLibrarySelector
-            prompts={modal.librarySelectRequest.prompts}
-            selectedIndex={modal.librarySelectRequest.selectedIndex}
-            visible={true}
-            onOptionPress={pressOption(navigateLibrary, modalActivation.library)}
-          />
-          {renderKeyboardInput({
-            librarySelectRequest: modal.librarySelectRequest,
-            onLibraryNavigate: navigateLibrary,
-          })}
-        </Box>
-      ) : /* Message Selector (for prompt creation) */
-      modal.messageSelectRequest ? (
-        <Box marginTop={1} flexDirection="column">
-          {statusIndicator}
-
-          <MessageSelector
-            messages={modal.messageSelectRequest.messages}
-            selectedIndex={modal.messageSelectRequest.selectedIndex}
-            visible={true}
-            onOptionPress={pressOption(navigateMessage, modalActivation.message)}
-          />
-          {renderKeyboardInput({
-            messageSelectRequest: modal.messageSelectRequest,
-            onMessageNavigate: navigateMessage,
-          })}
-        </Box>
-      ) : /* Prompt Add Wizard (replaces input when active) */
-      modal.promptAddRequest ? (
-        <Box marginTop={1} flexDirection="column">
-          {statusIndicator}
-
-          <PromptAddWizard
-            title={modal.promptAddRequest.title}
-            content={modal.promptAddRequest.content}
-            tags={modal.promptAddRequest.tags}
-            focusedField={modal.promptAddRequest.focusedField}
-            onFieldChange={(field, value) => {
-              if (modal.promptAddRequest) {
-                modal.setPromptAddRequest({ ...modal.promptAddRequest, [field]: value });
-              }
-            }}
-            onFieldFocus={field => {
-              if (modal.promptAddRequest) {
-                modal.setPromptAddRequest({ ...modal.promptAddRequest, focusedField: field });
-              }
-            }}
-            onSubmit={() => {
-              if (modal.promptAddRequest && activityStream) {
-                const { promptId, title, content, tags } = modal.promptAddRequest;
-
-                // Validate required fields
-                if (!title.trim() || !content.trim()) {
-                  return; // Don't submit if fields are empty
-                }
-
-                activityStream.emit({
-                  id: `response_${modal.promptAddRequest.requestId}`,
-                  type: ActivityEventType.PROMPT_ADD_RESPONSE,
-                  timestamp: Date.now(),
-                  data: {
-                    requestId: modal.promptAddRequest.requestId,
-                    promptId, // Include promptId if editing
-                    title: title.trim(),
-                    content: content.trim(),
-                    tags: tags.trim(),
-                    cancelled: false,
-                  },
-                });
-              }
-            }}
-            onCancel={() => {
-              if (modal.promptAddRequest && activityStream) {
-                activityStream.emit({
-                  id: `response_${modal.promptAddRequest.requestId}_cancel`,
-                  type: ActivityEventType.PROMPT_ADD_RESPONSE,
-                  timestamp: Date.now(),
-                  data: {
-                    requestId: modal.promptAddRequest.requestId,
-                    cancelled: true,
-                  },
-                });
-              }
-            }}
-          />
-        </Box>
-      ) : /* Model Selector (replaces input when active) */
-      modal.modelSelectRequest ? (
-        <Box marginTop={1} flexDirection="column">
-          {statusIndicator}
-
-          <ModelSelector
-            models={modal.modelSelectRequest.models}
-            selectedIndex={modal.modelSelectedIndex}
-            currentModel={modal.modelSelectRequest.currentModel}
-            typeName={modal.modelSelectRequest.typeName}
-            visible={true}
-            loading={modal.modelSelectLoading}
-            onOptionPress={pressOption(modal.setModelSelectedIndex, modalActivation.model)}
-          />
-          {renderKeyboardInput({
-            modelSelectRequest: modal.modelSelectRequest,
-            modelSelectedIndex: modal.modelSelectedIndex,
-            onModelNavigate: modal.setModelSelectedIndex,
-          })}
-        </Box>
-      ) : modal.rewindOptionsRequest ? (
-        /* Rewind Options Selector (shown after selecting message in rewind) */
-        <Box marginTop={1} flexDirection="column">
-          {statusIndicator}
-
-          <RewindOptionsSelector
-            targetMessage={modal.rewindOptionsRequest.targetMessage}
-            fileChanges={modal.rewindOptionsRequest.fileChanges}
-            previewData={modal.rewindOptionsRequest.previewData}
-            visible={true}
-            onConfirm={choice => {
-              // Handle cancel choice
-              if (choice === 'cancel') {
-                // Go back to rewind selector
-                modal.setRewindOptionsRequest(undefined);
-                return;
-              }
-
-              // Emit REWIND_RESPONSE event with selected options
-              if (activityStream && modal.rewindRequest && modal.rewindOptionsRequest) {
-                try {
-                  activityStream.emit({
-                    id: `response_${modal.rewindRequest.requestId}`,
-                    type: ActivityEventType.REWIND_RESPONSE,
-                    timestamp: Date.now(),
-                    data: {
-                      requestId: modal.rewindRequest.requestId,
-                      selectedIndex: modal.rewindOptionsRequest.selectedIndex,
-                      cancelled: false,
-                      options: {
-                        restoreFiles: choice === 'conversation-and-files',
-                      },
-                    },
-                  });
-                } catch (error) {
-                  console.error('[App] Failed to emit rewind response:', error);
-                }
-              }
-              // Clear both rewind request and options request
-              modal.setRewindOptionsRequest(undefined);
-              modal.setRewindRequest(undefined);
-            }}
-          />
-        </Box>
-      ) : modal.rewindRequest ? (
-        /* Rewind Selector (replaces input when active) */
-        (() => {
-          const rewindTargets = modal.rewindRequest.targets ?? [];
-          return (
-            <Box marginTop={1} flexDirection="column">
-              {statusIndicator}
-
-              <RewindSelector
-                messages={rewindTargets}
-                selectedIndex={modal.rewindRequest.selectedIndex}
-                visible={true}
-                patches={patches}
-                onOptionPress={pressOption(navigateRewind, modalActivation.rewind)}
-              />
-              {renderKeyboardInput({
-                  rewindRequest: {
-                    requestId: modal.rewindRequest.requestId,
-                    userMessagesCount: rewindTargets.length,
-                    selectedIndex: modal.rewindRequest.selectedIndex,
-                  },
-                  onRewindNavigate: navigateRewind,
-              })}
-            </Box>
-          );
-        })()
-      ) : modal.undoFileListRequest && !modal.undoRequest ? (
-        /* Undo File List (two-stage flow - stage 1) */
-        <Box marginTop={1} flexDirection="column">
-          {statusIndicator}
-
-          <UndoFileList
-            request={modal.undoFileListRequest}
-            visible={true}
-            onOptionPress={pressOption(navigateUndoFileList, modalActivation.undoFileList)}
-          />
-          {renderKeyboardInput({
-            undoFileListRequest: modal.undoFileListRequest,
-            onUndoFileListNavigate: navigateUndoFileList,
-          })}
-        </Box>
-      ) : modal.libraryClearConfirmRequest ? (
-        /* Library Clear Confirmation */
-        <Box marginTop={1} flexDirection="column">
-          {statusIndicator}
-
-          <LibraryClearConfirmation
-            promptCount={modal.libraryClearConfirmRequest.promptCount}
-            selectedIndex={modal.libraryClearConfirmRequest.selectedIndex}
-            visible={true}
-            onOptionPress={pressOption(navigateLibraryClearConfirm, modalActivation.libraryClearConfirm)}
-          />
-          {renderKeyboardInput({
-            libraryClearConfirmRequest: modal.libraryClearConfirmRequest,
-            onLibraryClearConfirmNavigate: navigateLibraryClearConfirm,
-          })}
-        </Box>
-      ) : modal.undoRequest ? (
-        /* Undo Prompt (two-stage flow - stage 2, or legacy single-stage) */
-        <Box marginTop={1} flexDirection="column">
-          {statusIndicator}
-
-          <UndoPrompt
-            request={modal.undoRequest}
-            selectedIndex={modal.undoSelectedIndex}
-            visible={true}
-            onOptionPress={pressOption(modal.setUndoSelectedIndex, modalActivation.undo)}
-          />
-          {renderKeyboardInput({
-            undoRequest: modal.undoRequest,
-            undoSelectedIndex: modal.undoSelectedIndex,
-            onUndoNavigate: modal.setUndoSelectedIndex,
-          })}
-        </Box>
-      ) : modal.toolFormRequest ? (
-        /* Tool Form Wizard (replaces input when active) */
-        (() => {
-          const formRequest = modal.toolFormRequest;
-          return (
-            <Box marginTop={1} flexDirection="column">
-              {statusIndicator}
-              <ToolFormWizard
-                request={formRequest}
-                fieldIndex={modal.toolFormFieldIndex}
-                values={modal.toolFormValues}
-                errors={modal.toolFormErrors}
-                queueLength={modal.toolFormQueueLength}
-                onFieldIndexChange={modal.setToolFormFieldIndex}
-                onValueChange={modal.setToolFormValue}
-                onErrorChange={modal.setToolFormError}
-                onComplete={(data) => {
-                  activityStream.emit({
-                    id: `response_${formRequest.requestId}`,
-                    type: ActivityEventType.TOOL_FORM_RESPONSE,
-                    timestamp: Date.now(),
-                    data: {
-                      requestId: formRequest.requestId,
-                      callId: formRequest.callId,
-                      data,
-                    },
-                  });
-                }}
-                onCancel={() => {
-                  activityStream.emit({
-                    id: `cancel_${formRequest.requestId}`,
-                    type: ActivityEventType.TOOL_FORM_CANCEL,
-                    timestamp: Date.now(),
-                    data: {
-                      requestId: formRequest.requestId,
-                      callId: formRequest.callId,
-                      toolName: formRequest.toolName,
-                    },
-                  });
-                }}
-              />
-            </Box>
-          );
-        })()
-      ) : modal.planApprovalRequest ? (
-        /* Plan Approval Prompt (replaces input when active) */
-        <Box marginTop={1} flexDirection="column">
-          {statusIndicator}
-          <PlanApprovalPrompt
-            request={modal.planApprovalRequest}
-            selectedIndex={modal.planApprovalSelectedIndex}
-            feedbackText={modal.planApprovalFeedbackText}
-            onFeedbackTextChange={modal.setPlanApprovalFeedbackText}
-            cursorPosition={modal.planApprovalCursorPosition}
-            onCursorChange={modal.setPlanApprovalCursorPosition}
-            onOptionPress={pressOption(modal.setPlanApprovalSelectedIndex, modalActivation.planApproval)}
-          />
-          {renderKeyboardInput({
-            planApprovalRequest: modal.planApprovalRequest,
-            planApprovalSelectedIndex: modal.planApprovalSelectedIndex,
-            onPlanApprovalNavigate: modal.setPlanApprovalSelectedIndex,
-          })}
-        </Box>
-      ) : modal.permissionRequest ? (
-        /* Permission Prompt (replaces input when active) */
-        <Box marginTop={1} flexDirection="column">
-          {statusIndicator}
-
-          <PermissionPrompt
-            request={modal.permissionRequest}
-            selectedIndex={modal.permissionSelectedIndex}
-            visible={true}
-            autoAllowMode={modal.autoAllowMode}
-            instructText={modal.permissionInstructText}
-            onInstructTextChange={modal.setPermissionInstructText}
-            cursorPosition={modal.permissionCursorPosition}
-            onCursorChange={modal.setPermissionCursorPosition}
-            queueLength={modal.permissionRequestQueueLength}
-            onOptionPress={pressOption(modal.setPermissionSelectedIndex, modalActivation.permission)}
-          />
-          {renderKeyboardInput({
-            permissionRequest: modal.permissionRequest,
-            permissionSelectedIndex: modal.permissionSelectedIndex,
-            onPermissionNavigate: modal.setPermissionSelectedIndex,
-            onAutoAllowToggle: () => modal.setAutoAllowMode(!modal.autoAllowMode),
-            onSwitchToDefault: handleSwitchToDefault,
-            currentAgent: state.currentAgent,
-            defaultAgent: defaultAgent,
-          })}
-        </Box>
-      ) : (
-        /* Bottom interaction region */
+      <ModalHost modal={modal} activityStream={activityStream} status={statusIndicator}
+        onPermissionInstruct={handleInterjection}
+        reportError={content => actions.addMessage({ role: 'assistant', content, metadata: { isError: true } })}>
+        {/* Bottom interaction region */}
         <Box flexDirection="column">
       {completedChild && <Text dimColor wrap="truncate-end">Completed conversation · Esc returns to main · queued text can be recalled with Alt+↑</Text>}
       {displayedIsThinking && <Text dimColor wrap="truncate-end">{isChildSelected ? 'Enter steers this agent · Esc stops' : 'Enter steers · Alt+Enter queues a follow-up · Esc stops'}</Text>}
@@ -1180,8 +410,8 @@ const AppContentComponent: React.FC<{
           <AgentFleetView
             compact
             agents={backgroundAgents}
-            selectedIndex={modal.fleetSelectedIndex}
-            focused={modal.fleetFocused}
+            selectedIndex={fleet.fleetSelectedIndex}
+            focused={fleet.fleetFocused}
             activeAgentId={state.activeAgentId}
             onOptionPress={handleEnterAgent}
             maxVisible={Math.max(1, Math.min(4, Math.floor(terminalRows / 8)))}
@@ -1216,11 +446,11 @@ const AppContentComponent: React.FC<{
             promptPrefilled={modal.promptPrefilled}
             onPromptPrefilledClear={() => modal.setPromptPrefilled(false)}
             onExitConfirmationChange={modal.setIsWaitingForExitConfirmation}
-            bufferValue={inputBuffer}
-            onBufferChange={setInputBuffer}
-            fleetFocused={modal.fleetFocused}
+            draft={inputDraft}
+            onDraftChange={setInputDraft}
+            fleetFocused={fleet.fleetFocused}
             fleetCount={backgroundAgents.length}
-            fleetSelectedIndex={modal.fleetSelectedIndex}
+            fleetSelectedIndex={fleet.fleetSelectedIndex}
             isViewingAgent={state.activeAgentId !== 'main'}
             onEnterFleet={handleEnterFleet}
             onFleetNavigate={handleFleetNavigate}
@@ -1240,16 +470,10 @@ const AppContentComponent: React.FC<{
               <Text dimColor wrap="truncate-end">
                 {isDebugMode && <Text color={UI_COLORS.PRIMARY}>debug · </Text>}
                 {displayedModel || 'no model'}
-                {displayedGenerationRate !== undefined && displayedGenerationRate > 0 && (
-                  <> · ~{displayedGenerationRate < 10 ? displayedGenerationRate.toFixed(1) : Math.round(displayedGenerationRate)} tok/s</>
-                )}
-                {isDebugMode && ` · ${debugStats.heapMB} MB · ${debugStats.tokensUsed.toLocaleString()}/${debugStats.tokensTotal.toLocaleString()} tokens`}
+                <ConversationMetrics source={conversationSource} kind="rate"/>
+                {isDebugMode && ` · ${debugStats.heapMB} MB · ${debugStats.tokensUsed.toLocaleString()}${debugStats.tokensTotal ? `/${debugStats.tokensTotal.toLocaleString()}` : ''} tokens`}
                 {currentFocus && <> · focus <Text color="magenta">{currentFocus}</Text></>}
-                {displayedContextUsage > CONTEXT_THRESHOLDS.VISIBILITY && (
-                  <> · <Text color={displayedContextUsage >= CONTEXT_THRESHOLDS.WARNING ? UI_COLORS.ERROR : displayedContextUsage >= CONTEXT_THRESHOLDS.NORMAL ? UI_COLORS.WARNING : undefined}>
-                    {CONTEXT_THRESHOLDS.MAX_PERCENT - displayedContextUsage}% context left
-                  </Text></>
-                )}
+                <ConversationMetrics source={conversationSource} kind="context"/>
                 {getActiveProfile() !== 'default' && <> · <Text color={UI_COLORS.PRIMARY}>{getActiveProfile()}</Text></>}
                 {backgroundProcessCount > 0 && <> · <Text color={UI_COLORS.PRIMARY}>{backgroundProcessCount} running</Text></>}
                 {scheduledTaskCount > 0 && <> · <Text color={UI_COLORS.PRIMARY}>{scheduledTaskCount} scheduled</Text></>}
@@ -1259,33 +483,22 @@ const AppContentComponent: React.FC<{
             )}
           </Box>
         </Box>
-      )}
+      </ModalHost>
       </>
     }>
-      {/* Conversation View - contains header + all conversation history */}
-      {/* Constrained to max content width for readability */}
-      <Box width={contentWidth}>
-        <ErrorBoundary label="ConversationView" resetKey={state.staticRemountKey}>
-          <ConversationView
-          messages={displayedMessages}
-          onToggleToolCall={isChildSelected ? undefined : actions.toggleToolCallExpanded}
-          isThinking={displayedIsThinking}
-          streamingContent={displayedStreamingContent}
-          activeToolCalls={displayedToolCalls}
-          compactionNotices={isChildSelected ? selectedChildView?.compactionNotices ?? [] : state.compactionNotices}
-          rewindNotices={isChildSelected ? [] : state.rewindNotices}
-          statusMessages={isChildSelected ? selectedChildView?.statusMessages ?? [] : state.statusMessages}
-          staticRemountKey={state.staticRemountKey}
-          config={effectiveConfig}
-          activePluginCount={activePluginCount}
-          totalPluginCount={totalPluginCount}
-          activeMcpCount={activeMcpCount}
-          startupNotices={startupNotices}
-          totalMcpCount={totalMcpCount}
-          currentAgent={displayedAgentName}
-          />
-        </ErrorBoundary>
-      </Box>
+      <ConversationPane
+        source={conversationSource}
+        onToggleToolCall={conversationControls?.toggleToolCallExpanded}
+        rewindNotices={isChildSelected ? [] : state.rewindNotices}
+        staticRemountKey={state.staticRemountKey}
+        config={effectiveConfig}
+        activePluginCount={activePluginCount}
+        totalPluginCount={totalPluginCount}
+        activeMcpCount={activeMcpCount}
+        totalMcpCount={totalMcpCount}
+        startupNotices={startupNotices}
+        currentAgent={displayedAgentName}
+      />
 
 
     </BottomAlignedLayout>
@@ -1318,144 +531,17 @@ const AppContent = React.memo(AppContentComponent);
  * const { unmount } = render(<App config={config} />);
  * ```
  */
-export const App: React.FC<AppProps> = ({
-  config,
-  activityStream,
-  terminalInput,
-  agent,
-  resumeSession,
-  showSetupWizard,
-  showModelSelector,
-  availableModels,
-  activePluginCount,
-  totalPluginCount,
-  activeMcpCount,
-  totalMcpCount,
-  onInteractiveReady,
-  startupNotices,
-  validateProviderOnStartup,
-}) => {
-  // Create activity stream if not provided
-  const streamRef = useRef(activityStream || new ActivityStream());
-
-  const routing = useAgentRouting(agent, streamRef.current);
-
+export const App: React.FC<AppProps> = ({ config, activityStream, agent, ...props }) => {
+  const [stream] = useState(() => activityStream ?? new ActivityStream());
+  const routing = useAgentRouting(agent, stream);
   return (
     <TerminalProvider>
-      <ActivityProvider activityStream={streamRef.current}>
+      <ActivityProvider activityStream={stream}>
         <AppProvider initialConfig={config} conversationStore={routing.primaryAgent.getSession()}>
-          <AppContent
-            foregroundAgent={routing.foregroundAgent}
-            foregroundAgentId={routing.foregroundAgentId}
-            primaryAgent={routing.primaryAgent}
-            selectForegroundConversation={routing.selectForegroundConversation}
-            returnToPrimaryConversation={routing.returnToPrimaryConversation}
-            resumeSession={resumeSession}
-            showSetupWizard={showSetupWizard}
-            showModelSelector={showModelSelector}
-            availableModels={availableModels}
-            activePluginCount={activePluginCount}
-            totalPluginCount={totalPluginCount}
-            activeMcpCount={activeMcpCount}
-            totalMcpCount={totalMcpCount}
-            onInteractiveReady={onInteractiveReady}
-            startupNotices={startupNotices}
-            terminalInput={terminalInput}
-            validateProviderOnStartup={validateProviderOnStartup}
-          />
+          <AppContent {...props} {...routing}/>
         </AppProvider>
       </ActivityProvider>
     </TerminalProvider>
-  );
-};
-
-/**
- * Example usage with message injection for testing
- */
-export interface AppWithMessagesProps extends AppProps {
-  /** Initial messages to display */
-  initialMessages?: Message[];
-}
-
-/**
- * App component with initial messages
- *
- * Useful for testing and development. Allows pre-populating the conversation.
- *
- * @example
- * ```tsx
- * const messages: Message[] = [
- *   { role: 'user', content: 'Hello!' },
- *   { role: 'assistant', content: 'Hi there!' },
- * ];
- *
- * render(<AppWithMessages config={config} initialMessages={messages} />);
- * ```
- */
-export const AppWithMessages: React.FC<AppWithMessagesProps> = ({
-  config,
-  activityStream,
-  agent,
-  initialMessages = [],
-}) => {
-  const streamRef = useRef(activityStream || new ActivityStream());
-
-  const routing = useAgentRouting(agent, streamRef.current);
-
-  return (
-    <TerminalProvider>
-      <ActivityProvider activityStream={streamRef.current}>
-        <AppProvider initialConfig={config} conversationStore={routing.primaryAgent.getSession()}>
-          <AppContentWithMessages
-            foregroundAgent={routing.foregroundAgent}
-            foregroundAgentId={routing.foregroundAgentId}
-            primaryAgent={routing.primaryAgent}
-            selectForegroundConversation={routing.selectForegroundConversation}
-            returnToPrimaryConversation={routing.returnToPrimaryConversation}
-            initialMessages={initialMessages}
-          />
-        </AppProvider>
-      </ActivityProvider>
-    </TerminalProvider>
-  );
-};
-
-/**
- * Inner component that accepts initial messages
- */
-const AppContentWithMessages: React.FC<{
-  foregroundAgent: Agent;
-  foregroundAgentId: string;
-  primaryAgent: Agent;
-  selectForegroundConversation: (agent: Agent, agentId: string) => void;
-  returnToPrimaryConversation: () => void;
-  initialMessages: Message[];
-}> = ({
-  foregroundAgent,
-  foregroundAgentId,
-  primaryAgent,
-  selectForegroundConversation,
-  returnToPrimaryConversation,
-  initialMessages,
-}) => {
-  const hasLoadedRef = useRef(false);
-
-  // Load initial messages on mount
-  useEffect(() => {
-    if (!hasLoadedRef.current && initialMessages.length > 0) {
-      primaryAgent.setMessages(initialMessages);
-      hasLoadedRef.current = true;
-    }
-  }, [initialMessages, primaryAgent]);
-
-  return (
-    <AppContent
-      foregroundAgent={foregroundAgent}
-      foregroundAgentId={foregroundAgentId}
-      primaryAgent={primaryAgent}
-      selectForegroundConversation={selectForegroundConversation}
-      returnToPrimaryConversation={returnToPrimaryConversation}
-    />
   );
 };
 

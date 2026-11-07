@@ -33,9 +33,9 @@ import { useReducer, useState, useCallback } from 'react';
 import { ModelOption } from '../components/ModelSelector.js';
 import { PermissionRequest } from '../components/PermissionPrompt.js';
 import type { PlanApprovalRequest } from '../components/PlanApprovalPrompt.js';
-import type { SessionInfo, Message, PromptInfo, FormRequest } from '@shared/index.js';
+import type { SessionInfo, Message, PromptInfo, FormRequest, FormValue, FormValues } from '@shared/index.js';
 import type { FileChangeStats } from '../components/RewindOptionsSelector.js';
-import type { UndoPreview } from '@services/PatchManager.js';
+import type { PatchMetadata, UndoPreview, UndoFileEntry } from '@services/PatchManager.js';
 
 /**
  * Permission request with ID
@@ -88,8 +88,8 @@ export interface RewindOptionsRequest {
 export interface UndoRequest {
   requestId: string;
   count: number;
-  patches: any[];
-  previewData: any[];
+  patches: Array<Pick<PatchMetadata, 'patch_number' | 'file_path'>>;
+  previewData: UndoPreview[];
 }
 
 /**
@@ -97,7 +97,7 @@ export interface UndoRequest {
  */
 export interface UndoFileListRequest {
   requestId: string;
-  fileList: any[];
+  fileList: UndoFileEntry[];
   selectedIndex: number;
 }
 
@@ -189,7 +189,7 @@ export type ModalEntry =
       kind: 'toolForm';
       queue: FormRequest[];
       fieldIndex: number;
-      values: Record<string, any>;
+      values: FormValues;
       errors: Record<string, string>;
     };
 
@@ -217,7 +217,7 @@ export type ModalAction =
   // Tool-form queue
   | { type: 'toolForm/add'; request: FormRequest }
   | { type: 'toolForm/remove'; requestId: string }
-  | { type: 'toolForm/setValue'; field: string; value: any }
+  | { type: 'toolForm/setValue'; field: string; value: FormValue }
   | { type: 'toolForm/setError'; field: string; error: string | null }
   // Bulk
   | { type: 'clearTransient' };
@@ -344,13 +344,15 @@ export function modalReducer(stack: ModalEntry[], action: ModalAction): ModalEnt
 
 // Stable empty references so derived getters don't churn identity each render.
 const EMPTY_FORM_QUEUE: FormRequest[] = [];
-const EMPTY_VALUES: Record<string, any> = {};
+const EMPTY_VALUES: FormValues = {};
 const EMPTY_ERRORS: Record<string, string> = {};
 
 /**
  * All modal state
  */
 export interface ModalState {
+  /** Top stack entry; layered undo and rewind options own input while visible. */
+  activeModal?: ModalEntry;
   // Permission prompt (queue-based: permissionRequest is first in queue)
   permissionRequest?: PermissionRequestWithId;
   permissionRequestQueueLength: number;
@@ -451,28 +453,17 @@ export interface ModalState {
   toolFormQueue: FormRequest[];
   toolFormQueueLength: number;
   toolFormFieldIndex: number;
-  toolFormValues: Record<string, any>;
+  toolFormValues: FormValues;
   toolFormErrors: Record<string, string>;
   addToolFormRequest: (request: FormRequest) => void;
   removeToolFormRequest: (requestId: string) => void;
   setToolFormFieldIndex: (index: number) => void;
-  setToolFormValue: (field: string, value: any) => void;
+  setToolFormValue: (field: string, value: FormValue) => void;
   setToolFormError: (field: string, error: string | null) => void;
 
   /** Whether any modal or selector is open. */
   hasOpenModal: boolean;
 
-  // Input buffer (preserve across modal renders)
-  inputBuffer: string;
-  setInputBuffer: (buffer: string) => void;
-
-  // Background-agent fleet navigation (a focus region, NOT a modal — it
-  // coexists with the live prompt). fleetSelectedIndex is 0-based over the
-  // selectable list [main, ...backgroundAgents] (0 === the 'main' row).
-  fleetFocused: boolean;
-  setFleetFocused: (focused: boolean) => void;
-  fleetSelectedIndex: number;
-  setFleetSelectedIndex: (index: number) => void;
 
   // Exit confirmation (Ctrl+C on empty buffer)
   isWaitingForExitConfirmation: boolean;
@@ -512,10 +503,7 @@ export const useModalState = (): ModalState => {
   const [agentWizardData, setAgentWizardData] = useState<AgentWizardData>({});
   const [inputPrefillText, setInputPrefillText] = useState<string | undefined>(undefined);
   const [promptPrefilled, setPromptPrefilled] = useState(false);
-  const [inputBuffer, setInputBuffer] = useState<string>('');
   const [isWaitingForExitConfirmation, setIsWaitingForExitConfirmation] = useState(false);
-  const [fleetFocused, setFleetFocused] = useState(false);
-  const [fleetSelectedIndex, setFleetSelectedIndex] = useState(0);
 
   // --- Derived entries -----------------------------------------------------
   const permission = findEntry(stack, 'permission');
@@ -682,7 +670,7 @@ export const useModalState = (): ModalState => {
     []
   );
   const setToolFormValue = useCallback(
-    (field: string, value: any) => dispatch({ type: 'toolForm/setValue', field, value }),
+    (field: string, value: FormValue) => dispatch({ type: 'toolForm/setValue', field, value }),
     []
   );
   const setToolFormError = useCallback(
@@ -694,6 +682,7 @@ export const useModalState = (): ModalState => {
   const clearTransientModals = useCallback(() => dispatch({ type: 'clearTransient' }), []);
 
   return {
+    activeModal: stack.at(-1),
     // Permission prompt
     permissionRequest: permission?.queue[0],
     permissionRequestQueueLength: permission?.queue.length ?? 0,
@@ -800,14 +789,6 @@ export const useModalState = (): ModalState => {
     setToolFormFieldIndex,
     setToolFormValue,
     setToolFormError,
-
-    // Input buffer
-    inputBuffer,
-    setInputBuffer,
-    fleetFocused,
-    setFleetFocused,
-    fleetSelectedIndex,
-    setFleetSelectedIndex,
 
     // Exit confirmation
     isWaitingForExitConfirmation,

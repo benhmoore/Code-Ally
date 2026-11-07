@@ -1,5 +1,6 @@
 /** Controlled ablations for Code Ally prompt, tool, and reasoning decisions. */
 
+import { scoreSchemaReliability, SCHEMA_SCENARIOS } from './schemaReliabilityScoring.js';
 import { DEFAULT_CONFIG } from '../config/defaults.js';
 import { evaluateToolDiscovery } from './toolDiscovery.js';
 import { createHash } from 'node:crypto';
@@ -20,7 +21,7 @@ import {
   normalizeProviderToolDefinitions,
 } from './runtimeToolProfiles.js';
 
-const SUITE = { id: 'code-ally-harness-ablation', version: 13 } as const;
+const SUITE = { id: 'code-ally-harness-ablation', version: 14 } as const;
 const FIXTURE_NOW = new Date('2026-08-17T14:08:36.000Z');
 const FIXTURE_TIME_ZONE = 'America/Chicago';
 
@@ -142,7 +143,9 @@ const DISTRACTORS: FunctionDefinition[] = [
 ];
 
 const FULL_TOOLS = [READ, GREP, BASH, APPLY_PATCH, BATCH, ...DISTRACTORS];
-const RUNTIME_CORE_TOOLS = createRuntimeCoreToolDefinitions();
+function runtimeCoreTools(options: Options): FunctionDefinition[] {
+  return createRuntimeCoreToolDefinitions({ ...DEFAULT_CONFIG, context_size: options.contextSize, max_tokens: options.maxTokens });
+}
 
 const MINIMAL_PROMPT = 'You are a coding assistant. Use the provided tools to complete the request accurately.';
 const CONCISE_PROMPT = `You are Ally, a coding assistant. Complete the request with the fewest correct operations.
@@ -349,9 +352,9 @@ async function promptToolCase(
   options: Options,
 ): Promise<EvalRecord> {
   const functions = density === 'captured_runtime'
-    ? capturedRuntimeTools ?? RUNTIME_CORE_TOOLS
+    ? capturedRuntimeTools ?? runtimeCoreTools(options)
     : density === 'runtime_core'
-    ? RUNTIME_CORE_TOOLS
+    ? runtimeCoreTools(options)
     : density === 'synthetic' ? FULL_TOOLS
     : scenario === 'select_grep' ? [GREP, READ, GLOB_FALLBACK]
       : scenario === 'multi_read' ? [READ, GREP]
@@ -617,16 +620,6 @@ async function behaviorCase(
   });
 }
 
-const SCHEMA_SCENARIOS = [
-  'grep_options',
-  'todo_shape',
-  'relative_schedule',
-  'background_server',
-  'memory_save',
-  'write_new_file',
-  'batched_glob',
-] as const;
-
 async function schemaReliabilityCase(
   client: OllamaClient,
   model: string,
@@ -634,6 +627,7 @@ async function schemaReliabilityCase(
   variant: string,
   system: string,
   scenario: typeof SCHEMA_SCENARIOS[number],
+  capturedRuntimeTools: FunctionDefinition[] | undefined,
   options: Options,
 ): Promise<EvalRecord> {
   const prompts = {
@@ -649,93 +643,20 @@ async function schemaReliabilityCase(
   // Default profiles still measure the same compact surface as the live agent.
   const requested = scenario === 'relative_schedule' ? ['scheduled-tasks']
     : scenario === 'memory_save' ? ['memory'] : [];
-  const functions = requested.length > 0
+  const functions = capturedRuntimeTools ?? (requested.length > 0
     ? createRuntimeCoreToolDefinitionsForContext({
       planModeActive: false,
       latestUserText: prompts[scenario],
-    }, undefined, requested)
-    : RUNTIME_CORE_TOOLS;
+    }, { ...DEFAULT_CONFIG, context_size: options.contextSize, max_tokens: options.maxTokens }, requested)
+    : runtimeCoreTools(options));
   const result = await send(client, [
     { role: 'system', content: system },
     { role: 'user', content: prompts[scenario] },
   ], functions, options);
-  const calls = result.response.tool_calls ?? [];
-  const efficiencyScore = Number(calls.length === 1);
-  let functionalScore: number;
-  let functionalMax: number;
-
-  if (scenario === 'grep_options') {
-    const call = callNamed(result.response, 'grep');
-    const args = call?.function.arguments ?? {};
-    functionalScore = Number(Boolean(call))
-      + Number(args.pattern === 'TODO')
-      + Number(args.type === 'ts' || (typeof args.glob === 'string' && /\bts\b|\.ts\b/i.test(args.glob)))
-      + Number(args.case_insensitive === true)
-      + Number(args.output_mode === 'content')
-      + Number(args.context === 2 || (args.before_context === 2 && args.after_context === 2));
-    functionalMax = 6;
-  } else if (scenario === 'todo_shape') {
-    const call = callNamed(result.response, 'todo-write');
-    const todos = call?.function.arguments.todos;
-    const validItems = Array.isArray(todos)
-      && todos.length === 4
-      && todos.every(item => typeof item?.content === 'string'
-        && ['pending', 'in_progress', 'completed'].includes(item?.status));
-    const oneActive = Array.isArray(todos)
-      && todos.filter(item => item?.status === 'in_progress').length === 1;
-    functionalScore = Number(Boolean(call)) + Number(validItems) + Number(oneActive);
-    functionalMax = 3;
-  } else if (scenario === 'relative_schedule') {
-    const call = callNamed(result.response, 'scheduled-tasks');
-    const args = call?.function.arguments ?? {};
-    functionalScore = Number(Boolean(call))
-      + Number(args.action === 'create')
-      + Number(args.schedule?.type === 'once')
-      + Number(args.schedule?.run_in_minutes === 30)
-      + Number(args.policy_preset === 'none')
-      + Number(typeof args.run_prompt === 'string' && args.run_prompt.includes('npm test'));
-    functionalMax = 6;
-  } else if (scenario === 'background_server') {
-    const call = callNamed(result.response, 'bash');
-    const args = call?.function.arguments ?? {};
-    functionalScore = Number(Boolean(call))
-      + Number(args.command === 'npm run dev')
-      + Number(args.run_in_background === true)
-      + Number(args.blocks_completion !== true);
-    functionalMax = 4;
-  } else if (scenario === 'memory_save') {
-    const call = callNamed(result.response, 'memory');
-    const args = call?.function.arguments ?? {};
-    functionalScore = Number(Boolean(call))
-      + Number(args.action === 'save' || args.action === 'update')
-      + Number(typeof args.name === 'string' && args.name.length > 0)
-      + Number(typeof args.body === 'string' && /pnpm/i.test(args.body))
-      + Number(args.type === 'feedback' || args.type === 'user' || args.type === 'project');
-    functionalMax = 5;
-  } else if (scenario === 'write_new_file') {
-    const call = callNamed(result.response, 'write');
-    const args = call?.function.arguments ?? {};
-    functionalScore = Number(Boolean(call))
-      + Number(repositoryPath(args.file_path) === 'src/banner.ts')
-      + Number(typeof args.content === 'string' && args.content.includes('BANNER') && args.content.includes('Code Ally'));
-    functionalMax = 3;
-  } else {
-    const call = callNamed(result.response, 'glob');
-    const patterns = call?.function.arguments.patterns;
-    functionalScore = Number(Boolean(call))
-      + Number(sameStrings(patterns, ['**/Dockerfile*', '**/*.yml', '**/*.yaml']));
-    functionalMax = 2;
-  }
-
   return record({ section: 'schema_reliability', model, repetition, variant, scenario }, {
-    score: functionalScore + efficiencyScore,
-    maxScore: functionalMax + 1,
+    ...scoreSchemaReliability(scenario, result.response, { ...DEFAULT_CONFIG, context_size: options.contextSize, max_tokens: options.maxTokens }, functions),
     elapsedMs: result.elapsedMs,
     responses: [result.response],
-    dimensions: {
-      functional: { score: functionalScore, maxScore: functionalMax },
-      efficiency: { score: efficiencyScore, maxScore: 1 },
-    },
   });
 }
 
@@ -1094,7 +1015,7 @@ async function main(): Promise<void> {
   }
   const options = parseArgs(process.argv.slice(2));
   const capturedRuntimeTools = await loadCapturedTools(options.requestSnapshot);
-  const runtimeEvaluationTools = capturedRuntimeTools ?? RUNTIME_CORE_TOOLS;
+  const runtimeEvaluationTools = capturedRuntimeTools ?? runtimeCoreTools(options);
   const promptToolDensities = [
     'lean',
     'synthetic',
@@ -1131,7 +1052,7 @@ async function main(): Promise<void> {
   const requestFixtures = createRequestFixtures(options, currentPrompt, dynamicContext, runtimeEvaluationTools);
   const toolProfiles = {
     synthetic: describeToolProfile(FULL_TOOLS),
-    runtimeCore: describeToolProfile(RUNTIME_CORE_TOOLS),
+    runtimeCore: describeToolProfile(runtimeCoreTools(options)),
     ...(capturedRuntimeTools ? { capturedRuntime: describeToolProfile(capturedRuntimeTools) } : {}),
   };
   const environment = await evaluationEnvironment(options);
@@ -1254,7 +1175,7 @@ async function main(): Promise<void> {
             const system = prompts[variant]!;
             for (const scenario of rotate(SCHEMA_SCENARIOS, orderOffset)) {
               if (!isCompleted(records, { section: 'schema_reliability', model, repetition, variant, scenario })) {
-                await add(schemaReliabilityCase(client, model, repetition, variant, system, scenario, options));
+                await add(schemaReliabilityCase(client, model, repetition, variant, system, scenario, capturedRuntimeTools, options));
               }
             }
           }
@@ -1322,7 +1243,7 @@ async function main(): Promise<void> {
     toolCounts: {
       lean: '2-3',
       synthetic: FULL_TOOLS.length,
-      runtimeCore: RUNTIME_CORE_TOOLS.length,
+      runtimeCore: runtimeCoreTools(options).length,
       ...(capturedRuntimeTools ? { capturedRuntime: capturedRuntimeTools.length } : {}),
     },
     summaries: {

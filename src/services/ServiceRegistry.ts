@@ -31,6 +31,7 @@ export class ServiceDescriptor<T = unknown> {
   private _initPromise?: Promise<void>;
   private _initializing: boolean = false;
   private _initError?: Error;
+  private readonly transientInstances = new Map<T, Promise<void> | undefined>();
 
   constructor(
     public readonly serviceType: new (...args: unknown[]) => T,
@@ -74,7 +75,12 @@ export class ServiceDescriptor<T = unknown> {
     // Call initialize if service implements IService
     // Track initialization promise to prevent race conditions
     if (isIService(instance)) {
-      if (!this._initializing && !this._initPromise) {
+      if (this.lifecycle === ServiceLifecycle.TRANSIENT) {
+        const initialized = Promise.resolve().then(() => instance.initialize());
+        // Retain the rejection for ensureInitialized/shutdown without an unhandled rejection.
+        void initialized.catch(() => {});
+        this.transientInstances.set(instance, initialized);
+      } else if (!this._initializing && !this._initPromise) {
         this._initializing = true;
         this._initPromise = instance.initialize()
           .catch(error => {
@@ -85,6 +91,10 @@ export class ServiceDescriptor<T = unknown> {
             this._initializing = false;
           });
       }
+    }
+    if (this.lifecycle === ServiceLifecycle.TRANSIENT && !this.transientInstances.has(instance)
+      && typeof (instance as { cleanup?: unknown })?.cleanup === 'function') {
+      this.transientInstances.set(instance, undefined);
     }
 
     // Cache if singleton
@@ -100,6 +110,7 @@ export class ServiceDescriptor<T = unknown> {
    * This should be called by consumers who need to ensure the service is ready
    */
   async ensureInitialized(): Promise<void> {
+    await Promise.all(this.transientInstances.values());
     if (this._initPromise) {
       await this._initPromise;
     }
@@ -109,6 +120,7 @@ export class ServiceDescriptor<T = unknown> {
   }
 
   getCachedInstance(): T | undefined { return this._instance; }
+  getTransientInstances(): ReadonlyMap<T, Promise<void> | undefined> { return this.transientInstances; }
 }
 
 /**
@@ -128,6 +140,8 @@ export class ServiceRegistry {
    */
   private _cleanupFns: Map<string, () => Promise<void>> = new Map();
   private shutdownPromise?: Promise<void>;
+  private readonly retiredCleanup = new Set<Promise<void>>();
+  private readonly retiredFailures: unknown[] = [];
 
   private constructor() {
     this._services = new Map();
@@ -189,7 +203,19 @@ export class ServiceRegistry {
    */
   registerInstance<K extends ServiceName>(name: K, instance: ServiceMap[K]): this {
     this.assertRegistrationOpen();
+    const previous = this._services.get(name);
     this._services.set(name, instance);
+    if (previous && previous !== instance && ![...this._services.values()].includes(previous)
+      && typeof (previous as { cleanup?: unknown }).cleanup === 'function') {
+      const resource = previous as { cleanup: () => Promise<void> };
+      const operation = Promise.resolve().then(() => resource.cleanup());
+      this.retiredCleanup.add(operation);
+      void operation.then(() => this.retiredCleanup.delete(operation), error => {
+        this.retiredCleanup.delete(operation);
+        this.retiredFailures.push(error);
+        logger.error(`Error cleaning replaced service '${name}':`, error);
+      });
+    }
     return this;
   }
 
@@ -276,6 +302,7 @@ export class ServiceRegistry {
   }
 
   private async drainResources(): Promise<void> {
+    await Promise.allSettled(this.retiredCleanup);
     const cleanup = async (label: string, fn: () => Promise<void>): Promise<void> => {
       const timer = setTimeout(() => {
         logger.warn(`Cleanup still pending for ${label} after ${CLEANUP_WARNING_MS}ms`);
@@ -286,13 +313,14 @@ export class ServiceRegistry {
     };
 
     const cleanupPromises: Promise<void>[] = [];
-    const owners = new Map<IService, { label: string; initializers: Array<() => Promise<void>> }>();
+    const owners = new Map<{ cleanup: () => Promise<void> }, { label: string; initializers: Array<() => Promise<void>> }>();
     const cleanupOwner = (label: string, instance: unknown, initializer?: () => Promise<void>) => {
-      if (!isIService(instance)) return;
-      let owner = owners.get(instance);
+      if (!instance || typeof (instance as { cleanup?: unknown }).cleanup !== 'function') return;
+      const resource = instance as { cleanup: () => Promise<void> };
+      let owner = owners.get(resource);
       if (!owner) {
         owner = { label, initializers: [] };
-        owners.set(instance, owner);
+        owners.set(resource, owner);
       }
       if (initializer) owner.initializers.push(initializer);
     };
@@ -305,6 +333,9 @@ export class ServiceRegistry {
     for (const [name, descriptor] of this._descriptors.entries()) {
       const inst = descriptor.getCachedInstance();
       cleanupOwner(`descriptor:${name}`, inst, () => descriptor.ensureInitialized());
+      for (const [instance, initialized] of descriptor.getTransientInstances()) {
+        cleanupOwner(`transient:${name}`, instance, async () => { await initialized; });
+      }
     }
 
     for (const [instance, owner] of owners) {
@@ -324,8 +355,8 @@ export class ServiceRegistry {
 
     const results = await Promise.allSettled(cleanupPromises);
     const failures = results.filter(result => result.status === 'rejected');
-    if (failures.length) {
-      throw new AggregateError(failures.map(result => result.reason), 'Service registry cleanup failed');
+    if (failures.length || this.retiredFailures.length) {
+      throw new AggregateError([...failures.map(result => result.reason), ...this.retiredFailures], 'Service registry cleanup failed');
     }
 
     // Clear all registrations

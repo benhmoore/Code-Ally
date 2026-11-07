@@ -40,7 +40,7 @@ describe('session autosave barriers', () => {
     await expect((manager as any).flushPendingAutoSave()).rejects.toThrow('Session autosave persistence failed');
     await expect(manager.forceSave()).rejects.toThrow('Session autosave persistence failed');
     await expect(manager.cleanup()).rejects.toThrow('Session autosave persistence failed');
-    expect(write).toHaveBeenCalledOnce();
+    expect(write).toHaveBeenCalledTimes(3);
   });
 
   it('retains failures from writes transferred during a session switch', async () => {
@@ -55,6 +55,7 @@ describe('session autosave barriers', () => {
     expect(await manager.autoSave([{ role: 'user', content: 'second snapshot' }])).toBe(true);
     await expect(manager.forceSave()).rejects.toThrow('Session autosave persistence failed');
     await expect(manager.cleanup()).rejects.toThrow('Session autosave persistence failed');
-    expect(writes.mock.calls.map(args => args[0])).toEqual(['first', 'second']);
+    expect(writes.mock.calls.filter(args => args[0] === 'first')).toHaveLength(3);
+    expect(writes.mock.calls.filter(args => args[0] === 'second')).toHaveLength(1);
   });
 });

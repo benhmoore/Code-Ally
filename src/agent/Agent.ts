@@ -27,7 +27,9 @@ import {
 } from '../llm/ModelClient.js';
 import { ToolManager } from '../tools/ToolManager.js';
 import { ConversationOperationQueue } from './ConversationOperationQueue.js';
-import { DURABLE_OBJECTIVE_TOOLS, getRuntimeToolExclusions, needsTemporalContext } from '../tools/runtimeToolSelection.js';
+import { toolSchemaBudget } from './context/ContextBudget.js';
+import { deferredToolCatalogueMessage, renderDeferredToolCatalogue } from '../tools/ToolExposurePolicy.js';
+import { DURABLE_OBJECTIVE_TOOLS, selectRuntimeToolSurface, needsTemporalContext } from '../tools/runtimeToolSelection.js';
 import { ActivityStream } from '../services/ActivityStream.js';
 import { ServiceRegistry, type ScopedServiceRegistryProxy } from '../services/ServiceRegistry.js';
 import { ToolOrchestrator } from './ToolOrchestrator.js';
@@ -172,6 +174,8 @@ export interface AgentConfig {
   agentCallStack?: string[];
   /** Internal: Scoped registry for this agent (shadows global for 'agent' key to prevent race conditions) */
   _scopedRegistry?: ScopedServiceRegistryProxy;
+  /** Composition-owned resources outlive an individual root-agent replacement. */
+  _resourceOwnership?: { modelClient: 'owned' | 'borrowed'; activityStream: 'owned' | 'borrowed' };
   /** Internal: this root agent is executing an unattended scheduled task. */
   isScheduledRun?: boolean;
   /** Internal: this root agent is executing a single noninteractive request. */
@@ -256,6 +260,8 @@ export class Agent {
 
   // Lifecycle handling - idle coordinator, auto-cleanup
   private lifecycleHandler: AgentLifecycleHandler;
+  private ownsModelClient: boolean;
+  private ownsActivityStream: boolean;
 
   // Stream-progress subscriptions feeding the activity watchdog
   private streamProgressUnsubscribes: Array<() => void> = [];
@@ -312,6 +318,11 @@ export class Agent {
 
     // Store scoped registry from config (for parallel execution safety)
     this.scopedRegistry = config._scopedRegistry;
+    this.ownsModelClient = config._resourceOwnership?.modelClient
+      ? config._resourceOwnership.modelClient === 'owned' : !config.isSpecializedAgent;
+    this.ownsActivityStream = config._resourceOwnership?.activityStream
+      ? config._resourceOwnership.activityStream === 'owned'
+      : !config.isSpecializedAgent || activityStream.getParentId?.() !== undefined;
 
     // Generate unique instance ID for debugging: agent-{timestamp}-{7-char-random} (base-36, skip '0.' prefix)
     this.instanceId = `agent-${Date.now()}-${Math.random().toString(ID_GENERATION.RANDOM_STRING_RADIX).substring(ID_GENERATION.RANDOM_STRING_SUBSTRING_START, ID_GENERATION.RANDOM_STRING_SUBSTRING_START + ID_GENERATION.RANDOM_STRING_LENGTH_SHORT)}`;
@@ -501,7 +512,7 @@ export class Agent {
     );
 
     // Create lifecycle handler for peripheral concerns
-    this.lifecycleHandler = new AgentLifecycleHandler(this.instanceId);
+    this.lifecycleHandler = new AgentLifecycleHandler(this.instanceId, !this.config.isSpecializedAgent);
 
     // Focus is a process-global resource borrowed for this agent's lifetime.
     // The manager is resolved lazily: it may be registered after construction.
@@ -864,6 +875,7 @@ export class Agent {
   resetForReuse(): void {
     if (this.turnAdmissionActive || this.conversationOperations.hasWork || this.closing) throw new Error('Cannot reuse an active or closing agent');
     this.sessionRuntime?.dispose();
+    ServiceRegistry.getInstance().get('tool_activation_registry')?.clear(this.instanceId);
     this.sessionRuntime = undefined;
     this.inputQueue.close();
     this.inputQueue = new ConversationInputQueue(() => !!this.config?.isSpecializedAgent || this.isProcessing());
@@ -1510,6 +1522,85 @@ export class Agent {
    * @param executionContext - Execution context for this invocation
    * @returns LLM response with potential tool calls
    */
+  private getLatestUserText(): string | undefined {
+    return this.conversationManager.getMessages().findLast(message => message.role === 'user')?.content;
+  }
+
+  /** Recompute eligibility for both requests and discovery after any policy change. */
+  private selectRequestTools() {
+    // Get function definitions from tool manager
+    // Exclude restricted tools based on agent type
+    const allowTodoManagement = this.config.allowTodoManagement ?? !this.config.isSpecializedAgent;
+
+    const excludeTools: string[] = [];
+    if (!allowTodoManagement) {
+      excludeTools.push(...TOOL_NAMES.TODO_MANAGEMENT_TOOLS);
+    }
+
+    // Main-agent-only tools (e.g. memory) are hidden from every delegated agent.
+    // "Delegated" is isSpecializedAgent — NOT the agent name (the main agent is
+    // named, typically 'ally'), which is why this keys off the same signal as todo tools.
+    if (this.config.isSpecializedAgent) {
+      excludeTools.push(...this.toolManager.getMainAgentOnlyToolNames());
+    }
+
+    // Human-input tools are unavailable in automatic runs. This is a schema
+    // filter for model efficiency; FormManager/PlanModeManager enforce the same
+    // invariant at runtime for defense in depth.
+    const runtimeRegistry = ServiceRegistry.getInstance();
+    const runPolicyManager = runtimeRegistry.get('run_policy_manager');
+    if (runPolicyManager?.getPolicy().completion !== 'durable_objective') {
+      excludeTools.push(...DURABLE_OBJECTIVE_TOOLS);
+    }
+    if (runPolicyManager && !runPolicyManager.isInteractionAvailable()) {
+      excludeTools.push(
+        ...this.toolManager.getInteractiveToolNames(),
+        'enter-plan-mode',
+        'write-plan',
+        'exit-plan-mode'
+      );
+    }
+
+    const planModeManager = runtimeRegistry.get('plan_mode_manager');
+    const conversationMessages = this.conversationManager.getMessages();
+    const latestUserText = this.getLatestUserText();
+    const toolSelectionContext = {
+      planModeActive: planModeManager?.isActive() ?? false,
+      latestUserText,
+      backgroundTasks: runtimeRegistry.get('background_task_registry')?.list() ?? [],
+      hasPersistentAgent: (runtimeRegistry.get('agent_pool')?.getAgentIds().length ?? 0) > 0,
+      hasToolResults: conversationMessages.some(message => message.role === 'tool'),
+      hasCheckpoint: this.conversationManager.hasCheckpoint(),
+    };
+
+    const availableFunctions = this.toolManager.getFunctionDefinitions(
+      excludeTools.length > 0 ? excludeTools : undefined,
+      this.agentName,  // Pass agent name for visible_to filtering
+      this.config.allowedTools  // Pass allowed tools list for restriction
+    );
+
+    // Tool schemas are paid on every request and are never reclaimable, so on a
+    // small window they must not crowd out the conversation. Send the core loop
+    // plus whatever the agent has loaded on demand, and advertise the rest.
+    return selectRuntimeToolSurface({
+      context: toolSelectionContext,
+      definitions: availableFunctions,
+      schemaBudget: toolSchemaBudget(this.tokenManager.getContextSize(), this.appConfig.max_tokens),
+      activated: runtimeRegistry.get('tool_activation_registry')?.get(this.instanceId),
+      requested: runtimeRegistry.get('tool_activation_registry')?.getRequested(this.instanceId),
+      disallowed: runtimeRegistry.get('trust_manager')?.getDisallowedToolPatterns(),
+      // Completion requirements must remain directly callable, including
+      // legacy requirements and every alternative in a one-of requirement.
+      pinned: [
+        ...this.requiredToolTracker.getRequiredTools(),
+        ...(this.config.requirements?.required_tools_all ?? []),
+        ...(this.config.requirements?.required_tools_one_of ?? []),
+        ...(runtimeRegistry.get('structured_output_sink') ? [STRUCTURED_OUTPUT_TOOL] : []),
+      ],
+      estimateTokens: text => this.tokenManager.estimateTokens(text),
+    });
+  }
+
   private async getLLMResponse(executionContext: AgentExecutionContext): Promise<LLMResponse> {
     if (this.conversationOperations.hasWork) await this.conversationOperations.drain();
     // Per-turn round-trip backstop: stop a runaway loop (e.g. a model that keeps
@@ -1577,81 +1668,10 @@ export class Agent {
       }
     }
 
-    // Get function definitions from tool manager
-    // Exclude restricted tools based on agent type
-    const allowTodoManagement = this.config.allowTodoManagement ?? !this.config.isSpecializedAgent;
-
-    const excludeTools: string[] = [];
-    if (!allowTodoManagement) {
-      excludeTools.push(...TOOL_NAMES.TODO_MANAGEMENT_TOOLS);
-    }
-
-    // Main-agent-only tools (e.g. memory) are hidden from every delegated agent.
-    // "Delegated" is isSpecializedAgent — NOT the agent name (the main agent is
-    // named, typically 'ally'), which is why this keys off the same signal as todo tools.
-    if (this.config.isSpecializedAgent) {
-      excludeTools.push(...this.toolManager.getMainAgentOnlyToolNames());
-    }
-
-    // Human-input tools are unavailable in automatic runs. This is a schema
-    // filter for model efficiency; FormManager/PlanModeManager enforce the same
-    // invariant at runtime for defense in depth.
-    const runtimeRegistry = ServiceRegistry.getInstance();
-    const runPolicyManager = runtimeRegistry.get('run_policy_manager');
-    if (runPolicyManager?.getPolicy().completion !== 'durable_objective') {
-      excludeTools.push(...DURABLE_OBJECTIVE_TOOLS);
-    }
-    if (runPolicyManager && !runPolicyManager.isInteractionAvailable()) {
-      excludeTools.push(
-        ...this.toolManager.getInteractiveToolNames(),
-        'enter-plan-mode',
-        'write-plan',
-        'exit-plan-mode'
-      );
-    }
-
-    const planModeManager = runtimeRegistry.get('plan_mode_manager');
-    const conversationMessages = this.conversationManager.getMessages();
-    const latestUserText = [...conversationMessages]
-      .reverse()
-      .find(message => message.role === 'user')?.content;
-    excludeTools.push(...getRuntimeToolExclusions({
-      planModeActive: planModeManager?.isActive() ?? false,
-      latestUserText,
-      backgroundTasks: runtimeRegistry.get('background_task_registry')?.list() ?? [],
-      hasPersistentAgent: (runtimeRegistry.get('agent_pool')?.getAgentIds().length ?? 0) > 0,
-      hasToolResults: conversationMessages.some(message => message.role === 'tool'),
-      hasCheckpoint: this.conversationManager.hasCheckpoint(),
-    }));
-
-    const availableFunctions = this.toolManager.getFunctionDefinitions(
-      excludeTools.length > 0 ? excludeTools : undefined,
-      this.agentName,  // Pass agent name for visible_to filtering
-      this.config.allowedTools  // Pass allowed tools list for restriction
-    );
-
-    // Tool schemas are paid on every request and are never reclaimable, so on a
-    // small window they must not crowd out the conversation. Send the core loop
-    // plus whatever the agent has loaded on demand, and advertise the rest.
-    const { selectExposedTools, renderDeferredToolCatalogue } =
-      await import('../tools/ToolExposurePolicy.js');
-    const { toolSchemaBudget } = await import('./context/ContextBudget.js');
-    const exposure = selectExposedTools({
-      definitions: availableFunctions,
-      schemaBudget: toolSchemaBudget(this.tokenManager.getContextSize(), this.appConfig.max_tokens),
-      activated: runtimeRegistry.get('tool_activation_registry')?.get(this.instanceId),
-      requested: runtimeRegistry.get('tool_activation_registry')?.getRequested(this.instanceId),
-      disallowed: runtimeRegistry.get('trust_manager')?.getDisallowedToolPatterns(),
-      // Completion requirements must remain directly callable, including
-      // legacy requirements and every alternative in a one-of requirement.
-      pinned: [
-        ...this.requiredToolTracker.getRequiredTools(),
-        ...(this.config.requirements?.required_tools_all ?? []),
-        ...(this.config.requirements?.required_tools_one_of ?? []),
-        ...(runtimeRegistry.get('structured_output_sink') ? [STRUCTURED_OUTPUT_TOOL] : []),
-      ],
-      estimateTokens: text => this.tokenManager.estimateTokens(text),
-    });
+    const latestUserText = this.getLatestUserText();
+    const exposure = this.selectRequestTools();
+    ServiceRegistry.getInstance().get('tool_activation_registry')
+      ?.setAvailable(this.instanceId, () => this.selectRequestTools().eligible);
     const functions = exposure.exposed;
     this.deferredToolCatalogue = renderDeferredToolCatalogue(exposure.deferred);
     this.lastRequestFunctions = [...functions];
@@ -2585,18 +2605,8 @@ export class Agent {
    * nothing extra since compaction turns re-prefill the window anyway.
    */
   private ensureDeferredToolCatalogueMessage(): void {
-    const catalogue = this.deferredToolCatalogue;
-    if (!catalogue) return;
-    const alreadyPresent = this.conversationManager.getMessages().some(
-      msg =>
-        msg.metadata?.deferredToolCatalogue &&
-        typeof msg.content === 'string' &&
-        msg.content.includes(catalogue)
-    );
-    if (alreadyPresent) return;
-    const reminder = createSystemReminder(catalogue, true);
-    reminder.metadata = { ...(reminder.metadata ?? {}), deferredToolCatalogue: true };
-    this.conversationManager.addMessage(reminder);
+    const reminder = deferredToolCatalogueMessage(this.conversationManager.getMessages(), this.deferredToolCatalogue);
+    if (reminder) this.conversationManager.addMessage(reminder);
   }
 
   /**
@@ -3018,15 +3028,19 @@ export class Agent {
   }
 
   /**
-   * Cleanup resources
-   *
-   * NOTE: Subagents share the ModelClient with the main agent, so they should
-   * NOT close it. Only the main agent should close the shared client.
+   * Drain work and release owned resources. Borrowed model clients and streams
+   * remain with their composition owner across root-agent replacement.
    */
   cleanup(): Promise<void> {
     this.closing = true;
     this.cleanupPromise ??= this.performCleanup();
     return this.cleanupPromise;
+  }
+
+  /** Explicitly hand composition-owned resources back before replacing this agent. */
+  relinquishSharedResources(client: ModelClient | null, stream: ActivityStream | null): void {
+    if (client === this.modelClient) this.ownsModelClient = false;
+    if (stream === this.activityStream) this.ownsActivityStream = false;
   }
 
   private async performCleanup(): Promise<void> {
@@ -3035,6 +3049,7 @@ export class Agent {
 
     this.conversationView.close();
     this.sessionRuntime?.dispose();
+    ServiceRegistry.getInstance().get('tool_activation_registry')?.clear(this.instanceId);
 
     // Stop activity monitoring
     this.stopActivityMonitoring();
@@ -3047,13 +3062,9 @@ export class Agent {
     // Clean up ActivityStream listeners to prevent memory leaks
     // This is critical for long-running sessions with many agents.
     //
-    // Each agent owns its stream: the main/root agent owns the root stream (torn
-    // down at shutdown), and a sub-agent owns a scoped child stream (parentId set)
-    // that must be released on disposal. We must NEVER cleanup the shared root
-    // stream from a sub-agent — but sub-agents no longer share it, so a scoped
-    // stream is the precise signal that cleanup is safe and required.
-    const ownsScopedStream = this.activityStream?.getParentId?.() !== undefined;
-    if ((!this.config.isSpecializedAgent || ownsScopedStream) && this.activityStream && typeof this.activityStream.cleanup === 'function') {
+    // Composition roots retain shared streams across agent replacement; scoped
+    // child streams and standalone agents release their own stream here.
+    if (this.ownsActivityStream && this.activityStream && typeof this.activityStream.cleanup === 'function') {
       this.activityStream.cleanup();
     }
 
@@ -3067,9 +3078,8 @@ export class Agent {
     // Individual delegation contexts are cleared via transitionToCompleting() and clear() when each
     // delegation completes in the tool code (AgentTool, BaseDelegationTool, etc.)
 
-    // Only close the model client if this is NOT a specialized subagent
-    // Subagents share the client and shouldn't close it
-    if (!this.config.isSpecializedAgent && this.modelClient.close) {
+    // Shared clients are borrowed; dedicated and standalone clients are owned.
+    if (this.ownsModelClient && this.modelClient.close) {
       await this.modelClient.close();
     }
 

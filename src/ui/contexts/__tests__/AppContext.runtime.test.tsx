@@ -5,8 +5,11 @@ import { expect, it } from 'vitest';
 import { AppProvider, useAppContext, type AppContextValue } from '../AppContext.js';
 import { DEFAULT_CONFIG } from '../../../config/defaults.js';
 import { ActivityStream } from '../../../services/ActivityStream.js';
-import { ConversationViewStore } from '../../../services/ConversationViewStore.js';
+import { useConversationSelector } from '../../hooks/useConversationSelector.js';
+import { ConversationViewStore, type ConversationViewSnapshot } from '../../../services/ConversationViewStore.js';
 import { ActivityEventType, type Message } from '../../../types/index.js';
+
+const selectView = (view: ConversationViewSnapshot) => view;
 
 class FakeStdout extends EventEmitter {
   columns = 100;
@@ -20,9 +23,11 @@ it('exposes the authoritative runtime to application consumers and keeps notices
   const messages: Message[] = [{ id: 'user', role: 'user', content: 'hello', timestamp: 1 }];
   const store = new ConversationViewStore(stream, () => messages, () => []);
   let context: AppContextValue | undefined;
+  let runtime: ConversationViewSnapshot | undefined;
   const Harness = () => {
     const value = useAppContext();
-    useEffect(() => { context = value; }, [value]);
+    const view = useConversationSelector(store, selectView);
+    useEffect(() => { context = value; runtime = view; }, [value, view]);
     return null;
   };
   const mount = () => render(<AppProvider initialConfig={DEFAULT_CONFIG} conversationStore={store}><Harness /></AppProvider>, {
@@ -31,20 +36,20 @@ it('exposes the authoritative runtime to application consumers and keeps notices
   let instance = mount();
   try {
     await new Promise(resolve => setTimeout(resolve, 0));
-    expect(context?.state.messages[0]?.content).toBe('hello');
+    expect(runtime?.messages[0]?.content).toBe('hello');
     context!.actions.addMessage({ role: 'assistant', content: 'notice', timestamp: 2 });
     stream.emit({ id: 'start', type: ActivityEventType.AGENT_START, timestamp: 3, data: {} });
     await new Promise(resolve => setTimeout(resolve, 0));
-    expect(context?.state.isThinking).toBe(true);
-    expect(context?.state.messages.map(message => message.content)).toEqual(['hello', 'notice']);
+    expect(runtime?.isThinking).toBe(true);
+    expect(runtime?.messages.map(message => message.content)).toEqual(['hello', 'notice']);
     instance.unmount();
     messages.push({ id: 'reply', role: 'assistant', content: 'reply', timestamp: 4 });
     stream.emit({ id: 'message', type: ActivityEventType.CONVERSATION_MESSAGE_ADDED, timestamp: 4, data: { message: messages[1]! } });
     stream.emit({ id: 'end', type: ActivityEventType.AGENT_END, timestamp: 5, data: {} });
     instance = mount();
     await new Promise(resolve => setTimeout(resolve, 0));
-    expect(context?.state.messages.map(message => message.content)).toEqual(['hello', 'notice', 'reply']);
-    expect(context?.state.isThinking).toBe(false);
+    expect(runtime?.messages.map(message => message.content)).toEqual(['hello', 'notice', 'reply']);
+    expect(runtime?.isThinking).toBe(false);
   } finally {
     instance.unmount();
     store.close();
@@ -55,9 +60,11 @@ it('applies UI tool expansion to the authoritative projection and retains it acr
   const stream = new ActivityStream();
   const store = new ConversationViewStore(stream, () => [], () => []);
   let context: AppContextValue | undefined;
+  let runtime: ConversationViewSnapshot | undefined;
   function Harness() {
     const value = useAppContext();
-    useEffect(() => { context = value; }, [value]);
+    const view = useConversationSelector(store, selectView);
+    useEffect(() => { context = value; runtime = view; }, [value, view]);
     return null;
   }
   const mount = () => render(<AppProvider initialConfig={DEFAULT_CONFIG} conversationStore={store}><Harness/></AppProvider>, {
@@ -68,19 +75,19 @@ it('applies UI tool expansion to the authoritative projection and retains it acr
     stream.emit({ id: 'tool', type: ActivityEventType.TOOL_CALL_START, timestamp: 1,
       data: { toolName: 'read', arguments: {}, collapsed: true } });
     await new Promise(resolve => setTimeout(resolve, 0));
-    context!.actions.toggleToolCallExpanded('tool');
+    store.toggleToolCallExpanded('tool');
     await new Promise(resolve => setTimeout(resolve, 0));
     expect(store.getSnapshot().activeToolCalls[0]?.expanded).toBe(true);
-    expect(context!.state.activeToolCalls[0]?.expanded).toBe(true);
+    expect(runtime!.activeToolCalls[0]?.expanded).toBe(true);
     instance.unmount();
     instance = mount();
     await new Promise(resolve => setTimeout(resolve, 0));
-    expect(context!.state.activeToolCalls[0]?.expanded).toBe(true);
-    context!.actions.setToolCallsExpanded(false);
+    expect(runtime!.activeToolCalls[0]?.expanded).toBe(true);
+    store.setToolCallsExpanded(false);
     context!.actions.setContextUsage(27);
     await new Promise(resolve => setTimeout(resolve, 0));
-    expect(context!.state.activeToolCalls[0]?.expanded).toBe(false);
+    expect(runtime!.activeToolCalls[0]?.expanded).toBe(false);
     expect(store.getSnapshot().contextUsage).toBe(27);
-    expect(context!.state.contextUsage).toBe(27);
+    expect(runtime!.contextUsage).toBe(27);
   } finally { instance.unmount(); store.close(); }
 });

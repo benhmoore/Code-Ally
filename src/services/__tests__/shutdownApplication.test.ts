@@ -23,6 +23,29 @@ function fixture() {
 }
 
 describe('application shutdown coordination', () => {
+  it('settles auxiliary writes before persistence cleanup and closes unowned model clients once', async () => {
+    const { registry, registryShutdown } = fixture();
+    let finish!: () => void;
+    const auxiliary = { cleanup: vi.fn(() => new Promise<void>(resolve => { finish = resolve; })) };
+    const owned = { close: vi.fn() };
+    const unowned = { close: vi.fn().mockResolvedValue(undefined) };
+    const original = registry.get.bind(registry);
+    vi.spyOn(registry, 'get').mockImplementation(name => {
+      if (name === 'idle_message_generator') return auxiliary as any;
+      if (name === 'model_client' || name === 'service_model_client') return unowned as any;
+      if (name === 'agent') return { stopAndDrain: vi.fn(), getModelClient: () => owned } as any;
+      return original(name);
+    });
+    const pending = shutdownApplication(registry);
+    expect(registryShutdown).not.toHaveBeenCalled();
+    expect(unowned.close).not.toHaveBeenCalled();
+    finish();
+    expect(await pending).toEqual([]);
+    expect(unowned.close).toHaveBeenCalledOnce();
+    expect(owned.close).not.toHaveBeenCalled();
+    expect(registryShutdown).toHaveBeenCalledOnce();
+  });
+
   it.each([0, 1, 2, 3, 4, 5])('continues every independent cleanup after step %i fails', async failing => {
     const { registry, operations, calls } = fixture();
     const cause = new Error('cleanup fault');

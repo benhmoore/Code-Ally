@@ -86,18 +86,12 @@ export class ToolSearchTool extends BaseTool {
     );
 
     const registry = this.getExecutionRegistry(executionContext);
-    const toolManager = registry.get('tool_manager');
-    if (!toolManager) {
-      return this.formatErrorResponse('Tool registry unavailable', 'execution_error');
+    const activations = registry.get('tool_activation_registry');
+    const scope = this.getReadScopeId(executionContext);
+    const all = activations?.getAvailable(scope);
+    if (!all) {
+      return this.formatErrorResponse('Discovery surface unavailable for this conversation', 'execution_error');
     }
-
-    // Search the complete surface, not the currently transmitted one — the
-    // whole point is to reach tools whose schemas were withheld.
-    const all: FunctionDefinition[] = toolManager.getFunctionDefinitions(
-      undefined,
-      executionContext?.agentName,
-      undefined,
-    );
 
     const matches = this.match(all, query, maxResults);
     if (matches.length === 0) {
@@ -110,8 +104,7 @@ export class ToolSearchTool extends BaseTool {
     }
 
     const activated = matches.map(definition => definition.function.name);
-    registry.get('tool_activation_registry')
-      ?.activate(this.getReadScopeId(executionContext), activated);
+    activations!.activate(scope, activated);
 
     // The full definitions are transmitted natively on the next model request.
     // Repeating them in conversation content pays for every schema twice and
@@ -127,14 +120,14 @@ export class ToolSearchTool extends BaseTool {
   }
 
   /** `select:` selects exact names; otherwise rank by keyword overlap. */
-  private match(all: FunctionDefinition[], query: string, maxResults: number): FunctionDefinition[] {
+  private match(all: readonly FunctionDefinition[], query: string, maxResults: number): FunctionDefinition[] {
     if (query.toLowerCase().startsWith('select:')) {
       const wanted = query
         .slice('select:'.length)
         .split(',')
         .map(name => name.trim().toLowerCase())
         .filter(Boolean);
-      return all.filter(definition => wanted.includes(definition.function.name.toLowerCase()));
+      return all.filter(definition => wanted.includes(definition.function.name.toLowerCase())).slice(0, maxResults);
     }
 
     const terms = query.toLowerCase().split(/\s+/).filter(Boolean);

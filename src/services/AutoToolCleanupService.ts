@@ -8,7 +8,7 @@
 import { ModelClient } from '../llm/ModelClient.js';
 import { Message, BackgroundTask } from '../types/index.js';
 import { CancellableService } from '../types/CancellableService.js';
-import { POLLING_INTERVALS, API_TIMEOUTS, AUTO_TOOL_CLEANUP } from '../config/constants.js';
+import { AUTO_TOOL_CLEANUP } from '../config/constants.js';
 import type { SessionManager } from './SessionManager.js';
 import { logger } from './Logger.js';
 
@@ -51,6 +51,9 @@ interface CleanupAnalysis {
  */
 export class AutoToolCleanupService implements CancellableService, BackgroundTask {
   private modelClient: ModelClient;
+  private readonly background = new Set<Promise<void>>();
+  private closed = false;
+  private generation = 0;
   private sessionManager: SessionManager;
   private pendingAnalyses = new Set<string>();
   private aborts = new Set<AbortController>();
@@ -84,16 +87,9 @@ export class AutoToolCleanupService implements CancellableService, BackgroundTas
    * The service will naturally retry later when conditions allow.
    */
   cancel(): void {
-    if (this.isAnalyzing) {
-
-      // Cancel all active requests by aborting their signals
-      for (const a of this.aborts) a.abort();
-      this.aborts.clear();
-
-      // Reset flag and clear pending
-      this.isAnalyzing = false;
-      this.pendingAnalyses.clear();
-    }
+    this.generation++;
+    for (const controller of this.aborts) controller.abort();
+    // Pending ownership is released by settlement, never by cancellation.
   }
 
   /**
@@ -187,6 +183,7 @@ export class AutoToolCleanupService implements CancellableService, BackgroundTas
    */
   cleanupBackground(sessionName: string, messages: Message[]): void {
     // Prevent duplicate analyses
+    if (this.closed) return;
     if (this.pendingAnalyses.has(sessionName)) {
       return;
     }
@@ -195,7 +192,7 @@ export class AutoToolCleanupService implements CancellableService, BackgroundTas
     this.isAnalyzing = true;
 
     // Run in background
-    this.analyzeAndStoreAsync(sessionName, messages)
+    const operation = this.analyzeAndStoreAsync(sessionName, messages)
       .catch(error => {
         // Ignore abort/interrupt errors (expected when cancelled)
         if (error.name !== 'AbortError' && !error.message?.includes('abort') && !error.message?.includes('interrupt')) {
@@ -204,8 +201,10 @@ export class AutoToolCleanupService implements CancellableService, BackgroundTas
       })
       .finally(() => {
         this.pendingAnalyses.delete(sessionName);
-        this.isAnalyzing = false;
+        this.isAnalyzing = this.pendingAnalyses.size > 0;
+        this.background.delete(operation);
       });
+    this.background.add(operation);
   }
 
   /**
@@ -215,17 +214,18 @@ export class AutoToolCleanupService implements CancellableService, BackgroundTas
     sessionName: string,
     messages: Message[]
   ): Promise<void> {
+    const generation = this.generation;
     // Perform analysis
     const analysis = await this.analyzeToolCalls(messages);
 
-    if (analysis.irrelevantToolCallIds.length === 0) {
+    if (this.closed || generation !== this.generation || analysis.irrelevantToolCallIds.length === 0) {
       return;
     }
 
 
     // Store pending cleanups in session metadata
     const session = await this.sessionManager.loadSession(sessionName);
-    if (!session) {
+    if (!session || this.closed || generation !== this.generation) {
       return;
     }
 
@@ -389,11 +389,8 @@ If no tool calls are irrelevant, reply with:
    * Cleanup any pending operations
    */
   async cleanup(): Promise<void> {
-    // Wait for pending analyses to complete
-    const startTime = Date.now();
-
-    while (this.pendingAnalyses.size > 0 && Date.now() - startTime < API_TIMEOUTS.CLEANUP_MAX_WAIT) {
-      await new Promise(resolve => setTimeout(resolve, POLLING_INTERVALS.CLEANUP));
-    }
+    this.closed = true;
+    this.cancel();
+    await Promise.allSettled(this.background);
   }
 }

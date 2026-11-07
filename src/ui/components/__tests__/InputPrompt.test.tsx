@@ -4,6 +4,7 @@ import { PassThrough } from 'stream';
 import { render } from 'ink';
 import { describe, expect, test, vi } from 'vitest';
 import { InputPrompt } from '../InputPrompt.js';
+import { EMPTY_DRAFT } from '../../hooks/usePromptDraft.js';
 import type { CompletionProvider } from '../../../services/CompletionProvider.js';
 import type { CommandHistory } from '../../../services/CommandHistory.js';
 import type { Agent } from '../../../agent/Agent.js';
@@ -29,12 +30,12 @@ const stripAnsi = (value: string): string => value.replace(/\x1b\[[0-9;?]*[A-Za-
 const settle = () => new Promise(resolve => setTimeout(resolve, 20));
 
 const ControlledPrompt: React.FC = () => {
-  const [buffer, setBuffer] = useState('');
+  const [draft, setDraft] = useState(EMPTY_DRAFT);
   return (
     <InputPrompt
       onSubmit={() => {}}
-      bufferValue={buffer}
-      onBufferChange={setBuffer}
+      draft={draft}
+      onDraftChange={setDraft}
     />
   );
 };
@@ -271,7 +272,7 @@ describe('InputPrompt controlled buffer', () => {
     const instance = render(
       <InputPrompt
         onSubmit={() => {}}
-        onBufferChange={onBufferChange}
+        onDraftChange={draft => onBufferChange(draft.text)}
         completionProvider={completionProvider}
       />,
       {
@@ -353,7 +354,7 @@ describe('InputPrompt controlled buffer', () => {
     const instance = render(
       <InputPrompt
         onSubmit={onSubmit}
-        onBufferChange={onBufferChange}
+        onDraftChange={draft => onBufferChange(draft.text)}
         completionProvider={completionProvider}
       />,
       {
@@ -394,7 +395,7 @@ describe('InputPrompt controlled buffer', () => {
     const instance = render(
       <InputPrompt
         onSubmit={onSubmit}
-        onBufferChange={onBufferChange}
+        onDraftChange={draft => onBufferChange(draft.text)}
         completionProvider={completionProvider}
       />,
       {
@@ -645,5 +646,59 @@ test('a prominent prompt keeps the cursor visible in a long draft and submits th
     stdin.write('\r');
     await settle();
     expect(onSubmit).toHaveBeenCalledWith(draft, undefined);
+  } finally { instance.unmount(); }
+});
+
+ test('restores the cursor with the draft after a modal unmounts the editor', async () => {
+  const stdout = new FakeStdout();
+  const stdin = new FakeStdin();
+  let draft = { text: 'abcd', cursor: 2 };
+  const submitted = vi.fn();
+  const prompt = () => <InputPrompt draft={draft} onDraftChange={next => { draft = next; }} onSubmit={submitted}/>;
+  const instance = render(prompt(), {
+    stdout: stdout as unknown as NodeJS.WriteStream, stdin: stdin as unknown as NodeJS.ReadStream,
+    debug: true, exitOnCtrlC: false, patchConsole: false,
+  });
+  try {
+    await settle();
+    stdin.write('X');
+    await settle();
+    expect(draft).toEqual({ text: 'abXcd', cursor: 3 });
+    instance.rerender(<React.Fragment/>);
+    await settle();
+    instance.rerender(prompt());
+    await settle();
+    stdin.write('Y');
+    await settle();
+    expect(draft).toEqual({ text: 'abXYcd', cursor: 4 });
+    stdin.write('\r');
+    await settle();
+    expect(submitted).toHaveBeenCalledWith('abXYcd', undefined);
+    expect(draft).toEqual({ text: '', cursor: 0 });
+  } finally { instance.unmount(); }
+});
+
+ test('ignores Kitty key releases instead of inserting or submitting twice', async () => {
+  const stdout = new FakeStdout();
+  const stdin = new FakeStdin();
+  const submitted = vi.fn();
+  let draft = EMPTY_DRAFT;
+  const instance = render(<InputPrompt onSubmit={submitted} onDraftChange={next => { draft = next; }}/>, {
+    stdout: stdout as unknown as NodeJS.WriteStream, stdin: stdin as unknown as NodeJS.ReadStream,
+    debug: true, exitOnCtrlC: false, patchConsole: false,
+  });
+  try {
+    await settle();
+    stdin.write('\x1b[97;1:1u');
+    await settle();
+    stdin.write('\x1b[97;1:3u');
+    await settle();
+    expect(draft.text).toBe('a');
+    stdin.write('\x1b[13;1:3u');
+    await settle();
+    expect(submitted).not.toHaveBeenCalled();
+    stdin.write('\r');
+    await settle();
+    expect(submitted).toHaveBeenCalledExactlyOnceWith('a', undefined);
   } finally { instance.unmount(); }
 });

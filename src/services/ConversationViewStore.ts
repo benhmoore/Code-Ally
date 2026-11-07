@@ -5,6 +5,7 @@ import type { ActivityStream } from './ActivityStream.js';
 import { boundVisibleMessages, boundToolCalls } from './conversationBounds.js';
 import { resolveDisplayContent } from '../utils/toolResultContent.js';
 import { generateMessageId } from '../utils/id.js';
+import { mergeToolAnnotations } from './conversationTools.js';
 
 export interface ConversationViewSnapshot {
   messages: Message[];
@@ -27,6 +28,7 @@ export class ConversationViewStore {
   private readonly listeners = new Set<() => void>();
   private readonly unsubscribe: () => void;
   private displayMessages: Message[] = [];
+  private readonly messageIds = new Set<string>();
   private notificationTimer?: ReturnType<typeof setTimeout>;
   private closed = false;
   private readonly generationRate = new GenerationRate();
@@ -94,6 +96,10 @@ export class ConversationViewStore {
     if (this.closed) return;
     if (replace) { this.displayMessages = []; this.generationRate.clear(); }
     const transcript = [...this.readMessages()];
+    this.messageIds.clear();
+    for (const message of transcript) {
+      if (message.id) this.messageIds.add(message.id);
+    }
     const recordedIds = new Set(transcript.filter(m => m.role === 'tool').map(m => m.tool_call_id));
     const calls = new Map((replace ? [] : this.snapshot.activeToolCalls).map(call => [call.id, call]));
     for (const entry of this.reconstruct(transcript)) {
@@ -101,8 +107,8 @@ export class ConversationViewStore {
       const live = calls.get(recorded.id);
       // Results prove terminal state. Preserve live-only display flags and diffs.
       calls.set(recorded.id, recordedIds.has(recorded.id)
-        ? { ...live, ...recorded }
-        : live ?? recorded);
+        ? { ...live, ...recorded, interjections: mergeToolAnnotations(live?.interjections, recorded.interjections) }
+        : live ? { ...live, interjections: mergeToolAnnotations(live.interjections, recorded.interjections) } : recorded);
     }
     const ids = new Set(transcript.map(message => message.id).filter(Boolean));
     const messages = [...transcript, ...this.displayMessages.filter(message => !ids.has(message.id))]
@@ -113,7 +119,48 @@ export class ConversationViewStore {
       ...(replace ? { generationRate: undefined, streamingContent: undefined, isCompacting: false, statusMessages: [], compactionNotices: [] } : {}) });
   };
 
+  private appendMessage(message: Message): void {
+    if (message.id && this.messageIds.has(message.id)) return;
+    if (message.id) this.messageIds.add(message.id);
+    let entries: ToolCallState[] = [];
+    if (message.role === 'assistant' && message.tool_calls?.length) {
+      entries = this.reconstruct([message]);
+    } else if (message.role === 'tool' && message.tool_call_id) {
+      const id = message.tool_call_id;
+      const live = this.snapshot.activeToolCalls.find(call => call.id === id);
+      const source: Message | undefined = live ? {
+        role: 'assistant', content: '', timestamp: live.startTime,
+        tool_calls: [{ id, type: 'function', function: { name: live.toolName, arguments: live.arguments } }],
+      } : this.readMessages().find(candidate => candidate.tool_calls?.some(call => call.id === id));
+      if (source) entries = this.reconstruct([source, message]).filter(call => call.id === id);
+    }
+    const calls = new Map(this.snapshot.activeToolCalls.map(call => [call.id, call]));
+    let annotationsChanged = false;
+    if (message.role === 'user' && message.metadata?.isInterjection && message.metadata.parentId) {
+      const call = calls.get(message.metadata.parentId);
+      if (call) {
+        const interjections = mergeToolAnnotations(call.interjections, [{
+          id: message.id, message: message.metadata.submittedContent ?? message.content, timestamp: message.timestamp ?? 0,
+        }]);
+        if (interjections.length !== (call.interjections?.length ?? 0)) {
+          calls.set(call.id, { ...call, interjections });
+          annotationsChanged = true;
+        }
+      }
+    }
+    for (const entry of entries) {
+      const existing = calls.get(entry.id);
+      calls.set(entry.id, message.role === 'tool' ? { ...existing, ...entry } : existing ?? entry);
+    }
+    const activeToolCalls = entries.length || annotationsChanged ? boundToolCalls([...calls.values()]) : this.snapshot.activeToolCalls;
+    const messages = boundVisibleMessages([...this.snapshot.messages, message]);
+    this.messageIds.clear();
+    for (const retainedMessage of messages) if (retainedMessage.id) this.messageIds.add(retainedMessage.id);
+    this.publish({ messages, activeToolCalls });
+  }
+
   private updateTool(id: string, update: Partial<ToolCallState>, streamed = false): void {
+    if (!this.snapshot.activeToolCalls.some(call => call.id === id)) return;
     this.publish({ activeToolCalls: boundToolCalls(this.snapshot.activeToolCalls.map(call =>
       call.id === id ? { ...call, ...update } : call)) }, streamed);
   }
@@ -124,14 +171,25 @@ export class ConversationViewStore {
     const ownLifecycle = this.ownerId ? data.instanceId === this.ownerId
       : own && (!data.isSpecializedAgent || !!this.stream.getParentId());
     switch (event.type) {
+      case ActivityEventType.USER_INTERJECTION:
+      case ActivityEventType.INTERJECTION_ACKNOWLEDGMENT: {
+        const call = this.snapshot.activeToolCalls.find(item => item.id === event.parentId);
+        const message = event.type === ActivityEventType.USER_INTERJECTION ? data.message : data.acknowledgment;
+        if (!call || typeof message !== 'string' || !message.trim()) break;
+        const key = event.type === ActivityEventType.USER_INTERJECTION ? 'interjections' : 'acknowledgments';
+        const annotations = mergeToolAnnotations(call[key], [{ id: event.id, message, timestamp: event.timestamp }]);
+        if (annotations.length !== (call[key]?.length ?? 0)) this.updateTool(call.id, { [key]: annotations });
+        break;
+      }
       case ActivityEventType.CONVERSATION_MESSAGE_ADDED:
-        this.refresh();
+        if (data.message) this.appendMessage(data.message);
         break;
       case ActivityEventType.CONVERSATION_DISPLAY_MESSAGE:
         if (data.message) this.addDisplayMessage(data.message);
         break;
       case ActivityEventType.CONVERSATION_CLEAR:
         this.displayMessages = [];
+        this.messageIds.clear();
         this.generationRate.clear();
         this.publish({ messages: [], activeToolCalls: [], streamingContent: undefined, isThinking: false, isCompacting: false, statusMessages: [], compactionNotices: [], contextUsage: 0, generationRate: undefined });
         break;
@@ -179,7 +237,6 @@ export class ConversationViewStore {
         break;
       case ActivityEventType.ASSISTANT_MESSAGE_COMPLETE:
         if (own) {
-          this.refresh();
           this.publish({ streamingContent: undefined });
         }
         break;
@@ -193,7 +250,6 @@ export class ConversationViewStore {
       case ActivityEventType.AGENT_END:
         if (ownLifecycle) {
           this.generationRate.stop();
-          this.refresh();
           this.publish({ isThinking: false, isCompacting: false, streamingContent: undefined,
             activeToolCalls: this.snapshot.activeToolCalls.map(call =>
               ['success', 'error', 'cancelled'].includes(call.status) ? call : {
@@ -233,9 +289,11 @@ export class ConversationViewStore {
         break;
       case ActivityEventType.TOOL_CALL_START: {
         if (data.groupExecution || !data.toolName) break;
+        const existing = this.snapshot.activeToolCalls.find(call => call.id === event.id);
         const call: ToolCallState = {
           ...data, id: event.id, toolName: data.toolName, arguments: data.arguments ?? {},
           startTime: event.timestamp, status: 'pending', parentId: own ? undefined : event.parentId,
+          interjections: existing?.interjections, acknowledgments: existing?.acknowledgments,
         };
         const previous = this.snapshot.activeToolCalls.filter(item => item.id !== call.id);
         this.publish({ activeToolCalls: boundToolCalls([...previous, call]) });

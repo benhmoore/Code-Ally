@@ -15,6 +15,7 @@ import { BackgroundAgentStatus } from '@services/BackgroundAgentManager.js';
 import { useActivityStreamContext } from '../contexts/ActivityContext.js';
 import { ActivityEventType } from '@shared/index.js';
 import { POLLING_INTERVALS } from '@config/constants.js';
+import type { BackgroundAgentTask } from '@services/BackgroundAgentManager.js';
 
 export interface BackgroundAgentInfo {
   id: string;
@@ -26,6 +27,10 @@ export interface BackgroundAgentInfo {
   endTime: number | null;
   /** Live estimated token count for the agent's conversation */
   tokens: number;
+  subAgent: BackgroundAgentTask['subAgent'];
+  completedView: BackgroundAgentTask['completedView'];
+  completedModel: BackgroundAgentTask['completedModel'];
+  inputQueue: BackgroundAgentTask['inputQueue'];
 }
 
 function readAgents(): BackgroundAgentInfo[] {
@@ -43,6 +48,10 @@ function readAgents(): BackgroundAgentInfo[] {
       startTime: task.startTime,
       endTime: task.endTime,
       tokens: task.completedTokens ?? task.subAgent?.getTokenManager?.()?.getCurrentTokenCount?.() ?? 0,
+      subAgent: task.subAgent,
+      completedView: task.completedView,
+      completedModel: task.completedModel,
+      inputQueue: task.inputQueue,
     }));
 }
 
@@ -52,18 +61,23 @@ function readAgents(): BackgroundAgentInfo[] {
 export function useBackgroundAgents(): BackgroundAgentInfo[] {
   const [agents, setAgents] = useState<BackgroundAgentInfo[]>(() => readAgents());
   const activityStream = useActivityStreamContext();
+  const hasRunningAgents = agents.some(agent => agent.status === 'running');
 
   useEffect(() => {
     const refresh = () => setAgents(readAgents());
 
     // Membership/status changes — small delay lets the manager settle first.
-    const onChange = () => setTimeout(refresh, 50);
+    let refreshTimer: ReturnType<typeof setTimeout> | undefined;
+    const onChange = () => {
+      clearTimeout(refreshTimer);
+      refreshTimer = setTimeout(refresh, 50);
+    };
     const unsubStart = activityStream.subscribe(ActivityEventType.AGENT_START, onChange);
     const unsubEnd = activityStream.subscribe(ActivityEventType.AGENT_END, onChange);
     const unsubComplete = activityStream.subscribe(ActivityEventType.AGENT_BACKGROUND_COMPLETE, onChange);
 
     // Shared 1s tick for live elapsed + token counts.
-    const interval = setInterval(refresh, POLLING_INTERVALS.STATUS_FAST);
+    const interval = hasRunningAgents ? setInterval(refresh, POLLING_INTERVALS.STATUS_FAST) : undefined;
 
     refresh();
     return () => {
@@ -71,8 +85,9 @@ export function useBackgroundAgents(): BackgroundAgentInfo[] {
       unsubEnd();
       unsubComplete();
       clearInterval(interval);
+      clearTimeout(refreshTimer);
     };
-  }, [activityStream]);
+  }, [activityStream, hasRunningAgents]);
 
   return agents;
 }
