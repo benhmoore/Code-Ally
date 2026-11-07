@@ -3,7 +3,7 @@ import { stat } from 'node:fs/promises';
 import path from 'node:path';
 import type { AutoGrepReadPlan } from './GrepReadBoundary.js';
 import { assessReadCommand, type ReadCommandPlan } from './ReadCommandPlan.js';
-import { isProtectedWorkspaceTarget, resolveWorkspaceTarget } from './WorkspaceActionPaths.js';
+import { isProtectedWorkspaceWriteTarget, resolveWorkspaceTarget } from './WorkspaceActionPaths.js';
 
 export interface AutoActionInput {
   toolName: string;
@@ -44,13 +44,11 @@ export async function classifyAutoAction(input: AutoActionInput): Promise<AutoAc
     for (const value of values as string[]) {
       const target = await resolveWorkspaceTarget(value, workspaceRoot, workspaceRoot);
       if (!target) return ask('The read target resolves outside the workspace or cannot be resolved.');
-      if (isProtectedWorkspaceTarget(target) || isProtectedWorkspaceTarget({ path: value, relativePath: value })) return ask('Credentials, permission metadata and persistent instructions require permission.');
       canonicalTarget = target.path;
     }
     const filters = toolName === 'glob' ? args.patterns ?? args.pattern : toolName === 'grep' ? args.glob : undefined;
     const patterns = Array.isArray(filters) ? filters : typeof filters === 'string' ? [filters] : [];
-    if (patterns.some(pattern => typeof pattern !== 'string' || path.isAbsolute(pattern) || /[{},!]\//.test(pattern) || pattern.includes('..')
-      || isProtectedWorkspaceTarget({ path: pattern, relativePath: pattern.replace(/[?*[\]{}!]/g, '') }))) return ask('The file filter requests a protected or unresolved path.');
+    if (patterns.some(pattern => typeof pattern !== 'string' || path.isAbsolute(pattern) || /[{},!]\//.test(pattern) || pattern.includes('..'))) return ask('The file filter requests an external or unresolved path.');
     if (toolName === 'grep' && ((typeof args.type === 'string' && !/^[a-zA-Z0-9_+]+$/.test(args.type)) || (typeof args.glob === 'string' && args.glob.startsWith('-')))) return ask('Unknown search options require permission.');
     return { kind: 'allow', effect: 'workspace_read', reason: 'Built-in read operation with workspace-scoped targets.',
       ...(toolName === 'grep' && canonicalTarget ? { grepRead: { workspaceRoot, target: canonicalTarget } } : {}) };
@@ -60,7 +58,7 @@ export async function classifyAutoAction(input: AutoActionInput): Promise<AutoAc
   if (typeof args.file_path !== 'string') return ask('A reviewed edit requires one literal file path.');
   const target = await resolveWorkspaceTarget(args.file_path, workspaceRoot, workspaceRoot);
   if (!target) return ask('The edit target resolves outside the workspace or cannot be resolved.');
-  if (isProtectedWorkspaceTarget(target) || isProtectedWorkspaceTarget({ path: args.file_path, relativePath: args.file_path })) return ask('Protected credentials, permission metadata and persistent instructions cannot be authorized by model review.');
+  if (isProtectedWorkspaceWriteTarget(target) || isProtectedWorkspaceWriteTarget({ path: args.file_path, relativePath: args.file_path })) return ask('Protected credentials, permission metadata and persistent instructions cannot be authorized by model review.');
   const payload = toolName === 'write' ? args.content : args.patch;
   if (typeof payload !== 'string' || (toolName === 'apply-patch' && !payload.length) || payload.includes('\0')) return ask('The edit has no complete text payload to review.');
   let bytes: number;

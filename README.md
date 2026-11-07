@@ -399,14 +399,17 @@ its parent instructions.
   manual approval. Saved legacy `auto_confirm` values migrate to the matching
   canonical mode, without overriding an explicitly saved `permission_mode`.
 
-Auto uses deterministic rules for ordinary workspace reads. Eligible literal
+Auto permits file reads inside the repository, including instruction files,
+configuration, and credentials. Filename-based protections apply to writes,
+not reads. Targets resolving outside the repository still require approval.
+Eligible literal
 shell reads execute pinned utilities directly, with no shell expansion. Verified
 `&&` chains can combine workspace `cd`, literal `echo`, file-listing/read commands,
-and supported Git status, log, branch, remote, and metadata diff reads. Git options
+and supported Git status, log, branch, remote, and diff reads. Git options
 are validated by operation family, including common aliases and flag ordering.
 Repositories with external content filters or submodules require approval for
 working-tree inspection. Scripts, unknown command forms, package runners,
-network tools, and unverified Git repository layouts still ask. Auto grep excludes known credential/instruction paths and disables
+network tools, and unverified Git repository layouts still ask. Auto grep disables
 ripgrep configuration and inherited preprocessing settings. Bounded new-file
 writes and contextual patches require a positive reviewer decision. The reviewer
 cannot broaden this envelope. This is not an OS sandbox for arbitrary programs.

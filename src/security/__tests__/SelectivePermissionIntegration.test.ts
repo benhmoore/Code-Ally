@@ -56,7 +56,7 @@ describe('one permission authority across modes and tools', () => {
 
   it('does not turn an Auto ask on a normally read-only tool into silent approval', async () => {
     const { trust, stream, evaluate } = fixture();
-    evaluate.mockResolvedValue({ verdict: 'ask', reason: 'Protected credential file' });
+    evaluate.mockResolvedValue({ verdict: 'ask', reason: 'Outside workspace file' });
     const requests: unknown[] = [];
     stream.subscribe(E.PERMISSION_REQUEST, event => {
       requests.push(event.data);
@@ -68,19 +68,19 @@ describe('one permission authority across modes and tools', () => {
       });
     });
     await expect(
-      trust.checkPermission('read', { file_path: '.env' }, '.env', { ...context, requiresConfirmation: false })
+      trust.checkPermission('read', { file_path: '/outside/credentials' }, '/outside/credentials', { ...context, requiresConfirmation: false })
     ).rejects.toBeInstanceOf(PermissionDeniedError);
-    expect(requests).toEqual([expect.objectContaining({ decisionReason: 'Protected credential file' })]);
+    expect(requests).toEqual([expect.objectContaining({ decisionReason: 'Outside workspace file' })]);
   });
 
-  it('does not lose a protected-read ask if another review concurrently triggers Manual fallback', async () => {
+  it('does not lose an outside-read ask if another review concurrently triggers Manual fallback', async () => {
     const { trust, stream } = fixture();
     let effectiveMode = 'auto';
     trust.setPermissionPolicy({
       getSnapshot: () => ({ requestedMode: 'auto', effectiveMode }),
       evaluate: async () => {
         effectiveMode = 'manual';
-        return { verdict: 'ask', reason: 'Protected file' };
+        return { verdict: 'ask', reason: 'Outside workspace file' };
       },
     } as unknown as PermissionPolicyService);
     const prompt = vi.fn(event =>
@@ -93,7 +93,7 @@ describe('one permission authority across modes and tools', () => {
     );
     stream.subscribe(E.PERMISSION_REQUEST, prompt);
     await expect(
-      trust.checkPermission('read', { file_path: '.env' }, '.env', { ...context, requiresConfirmation: false })
+      trust.checkPermission('read', { file_path: '/outside/credentials' }, '/outside/credentials', { ...context, requiresConfirmation: false })
     ).rejects.toBeInstanceOf(PermissionDeniedError);
     expect(prompt).toHaveBeenCalledOnce();
   });

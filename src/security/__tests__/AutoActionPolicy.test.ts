@@ -18,6 +18,11 @@ afterEach(async () => { await rm(directory, { recursive: true, force: true }); }
 const classify = (toolName: string, args: Record<string, unknown>) => classifyAutoAction({ toolName, args, workspaceRoot: root });
 
 describe('selective Auto deterministic envelope', () => {
+  it.each(['AGENTS.md', 'SKILL.md', '.env', '.git/config', '.claude/settings.json'])('allows reading %s inside the repository while retaining write protections', async file_path => {
+    expect((await classify('read', { file_path })).kind).toBe('allow');
+    expect((await classify('write', { file_path, content: 'replacement' })).kind).toBe('ask');
+  });
+
   it.runIf(process.platform === 'darwin' || process.platform === 'linux')('allows exact, pinned, literal utility plans', async () => {
     for (const command of ['pwd', 'ls -la', 'cat source.ts', 'head -n 2 source.ts', 'tail -n1 source.ts', 'wc -l source.ts']) {
       const decision = await classify('bash', { command });
@@ -31,21 +36,21 @@ describe('selective Auto deterministic envelope', () => {
     'cat source.ts > marker', 'cat source.ts 2>&1', 'cat $(pwd)/source.ts', 'cat `pwd`/source.ts',
     'PATH=. cat source.ts', 'env cat source.ts', 'command cat source.ts', 'bash -c "cat source.ts"',
     'node -e "process.exit()"', 'npm test', 'git status', 'find . -exec sh {} ;', 'sed -i x source.ts',
-    'ls --unknown', 'ls $HOME', 'cat ../outside.txt', 'cat .env', 'cat /etc/passwd',
+    'ls --unknown', 'ls $HOME', 'cat ../outside.txt', 'cat /etc/passwd',
     'ls\ncat source.ts', 'cat source.ts # comment', 'cat *.ts', 'cat "unterminated',
     './cat source.ts', 'ls -L', 'tail -f source.ts', 'head -n -1 source.ts',
   ])('asks rather than interpreting unknown shell effects: %s', async command => {
     expect((await classify('bash', { command })).kind).toBe('ask');
   });
 
-  it('allows normal built-in reads and binds protected-file exclusions for grep', async () => {
+  it('allows workspace reads independently of write protection', async () => {
     for (const [tool, args] of [
       ['read', { file_path: 'source.ts' }], ['glob', { patterns: ['**/*.ts'] }],
       ['grep', { pattern: 'source', path: '.' }], ['ls', {}], ['tree', { paths: ['.'] }],
     ] as const) expect((await classify(tool, args)).kind).toBe('allow');
     expect((await classify('grep', { pattern: 'source' })).grepRead?.target).toBeTruthy();
-    for (const tool of ['read', 'grep']) expect((await classify(tool, { path: '.env', file_path: '.env', pattern: '.' })).kind).toBe('ask');
-    expect((await classify('grep', { pattern: '.', glob: '**/.env*' })).kind).toBe('ask');
+    for (const tool of ['read', 'grep']) expect((await classify(tool, { path: '.env', file_path: '.env', pattern: '.' })).kind).toBe('allow');
+    expect((await classify('grep', { pattern: '.', glob: '**/.env*' })).kind).toBe('allow');
     expect((await classify('glob', { patterns: ['{../outside,source.ts}'] })).kind).toBe('ask');
     expect((await classify('glob', { patterns: ['{source.ts,/tmp/*}'] })).kind).toBe('ask');
     expect((await classify('glob', { pattern: '../*' })).kind).toBe('ask');
@@ -55,7 +60,7 @@ describe('selective Auto deterministic envelope', () => {
     await symlink(directory, path.join(root, 'escape'), 'dir');
     await symlink(path.join(root, '.env'), path.join(root, 'alias'));
     expect((await classify('read', { file_path: 'escape/outside.txt' })).kind).toBe('ask');
-    expect((await classify('read', { file_path: 'alias' })).kind).toBe('ask');
+    expect((await classify('read', { file_path: 'alias' })).kind).toBe('allow');
     expect((await classify('write', { file_path: 'escape/new.txt', content: 'changed' })).kind).toBe('ask');
   });
 

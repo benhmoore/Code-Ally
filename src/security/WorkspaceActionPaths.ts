@@ -32,13 +32,13 @@ export async function resolveWorkspaceTarget(value: string, workingDirectory: st
   } catch { return null; }
 }
 
-export const PROTECTED_DIRECTORY_NAMES = ['.git', '.ssh', '.aws', '.gnupg', '.config', '.ally', '.ally-sessions', '.agents', '.codex', '.claude', '.docker', '.kube', '.azure'] as const;
-export const PROTECTED_FILE_NAMES = ['agents.md', 'ally.md', 'skill.md', '.npmrc', '.netrc', '.pypirc', '.envrc', '.git-credentials', 'id_rsa', 'id_ed25519'] as const;
-export const PROTECTED_FILE_STEMS = ['.env', 'credential', 'credentials', 'secret', 'secrets', 'token', 'tokens'] as const;
-export const PROTECTED_FILE_EXTENSIONS = ['pem', 'key', 'p12', 'pfx', 'keystore', 'kdbx'] as const;
+const PROTECTED_DIRECTORY_NAMES = ['.git', '.ssh', '.aws', '.gnupg', '.config', '.ally', '.ally-sessions', '.agents', '.codex', '.claude', '.docker', '.kube', '.azure'] as const;
+const PROTECTED_FILE_NAMES = ['agents.md', 'ally.md', 'skill.md', '.npmrc', '.netrc', '.pypirc', '.envrc', '.git-credentials', 'id_rsa', 'id_ed25519'] as const;
+const PROTECTED_FILE_STEMS = ['.env', 'credential', 'credentials', 'secret', 'secrets', 'token', 'tokens'] as const;
+const PROTECTED_FILE_EXTENSIONS = ['pem', 'key', 'p12', 'pfx', 'keystore', 'kdbx'] as const;
 
-/** Credentials, permission metadata and persistent instructions always require a human. */
-export function isProtectedWorkspaceTarget(target: WorkspaceTarget): boolean {
+/** Writes to credentials, permission metadata and persistent instructions require a human. */
+export function isProtectedWorkspaceWriteTarget(target: WorkspaceTarget): boolean {
   const segments = target.relativePath.split(/[\\/]/);
   return segments.some(segment => {
     const name = segment.toLowerCase();

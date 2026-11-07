@@ -6,7 +6,7 @@ import path from 'node:path';
 import { promisify } from 'node:util';
 import { parseGitReadOptions } from './GitReadOptions.js';
 import { READ_COMMAND_RUNNER } from './ReadCommandRunner.js';
-import { isProtectedWorkspaceTarget, resolveWorkspaceTarget } from './WorkspaceActionPaths.js';
+import { resolveWorkspaceTarget } from './WorkspaceActionPaths.js';
 
 type ReadProgram = 'pwd' | 'ls' | 'cat' | 'head' | 'tail' | 'wc';
 export interface ReadCommandStep {
@@ -42,7 +42,7 @@ export async function assessReadCommand(command: string, workingDirectory: strin
   try {
     const root = await realpath(workspaceRoot);
     const initial = await resolveWorkspaceTarget(workingDirectory, root, root);
-    if (!initial || isProtectedWorkspaceTarget(initial) || !(await stat(initial.path)).isDirectory()) return { plan: null };
+    if (!initial || !(await stat(initial.path)).isDirectory()) return { plan: null };
     let cwd = initial.path;
     const steps: ReadCommandStep[] = [];
     for (const segment of segments) {
@@ -52,7 +52,7 @@ export async function assessReadCommand(command: string, workingDirectory: strin
       if (words[0] === 'cd') {
         if (words.length !== 2 || words[1]!.startsWith('-')) return { plan: null };
         const target = await resolveWorkspaceTarget(words[1]!, cwd, root);
-        if (!target || isProtectedWorkspaceTarget(target) || isProtectedWorkspaceTarget({ path: words[1]!, relativePath: words[1]! }) || !(await stat(target.path)).isDirectory()) return { plan: null };
+        if (!target || !(await stat(target.path)).isDirectory()) return { plan: null };
         cwd = target.path;
         steps.push({ ...base, workingDirectory: cwd });
       } else if (words[0] === 'echo') {
@@ -71,7 +71,7 @@ export async function assessReadCommand(command: string, workingDirectory: strin
         for (const value of syntax.paths) {
           if (value === '-') return { plan: null };
           const target = await resolveWorkspaceTarget(value, cwd, root);
-          if (!target || isProtectedWorkspaceTarget(target) || isProtectedWorkspaceTarget({ path: value, relativePath: value })) return { plan: null };
+          if (!target) return { plan: null };
           const information = await stat(target.path);
           if (syntax.program === 'ls' ? !information.isDirectory() && !information.isFile() : !information.isFile()) return { plan: null };
           targets.push(target.path);
@@ -166,7 +166,7 @@ const GIT_OVERRIDES = ['--no-pager', '--no-optional-locks', '--no-lazy-fetch', '
 /** Read metadata only from an ordinary repository inside this workspace; linked worktrees require approval. */
 async function planGitRead(words: string[], cwd: string, root: string): Promise<{ executable: string; argv: string[] } | null> {
   const operation = parseGitReadOptions(words);
-  if (!operation) throw new ReadPolicyError('Auto does not support these Git options. Use read-only status, log, branch, remote, or metadata diff options.');
+  if (!operation) throw new ReadPolicyError('Auto does not support these Git options. Use read-only status, log, branch, remote, or diff options.');
   const executable = await systemExecutable('git');
   if (!executable) return null;
   let directory = cwd;
@@ -217,7 +217,7 @@ async function planGitRead(words: string[], cwd: string, root: string): Promise<
     if (operation.workingTree && ['core.excludesfile', 'core.attributesfile'].includes(key)) {
       const value = entry.slice(separator + 1);
       const target = await resolveWorkspaceTarget(value, directory, root);
-      if (!target || isProtectedWorkspaceTarget(target)) throw new ReadPolicyError('Git attributes or ignore rules reference a protected or external file. Review this command before allowing.');
+      if (!target) throw new ReadPolicyError('Git attributes or ignore rules reference a external file. Review this command before allowing.');
     }
   }
   if (operation.workingTree) {

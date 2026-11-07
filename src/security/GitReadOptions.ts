@@ -9,7 +9,7 @@ const FLAGS: Record<GitReadOperation['family'], ReadonlySet<string>> = {
   log: new Set(['--oneline', '--graph', '--all', '--no-merges', '--merges', '--first-parent', '--reverse', '--no-decorate']),
   status: new Set(['--short', '--branch', '--long', '--porcelain', '--ahead-behind', '--no-ahead-behind', '--show-stash', '--untracked-files', '-u']),
   remote: new Set(['-v', '--verbose']),
-  diff: new Set(['--stat', '--shortstat', '--numstat', '--name-only', '--name-status', '--summary', '--cached', '--staged', '--exit-code', '--quiet']),
+  diff: new Set(['--patch', '-p', '--stat', '--shortstat', '--numstat', '--name-only', '--name-status', '--summary', '--cached', '--staged', '--exit-code', '--quiet']),
   branch: new Set(['--list', '--all', '--remotes', '--show-current', '--verbose', '-v', '-vv']),
 };
 const MAX_LOG_COUNT = 9999;
@@ -43,7 +43,5 @@ export function parseGitReadOptions(input: readonly string[]): GitReadOperation 
   }
   // Listing remote names without -v is read-only too; no remote mutation subcommands are admitted.
   if (family === 'log') argv.push(`--max-count=${count ?? 50}`);
-  // This lane exposes metadata diffs. Content diffs need path-sensitive protected-file enforcement.
-  if (family === 'diff' && !argv.some(word => ['--stat', '--shortstat', '--numstat', '--name-only', '--name-status', '--summary', '--quiet'].includes(word))) return null;
   return { family, argv, workingTree: family === 'status' || family === 'diff' };
 }

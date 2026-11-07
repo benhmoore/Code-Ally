@@ -37,7 +37,7 @@ async function approve(args: Record<string, unknown>) {
 }
 
 describe('Auto grep execution boundary', () => {
-  it('enforces protected exclusions after user globs and ignores execution-capable ripgrep config', async () => {
+  it('searches repository files while ignoring execution-capable ripgrep config', async () => {
     const marker = path.join(directory, 'executed');
     const hook = path.join(directory, 'hook');
     await writeFile(hook, `#!/bin/sh\nprintf called > '${marker}'\n/bin/cat "$1"\n`);
@@ -51,7 +51,7 @@ describe('Auto grep execution boundary', () => {
     expect(result.success).toBe(true);
     const serialized = JSON.stringify(result);
     expect(serialized).toContain('ordinary');
-    expect(serialized).not.toContain('protected');
+    expect(serialized).toContain('protected');
     expect(serialized).not.toContain('needle outside');
     await expect(readFile(marker)).rejects.toMatchObject({ code: 'ENOENT' });
   });

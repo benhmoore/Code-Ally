@@ -21,6 +21,19 @@ beforeEach(async () => {
 afterEach(async () => { vi.unstubAllEnvs(); vi.restoreAllMocks(); await rm(directory, { recursive: true, force: true }); });
 
 describe.runIf(process.platform === 'darwin' || process.platform === 'linux')('Auto read execution boundary', () => {
+  it('executes repository instruction and configuration reads without applying write restrictions', async () => {
+    await writeFile(path.join(root, 'AGENTS.md'), 'Project instructions\n');
+    await writeFile(path.join(root, '.env'), 'EXAMPLE=fixture\n');
+    const args = { command: 'cat AGENTS.md && cat .env', working_dir: root };
+    const plan = await planReadCommand(args.command, root, root);
+    expect(plan).not.toBeNull();
+    authorizeAutoReadCommand(args, plan!);
+    const result = await new BashTool(new ActivityStream()).execute(args);
+    expect(result.success).toBe(true);
+    expect(result.content).toContain('Project instructions');
+    expect(result.content).toContain('EXAMPLE=fixture');
+  });
+
   it('executes pinned argv without a shell despite a hostile PATH or shell startup file', async () => {
     const marker = path.join(root, 'executed');
     const malicious = `#!/bin/sh\nprintf called > '${marker}'\n`;
@@ -160,7 +173,7 @@ describe.runIf(process.platform === 'darwin' || process.platform === 'linux')('l
     'git status --ignored', 'git status --ignore-submodules=all', 'git status -C /tmp',
     'git branch new-branch', 'git branch --delete main', 'git branch --set-upstream-to=origin/main',
     'git remote set-url origin https://example.invalid', 'git remote update', 'git fetch',
-    'git diff', 'git diff --stat HEAD', 'git diff --name-only --output=changed',
+    'git diff --stat HEAD', 'git diff --name-only --output=changed',
     'git log --format=%G? -1', 'git log --show-signature -1', 'git log -1 -2',
   ])('refuses unsupported source completely: %s', async command => {
     expect(await planReadCommand(command, root, root)).toBeNull();
@@ -172,7 +185,7 @@ describe.runIf(process.platform === 'darwin' || process.platform === 'linux')('l
     'git log -n 2 --oneline', 'git log --oneline --max-count=2', 'git log --max-count 2 --oneline',
     'git log --graph --all --oneline -2', 'git remote --verbose', 'git remote',
     'git branch', 'git branch --list --all', 'git branch --show-current', 'git branch -a -vv',
-    'git diff --stat', 'git diff --name-status --cached', 'git diff --staged --name-only',
+    'git diff', 'git diff --patch', 'git diff --cached', 'git diff --stat', 'git diff --name-status --cached', 'git diff --staged --name-only',
   ])('supports validated read-only Git option families: %s', async command => {
     await repository();
     const result = await run(command);

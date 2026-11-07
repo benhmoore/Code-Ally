@@ -283,7 +283,7 @@ For multi-step investigations with unknown scope, prefer explore() to preserve c
       rgArgs.push(absolutePath);
 
       // Spawn ripgrep process
-      // Last matching globs win: policy exclusions must follow every user filter.
+      // Automatic searches cannot load execution-capable ripgrep configuration.
       if (admission.kind === 'approved') rgArgs.splice(rgArgs.length - 1, 0, ...admission.extraArguments);
       const rgResult = await this.executeRipgrep(rgArgs, admission.kind === 'approved');
 
