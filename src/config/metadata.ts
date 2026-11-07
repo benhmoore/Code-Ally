@@ -161,7 +161,7 @@ export const CONFIG_DESCRIPTIONS: Partial<Record<keyof Config, string>> = {
   enable_idle_messages: 'Enable generated idle status messages',
   enable_session_title_generation: 'Enable generated session titles',
   enable_terminal_hyperlinks: 'Make file names and links clickable in supporting terminals',
-  mouse_support: 'Mouse clicks: off, dialogs (default) or always',
+  mouse_support: 'Mouse: off (default, native scrolling), dialogs or always (may capture scroll wheel)',
 
   // Tool Call Retry
   tool_call_retry_enabled: 'Enable automatic tool-call retry',

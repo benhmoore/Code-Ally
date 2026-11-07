@@ -4,8 +4,11 @@ import path from 'node:path';
 import type { AutoGrepReadPlan } from './GrepReadBoundary.js';
 import { assessReadCommand, type ReadCommandPlan } from './ReadCommandPlan.js';
 import { isProtectedWorkspaceWriteTarget, resolveWorkspaceTarget } from './WorkspaceActionPaths.js';
+import { ToolCapability } from '../tools/ToolCapability.js';
+import type { ToolPermissionMetadata } from './ToolPermissionMetadata.js';
 
 export interface AutoActionInput {
+  toolMetadata?: ToolPermissionMetadata;
   toolName: string;
   args: Readonly<Record<string, unknown>>;
   workspaceRoot: string;
@@ -20,7 +23,6 @@ export interface AutoActionDecision {
 }
 const MAX_REVIEW_BYTES = 32 * 1024;
 const READ_TOOLS = new Set(['read', 'glob', 'grep', 'ls', 'tree']);
-const INTERNAL_TOOLS = new Set(['ask-user-question', 'todo-write', 'tool-search', 'structured-output', 'objective-state', 'complete-objective', 'block-objective', 'read-checkpoint', 'read-history', 'bash-output', 'wait']);
 
 /** Describe only code-owned, bounded effects; unknowns always need a person. */
 export async function classifyAutoAction(input: AutoActionInput): Promise<AutoActionDecision> {
@@ -35,7 +37,6 @@ export async function classifyAutoAction(input: AutoActionInput): Promise<AutoAc
       ? { kind: 'allow', effect: 'workspace_read', reason: 'Verified read-only workspace command.', readCommand }
       : ask(assessment.reason ?? 'Auto could not verify this command as read-only. Review it before allowing.');
   }
-  if (INTERNAL_TOOLS.has(toolName)) return { kind: 'allow', reason: 'Code-owned conversation bookkeeping or observation.' };
   if (READ_TOOLS.has(toolName)) {
     const values = toolName === 'read' ? [args.file_path]
       : toolName === 'tree' ? args.paths ?? ['.'] : [args.path ?? '.'];
@@ -54,7 +55,19 @@ export async function classifyAutoAction(input: AutoActionInput): Promise<AutoAc
       ...(toolName === 'grep' && canonicalTarget ? { grepRead: { workspaceRoot, target: canonicalTarget } } : {}) };
 
   }
-  if (toolName !== 'write' && toolName !== 'apply-patch') return ask('This tool has no deterministic bounded-effect policy.');
+  if (toolName !== 'write' && toolName !== 'apply-patch') {
+    const metadata = input.toolMetadata;
+    if (metadata && metadata.capabilities.every(capability =>
+      capability === ToolCapability.FsRead || capability === ToolCapability.AppStateWrite)) {
+      for (const localPath of metadata.localPaths) {
+        if (!await resolveWorkspaceTarget(localPath, workspaceRoot, workspaceRoot)) {
+          return ask('The declared local path resolves outside the workspace or cannot be resolved.');
+        }
+      }
+      return { kind: 'allow', reason: 'Code-owned invocation has only bounded observation or application state effects.' };
+    }
+    return ask('Auto could not verify this operation\'s effects. Review it before allowing.');
+  }
   if (typeof args.file_path !== 'string') return ask('A reviewed edit requires one literal file path.');
   const target = await resolveWorkspaceTarget(args.file_path, workspaceRoot, workspaceRoot);
   if (!target) return ask('The edit target resolves outside the workspace or cannot be resolved.');

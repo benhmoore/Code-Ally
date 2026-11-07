@@ -15,6 +15,7 @@ export interface PermissionSnapshot {
   reviewing: boolean;
 }
 export interface PermissionEvaluation {
+  toolMetadata?: import('../security/ToolPermissionMetadata.js').ToolPermissionMetadata;
   toolName: string;
   args: Record<string, unknown>;
   workspaceRoot: string;

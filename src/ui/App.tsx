@@ -47,7 +47,7 @@ import { SyntaxHighlighter } from '../services/SyntaxHighlighter.js';
 import { clearMarkdownCache } from './components/MarkdownText.js';
 import { getActiveProfile } from '../config/paths.js';
 import { UI_COLORS } from './constants/colors.js';
-import { PointerProvider } from './contexts/PointerContext.js';
+import { PointerProvider, shouldTrackPointer } from './contexts/PointerContext.js';
 import type { TerminalInputStream } from '@utils/terminalInput.js';
 
 /**
@@ -353,7 +353,7 @@ const AppContentComponent: React.FC<AppContentProps> = ({
     <ConversationStatus
       source={conversationSource}
       isCancelling={isCancelling}
-      activeSubAgents={isChildSelected ? [] : state.activeSubAgents}
+      awaitingHuman={modal.activeModal?.kind === 'permission' || modal.activeModal?.kind === 'planApproval' ? 'approval' : modal.activeModal?.kind === 'toolForm' ? 'input' : undefined}
       activityStream={isChildSelected ? foregroundAgent.getActivityStream() : undefined}
       hideTodos={isChildSelected}
     />
@@ -367,11 +367,9 @@ const AppContentComponent: React.FC<AppContentProps> = ({
     conversationControls.setToolCallsExpanded(expand);
   }, [conversationControls]);
 
-  // The terminal only reports clicks while an interactive surface is up
-  // (or always, by preference), because tracking also takes the scroll wheel
-  // away from the terminal's own scrollback.
-  const mouseSupport = effectiveConfig.mouse_support ?? 'dialogs';
-  const pointerTracking = mouseSupport === 'always' || (mouseSupport === 'dialogs' && (modal.hasOpenModal || fleet.fleetFocused));
+  // Native scrollback stays available when unsolicited approvals appear.
+  // Click tracking is opt-in because the terminal also captures the wheel.
+  const pointerTracking = shouldTrackPointer(effectiveConfig.mouse_support, modal.hasOpenModal || fleet.fleetFocused);
 
   return (
     <PointerProvider input={terminalInput} tracking={pointerTracking}>
@@ -390,17 +388,6 @@ const AppContentComponent: React.FC<AppContentProps> = ({
           {pendingInput.slice(terminalRows >= 30 ? -2 : -1).map(input => <Text key={input.id} dimColor wrap="truncate">{input.status === 'not_sent' ? 'Not sent (conversation closed): ' : ''}{input.text}</Text>)}
         </Box>
       )}
-
-          {/* Background agent fleet — reachable with ↓ from an empty prompt */}
-          <AgentFleetView
-            compact
-            agents={backgroundAgents}
-            selectedIndex={fleet.fleetSelectedIndex}
-            focused={fleet.fleetFocused}
-            activeAgentId={state.activeAgentId}
-            onOptionPress={handleEnterAgent}
-            maxVisible={Math.max(1, Math.min(4, Math.floor(terminalRows / 8)))}
-          />
 
           {statusIndicator}
           {!displayedIsThinking && !displayedIsCompacting && !isCancelling && (
@@ -455,6 +442,17 @@ const AppContentComponent: React.FC<AppContentProps> = ({
             onBackgroundAgents={handleBackgroundAgents}
             onKillAgent={handleKillAgent}
             onToggleToolOutput={handleToggleToolOutput}
+          />
+
+          {/* Background agent fleet — reachable with ↓ from an empty prompt */}
+          <AgentFleetView
+            compact
+            agents={backgroundAgents}
+            selectedIndex={fleet.fleetSelectedIndex}
+            focused={fleet.fleetFocused}
+            activeAgentId={state.activeAgentId}
+            onOptionPress={handleEnterAgent}
+            maxVisible={Math.max(1, Math.min(4, Math.floor(terminalRows / 8)))}
           />
 
           <PermissionModeStatus requestedMode={state.config.permission_mode} onCycle={permission.cycle}/>

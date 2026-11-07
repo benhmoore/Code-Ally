@@ -105,7 +105,13 @@ const AgentFleetViewComponent: React.FC<AgentFleetViewProps> = ({
 
   if (compact && !focused) {
     const running = agents.filter(agent => agent.status === 'running').length;
-    return <Text dimColor wrap="truncate-end">{agents.length} agents · {running} running · ↓ manage</Text>;
+    return (
+      <Box paddingLeft={1}>
+        <Text dimColor wrap="truncate-end">
+          {agents.length} {agents.length === 1 ? 'agent' : 'agents'} · {running} running · ↓ manage
+        </Text>
+      </Box>
+    );
   }
 
   const now = Date.now();

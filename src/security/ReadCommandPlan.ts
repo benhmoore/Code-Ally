@@ -4,12 +4,14 @@ import { execFile, spawn, type ChildProcess, type SpawnOptions } from 'node:chil
 import { lstat, opendir, realpath, stat } from 'node:fs/promises';
 import path from 'node:path';
 import { promisify } from 'node:util';
+import { parseLiteralReadSyntax, ReadSyntaxError } from './LiteralReadSyntax.js';
+import { parseReadUtility } from './ReadUtilityOptions.js';
 import { parseGitReadOptions } from './GitReadOptions.js';
 import { READ_COMMAND_RUNNER } from './ReadCommandRunner.js';
 import { resolveWorkspaceTarget } from './WorkspaceActionPaths.js';
 
-type ReadProgram = 'pwd' | 'ls' | 'cat' | 'head' | 'tail' | 'wc';
-export interface ReadCommandStep {
+export interface ReadCommandStage {
+  effect: 'workspace_read' | 'workspace_metadata' | 'stdin_transform' | 'directory_change' | 'literal_output';
   executable?: string;
   argv: string[];
   workingDirectory: string;
@@ -17,13 +19,13 @@ export interface ReadCommandStep {
   environment: NodeJS.ProcessEnv;
   echo?: string;
 }
+export interface ReadCommandStep { stages: ReadCommandStage[]; }
 export interface ReadCommandPlan {
   steps: ReadCommandStep[];
   command: string;
   workspaceRoot: string;
   workingDirectory: string;
 }
-interface ReadCommandSyntax { program: ReadProgram; flags: string[]; paths: string[]; }
 interface ReadAdmission { plan: ReadCommandPlan; argumentDigest: string; }
 const admissions = new WeakMap<object, ReadAdmission>();
 
@@ -37,50 +39,67 @@ export async function planReadCommand(command: string, workingDirectory: string,
 
 /** Prepare a complete, fail-stop chain of literal operations with known read-only effects. */
 export async function assessReadCommand(command: string, workingDirectory: string, workspaceRoot: string): Promise<ReadCommandAssessment> {
-  const segments = splitReadChain(command);
-  if (!segments || !['darwin', 'linux'].includes(process.platform)) return { plan: null };
   try {
+    const pipelines = parseLiteralReadSyntax(command);
+    if (!['darwin', 'linux'].includes(process.platform)) return { plan: null };
     const root = await realpath(workspaceRoot);
     const initial = await resolveWorkspaceTarget(workingDirectory, root, root);
     if (!initial || !(await stat(initial.path)).isDirectory()) return { plan: null };
     let cwd = initial.path;
+    let stageNumber = 0;
     const steps: ReadCommandStep[] = [];
-    for (const segment of segments) {
-      const words = literalWords(segment.source);
-      if (!words?.length) return { plan: null };
-      const base = { workingDirectory: cwd, discardStderr: segment.discardStderr, environment: readEnvironment(), argv: [] as string[] };
-      if (words[0] === 'cd') {
-        if (words.length !== 2 || words[1]!.startsWith('-')) return { plan: null };
-        const target = await resolveWorkspaceTarget(words[1]!, cwd, root);
-        if (!target || !(await stat(target.path)).isDirectory()) return { plan: null };
-        cwd = target.path;
-        steps.push({ ...base, workingDirectory: cwd });
-      } else if (words[0] === 'echo') {
-        if (words.length < 2 || /^-[neE]+$/.test(words[1]!) || words.some(word => word.includes('\\'))) return { plan: null };
-        steps.push({ ...base, echo: words.slice(1).join(' ') });
-      } else if (words[0] === 'git' || words[0] === '/usr/bin/git' || words[0] === '/bin/git') {
-        const git = await planGitRead(words.slice(1), cwd, root);
-        if (!git) return { plan: null };
-        steps.push({ ...base, ...git, environment: readEnvironment(true) });
-      } else {
-        const syntax = parseReadCommand(segment.source);
-        if (!syntax) return { plan: null };
-        const executable = await systemExecutable(syntax.program);
-        if (!executable) return { plan: null };
-        const targets: string[] = [];
-        for (const value of syntax.paths) {
-          if (value === '-') return { plan: null };
-          const target = await resolveWorkspaceTarget(value, cwd, root);
-          if (!target) return { plan: null };
-          const information = await stat(target.path);
-          if (syntax.program === 'ls' ? !information.isDirectory() && !information.isFile() : !information.isFile()) return { plan: null };
-          targets.push(target.path);
+    for (const pipeline of pipelines) {
+      const stages: ReadCommandStage[] = [];
+      for (let index = 0; index < pipeline.stages.length; index++) {
+        const segment = pipeline.stages[index]!;
+        const words = segment.words;
+        const program = path.basename(words[0]!);
+        stageNumber++;
+        try {
+          const base = { workingDirectory: cwd, discardStderr: segment.discardStderr, environment: readEnvironment(), argv: [] as string[] };
+          if (words[0] === 'cd') {
+            if (pipeline.stages.length !== 1 || words.length !== 2 || words[1]!.startsWith('-')) throw new ReadPolicyError('cd needs one literal directory outside a pipeline.');
+            const target = await resolveWorkspaceTarget(words[1]!, cwd, root);
+            if (!target || !(await stat(target.path)).isDirectory()) throw new ReadPolicyError('The directory is outside the workspace or cannot be inspected.');
+            cwd = target.path;
+            stages.push({ ...base, workingDirectory: cwd, effect: 'directory_change' });
+          } else if (words[0] === 'echo') {
+            if (/^-[neE]+$/.test(words[1] ?? '') || words.some(word => word.includes('\\'))) throw new ReadPolicyError('Echo options and escape interpretation require permission.');
+            stages.push({ ...base, echo: words.slice(1).join(' '), effect: 'literal_output' });
+          } else if (words[0] === 'git' || words[0] === '/usr/bin/git' || words[0] === '/bin/git') {
+            const git = await planGitRead(words.slice(1), cwd, root);
+            if (!git) throw new ReadPolicyError('This repository layout needs review before Git can inspect it.');
+            stages.push({ ...base, ...git, environment: readEnvironment(true), effect: 'workspace_metadata' });
+          } else {
+            const syntax = parseReadUtility(words, index > 0);
+            if (!syntax) throw new ReadPolicyError(`${program} arguments are not verified as workspace reads or stdin-only transforms. File writes, executable predicates, and unknown options require permission.`);
+            const executable = await systemExecutable(syntax.program);
+            if (!executable) throw new ReadPolicyError('A trusted system executable is not available.');
+            const targets: string[] = [];
+            for (const value of syntax.paths) {
+              if (value === '-' && index > 0) { targets.push('-'); continue; }
+              const target = await resolveWorkspaceTarget(value, cwd, root);
+              if (!target) throw new ReadPolicyError('A file target is outside the workspace or cannot be resolved.');
+              const information = await stat(target.path);
+              if (syntax.metadata ? !information.isDirectory() && !information.isFile() : !information.isFile()) throw new ReadPolicyError('The target is not an ordinary file or supported directory.');
+              if (syntax.program === 'find' && !path.isAbsolute(value)) {
+                const relative = path.relative(cwd, target.path) || '.';
+                targets.push(relative.startsWith('-') ? `./${relative}` : relative);
+              } else targets.push(target.path);
+            }
+            const effect = syntax.metadata ? 'workspace_metadata' : syntax.paths.length ? 'workspace_read' : 'stdin_transform';
+            stages.push({ ...base, executable, argv: [...syntax.flags, ...targets, ...(syntax.expression ?? [])], effect });
+          }
+        } catch (error) {
+          throw new ReadPolicyError(`Stage ${stageNumber} (${program}): ${error instanceof ReadPolicyError ? error.message : 'The target could not be inspected safely.'}`);
         }
-        steps.push({ ...base, executable, argv: [...syntax.flags, ...targets] });
       }
+      steps.push({ stages });
     }
     return { plan: { command, workspaceRoot: root, workingDirectory: initial.path, steps } };
-  } catch (error) { return { plan: null, ...(error instanceof ReadPolicyError ? { reason: error.message } : {}) }; }
+  } catch (error) {
+    return { plan: null, ...(error instanceof ReadPolicyError || error instanceof ReadSyntaxError ? { reason: error.message } : {}) };
+  }
 }
 
 /** Bind one Auto approval to the complete arguments object passed to the execution boundary. */
@@ -109,8 +128,8 @@ export async function consumeAutoReadCommand(args: Readonly<Record<string, unkno
 
 /** Launch validated argv directly with a pinned executable and no inherited loader or shell configuration. */
 export function spawnReadCommand(plan: ReadCommandPlan, options: SpawnOptions): ChildProcess {
-  const first = plan.steps[0]!;
-  if (plan.steps.length === 1 && first.executable) {
+  const first = plan.steps[0]!.stages[0]!;
+  if (plan.steps.length === 1 && plan.steps[0]!.stages.length === 1 && first.executable) {
     return spawn(first.executable, first.argv, {
       ...options, cwd: first.workingDirectory, shell: false, env: first.environment,
       ...(first.discardStderr ? { stdio: ['ignore', 'pipe', 'ignore'] as const } : {}),
@@ -131,31 +150,6 @@ function readEnvironment(git = false): NodeJS.ProcessEnv {
       GIT_PAGER: '', PAGER: '', GIT_NO_REPLACE_OBJECTS: '1', GIT_NO_LAZY_FETCH: '1', GIT_GRAFT_FILE: '/dev/null',
     } : {}),
   };
-}
-
-/** Only && outside quotes and the exact stderr discard spelling have semantics. */
-function splitReadChain(command: string): Array<{ source: string; discardStderr: boolean }> | null {
-  if (!command || command.length > 8192) return null;
-  const segments: string[] = [];
-  let quote: string | undefined;
-  let start = 0;
-  for (let index = 0; index < command.length; index++) {
-    const char = command[index]!;
-    if (quote) { if (char === quote) quote = undefined; continue; }
-    if (char === "'" || char === '"') { quote = char; continue; }
-    if (char === '&' && command[index + 1] === '&') {
-      segments.push(command.slice(start, index));
-      start = ++index + 1;
-    }
-  }
-  if (quote) return null;
-  segments.push(command.slice(start));
-  if (segments.length > 16) return null;
-  return segments.map(segment => {
-    const trimmed = segment.trim();
-    const discardStderr = /[ \t]2>\/dev\/null$/.test(trimmed);
-    return { source: discardStderr ? trimmed.replace(/[ \t]2>\/dev\/null$/, '').trimEnd() : trimmed, discardStderr };
-  });
 }
 
 const runFile = promisify(execFile);
@@ -272,61 +266,7 @@ function digestArguments(args: Readonly<Record<string, unknown>>): string {
   catch { return ''; }
 }
 
-/** This limited grammar intentionally rejects even literal metacharacters rather than interpreting shell source. */
-function literalWords(command: string): string[] | null {
-  if (!command || command.length > 8192 || /[\x00-\x08\x0a-\x1f\x7f$`\\;|&<>()[\]{}*?!~#]/.test(command)) return null;
-  const words: string[] = [];
-  let word = '';
-  let started = false;
-  let quote: string | undefined;
-  for (const char of command) {
-    if (quote) {
-      if (char === quote) quote = undefined;
-      else word += char;
-      started = true;
-    } else if (char === "'" || char === '"') {
-      quote = char; started = true;
-    } else if (char === ' ' || char === '\t') {
-      if (started) { words.push(word); word = ''; started = false; }
-    } else { word += char; started = true; }
-  }
-  if (quote) return null;
-  if (started) words.push(word);
-  return words;
-}
-
-function parseReadCommand(command: string): ReadCommandSyntax | null {
-  const words = literalWords(command);
-  if (!words?.length) return null;
-  const name = words[0]!;
-  const program = path.basename(name) as ReadProgram;
-  if (!['pwd', 'ls', 'cat', 'head', 'tail', 'wc'].includes(program)) return null;
-  if (name !== program && name !== `/bin/${program}` && name !== `/usr/bin/${program}`) return null;
-  const flags: string[] = [];
-  const paths: string[] = [];
-  let operands = false;
-  for (let index = 1; index < words.length; index++) {
-    const word = words[index]!;
-    if (!operands && word === '--') { operands = true; continue; }
-    if (!operands && word.startsWith('-') && word !== '-') {
-      if (program === 'head' || program === 'tail') {
-        const count = word === '-n' ? words[++index] : /^-n\d+$/.test(word) ? word.slice(2) : undefined;
-        if (!count || !/^\d+$/.test(count) || Number(count) < 1 || Number(count) > 10000 || flags.length) return null;
-        flags.push('-n', String(Number(count)));
-      } else {
-        const allowed = program === 'pwd' ? /^-P$/ : program === 'ls' ? /^-[laAh1dFptrS]+$/ : program === 'cat' ? /^-[nbsevt]+$/ : /^-[lwc]+$/;
-        if (!allowed.test(word)) return null;
-        flags.push(word);
-      }
-    } else paths.push(word);
-  }
-  if (program === 'pwd') return paths.length ? null : { program, flags, paths: [] };
-  if (!paths.length && program !== 'ls') return null;
-  if (paths.length > 32 || paths.some(value => !value)) return null;
-  return { program, flags, paths: paths.length ? paths : ['.'] };
-}
-
-async function systemExecutable(program: ReadProgram | 'git'): Promise<string | null> {
+async function systemExecutable(program: string): Promise<string | null> {
   for (const candidate of [`/bin/${program}`, `/usr/bin/${program}`]) {
     try {
       const canonical = await realpath(candidate);

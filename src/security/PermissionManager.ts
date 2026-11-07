@@ -17,6 +17,7 @@ import { isPathWithinAllowedDirectories } from './PathSecurity.js';
 import { logger } from '../services/Logger.js';
 import type { BaseTool } from '../tools/BaseTool.js';
 import { analyzeShellCommandPaths } from './shellCommandPaths.js';
+import { collectLocalPaths } from '../tools/schemaPaths.js';
 
 /**
  * PermissionManager class
@@ -50,20 +51,23 @@ export class PermissionManager {
     toolName: string,
     args: Record<string, any>,
     tool: BaseTool,
-    context?: Omit<PermissionContext, 'workspaceRoot' | 'requiresConfirmation'>
+    context?: Omit<PermissionContext, 'workspaceRoot' | 'requiresConfirmation' | 'toolMetadata'>
   ): Promise<boolean> {
     // Get permission path based on the tool and arguments
     const permissionPath = await this.getPermissionPath(args, tool);
 
-    // Path authorization is NOT done here. Every tool's path arguments are
-    // authorized against the allowed roots by BaseTool from its declared schema,
-    // which covers all tools rather than only the confirm-gated ones this method
-    // ever saw. This method's job is now solely trust/consent.
+    // Auto receives host-owned effects and schema paths, never declarations
+    // supplied by the model. BaseTool independently enforces allowed filesystem
+    // roots when executing the tool, including outside Auto mode.
 
     return await this.trustManager.checkPermission(toolName, args, permissionPath, {
       ...context,
       workspaceRoot: this.startDirectory,
       requiresConfirmation: tool.requiresConfirmation(args),
+      toolMetadata: {
+        capabilities: [...tool.capabilitiesFor(args)],
+        localPaths: collectLocalPaths(args, tool.getFunctionDefinition().function.parameters),
+      },
     });
   }
 

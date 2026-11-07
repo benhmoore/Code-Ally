@@ -4,7 +4,8 @@ import { Box, Text, render } from 'ink';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { TerminalInputStream } from '@utils/terminalInput.js';
 import { MOUSE_TRACKING_DISABLE, MOUSE_TRACKING_ENABLE } from '@utils/terminal.js';
-import { PointerProvider } from '../PointerContext.js';
+import { DEFAULT_CONFIG } from '@config/defaults.js';
+import { PointerProvider, shouldTrackPointer } from '../PointerContext.js';
 import { Clickable } from '../../components/Clickable.js';
 
 class FakeStdout extends EventEmitter {
@@ -36,7 +37,9 @@ function mountRegion(tracking = true) {
   const source = new FakeStdin();
   const input = new TerminalInputStream(source as unknown as NodeJS.ReadStream);
   const written: string[] = [];
-  const write = (sequence: string) => { written.push(sequence); };
+  const write = (sequence: string) => {
+    written.push(sequence);
+  };
   const first = vi.fn();
   const second = vi.fn();
 
@@ -44,8 +47,12 @@ function mountRegion(tracking = true) {
     <PointerProvider input={input} tracking={tracking} write={write} terminalRows={() => 30}>
       <Box flexDirection="column">
         <Text>Choose</Text>
-        <Clickable onPress={first}><Text>first option</Text></Clickable>
-        <Clickable onPress={second}><Text>second option</Text></Clickable>
+        <Clickable onPress={first}>
+          <Text>first option</Text>
+        </Clickable>
+        <Clickable onPress={second}>
+          <Text>second option</Text>
+        </Clickable>
       </Box>
     </PointerProvider>,
     { stdout: new FakeStdout() as unknown as NodeJS.WriteStream, debug: true, exitOnCtrlC: false, patchConsole: false }
@@ -56,9 +63,9 @@ function mountRegion(tracking = true) {
   // for the enable sequence, then answers the cursor query with row 13.
   const click = async (row: number, column: number) => {
     await vi.waitFor(() => expect(written).toContain(MOUSE_TRACKING_ENABLE));
-    const queries = written.filter((sequence) => sequence === '\x1b[6n').length;
+    const queries = written.filter(sequence => sequence === '\x1b[6n').length;
     source.emit('data', `\x1b[<0;${column};${row}M`);
-    await vi.waitFor(() => expect(written.filter((sequence) => sequence === '\x1b[6n').length).toBe(queries + 1));
+    await vi.waitFor(() => expect(written.filter(sequence => sequence === '\x1b[6n').length).toBe(queries + 1));
     source.emit('data', '\x1b[13;1R');
   };
 
@@ -66,6 +73,40 @@ function mountRegion(tracking = true) {
 }
 
 describe('PointerProvider', () => {
+  it('keeps native scrolling when an unsolicited dialog appears with default mouse settings', async () => {
+    const source = new FakeStdin();
+    const input = new TerminalInputStream(source as unknown as NodeJS.ReadStream);
+    const written: string[] = [];
+    const write = (sequence: string) => {
+      written.push(sequence);
+    };
+    const view = (open: boolean, mode = DEFAULT_CONFIG.mouse_support) => (
+      <PointerProvider input={input} tracking={shouldTrackPointer(mode, open)} write={write}>
+        <Text>{open ? 'Permission approval' : 'Conversation'}</Text>
+      </PointerProvider>
+    );
+    const instance = render(view(false), {
+      stdout: new FakeStdout() as unknown as NodeJS.WriteStream,
+      debug: true,
+      exitOnCtrlC: false,
+      patchConsole: false,
+    });
+    mounted.push(instance);
+    instance.rerender(view(true));
+    await new Promise<void>(resolve => setImmediate(resolve));
+    expect(DEFAULT_CONFIG.mouse_support).toBe('off');
+    expect(written).not.toContain(MOUSE_TRACKING_ENABLE);
+    expect(shouldTrackPointer(undefined, true)).toBe(false);
+    instance.rerender(view(true, 'dialogs'));
+    await vi.waitFor(() => expect(written).toEqual([MOUSE_TRACKING_ENABLE]));
+    instance.rerender(view(false, 'dialogs'));
+    await vi.waitFor(() => expect(written.at(-1)).toBe(MOUSE_TRACKING_DISABLE));
+    instance.rerender(view(true, 'dialogs'));
+    await vi.waitFor(() => expect(written.filter(value => value === MOUSE_TRACKING_ENABLE)).toHaveLength(2));
+    instance.unmount();
+    expect(written.at(-1)).toBe(MOUSE_TRACKING_DISABLE);
+  });
+
   it('turns tracking on while active and off again afterwards', async () => {
     const { written } = mountRegion();
     await vi.waitFor(() => expect(written).toContain(MOUSE_TRACKING_ENABLE));
@@ -90,17 +131,17 @@ describe('PointerProvider', () => {
 
     await click(10, 1);
     source.emit('data', '\x1b[<2;3;11M');
-    await new Promise((resolve) => setTimeout(resolve, 20));
+    await new Promise(resolve => setTimeout(resolve, 20));
 
     expect(first).not.toHaveBeenCalled();
     expect(second).not.toHaveBeenCalled();
-    expect(written.filter((sequence) => sequence === '\x1b[6n')).toHaveLength(1);
+    expect(written.filter(sequence => sequence === '\x1b[6n')).toHaveLength(1);
   });
 
   it('never asks for the cursor when tracking is off', async () => {
     const { written, source } = mountRegion(false);
     source.emit('data', '\x1b[<0;3;11M');
-    await new Promise((resolve) => setTimeout(resolve, 20));
+    await new Promise(resolve => setTimeout(resolve, 20));
 
     expect(written).not.toContain(MOUSE_TRACKING_ENABLE);
     expect(written).not.toContain('\x1b[6n');

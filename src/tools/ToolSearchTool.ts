@@ -21,14 +21,9 @@ export class ToolSearchTool extends BaseTool {
     + 'Use "select:name" for an exact tool, or keywords to find one. After loading, call the tool normally.';
   readonly capabilities = [] as const;
   readonly isExploratoryTool = true;
-  readonly requiresConfirmationDefault = false;
 
   constructor(activityStream: ActivityStream) {
     super(activityStream);
-  }
-
-  requiresConfirmation(): boolean {
-    return false;
   }
 
   getFunctionDefinition(): FunctionDefinition {

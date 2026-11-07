@@ -1,7 +1,10 @@
 import React from 'react';
 import { EventEmitter } from 'events';
 import { render } from 'ink';
-import { afterEach, beforeEach, describe, expect, test } from 'vitest';
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
+import { ConversationStatus } from '../ConversationStatus.js';
+import { EMPTY_CONVERSATION, frozenConversation } from '../../hooks/useConversationSelector.js';
+import type { ToolCallState } from '@shared/index.js';
 import { StatusIndicator } from '../StatusIndicator.js';
 import { ActivityStream } from '@services/ActivityStream.js';
 import { ServiceRegistry } from '@services/ServiceRegistry.js';
@@ -136,5 +139,81 @@ describe('StatusIndicator request phase', () => {
     emit(ActivityEventType.MODEL_REQUEST_END, {});
 
     expect(ARC_GLYPHS).toContain(indicatorOf(await lastFrame()));
+  });
+});
+
+describe('selected conversation work status', () => {
+  test('separates foreground waits, nested child inference, independent inference, and completion', async () => {
+    const stdout = new FakeStdout();
+    const call = (toolName: string, args: Record<string, unknown> = {}, parentId?: string): ToolCallState => ({
+      id: toolName,
+      toolName,
+      arguments: args,
+      parentId,
+      status: 'executing',
+      startTime: 0,
+    });
+    const stream = new ActivityStream();
+    const view = (calls: ToolCallState[], thinking = true) => (
+      <ConversationStatus
+        source={frozenConversation({ ...EMPTY_CONVERSATION, isThinking: thinking, activeToolCalls: calls })}
+        activityStream={stream}
+        hideTodos
+      />
+    );
+    const instance = render(view([call('wait', { task_ids: ['agent-one'] }), call('read', {}, 'child-call')]), {
+      stdout: stdout as unknown as NodeJS.WriteStream,
+      debug: true,
+      patchConsole: false,
+      exitOnCtrlC: false,
+    });
+    const see = async (text: string) => vi.waitFor(() => expect(stripAnsi(stdout.frames.at(-1) ?? '')).toContain(text));
+    try {
+      await see('Waiting for agent');
+      instance.rerender(view([call('read', {}, 'child-call')]));
+      await see('Thinking');
+      instance.rerender(view([call('agent', { run_in_background: false })]));
+      await see('Waiting for agent');
+      instance.rerender(view([call('wait', { task_ids: ['shell-one'] })]));
+      await see('Waiting');
+      expect(stripAnsi(stdout.frames.at(-1) ?? '')).not.toContain('Waiting for agent');
+      instance.rerender(view([call('agent', { run_in_background: true })]));
+      await see('Running tools');
+      instance.rerender(view([]));
+      await see('Thinking');
+      const childStream = new ActivityStream('outer-delegation');
+      instance.rerender(
+        <ConversationStatus
+          source={frozenConversation({
+            ...EMPTY_CONVERSATION,
+            isThinking: true,
+            activeToolCalls: [call('wait', { task_ids: ['agent-grandchild'] }, 'outer-delegation')],
+          })}
+          activityStream={childStream}
+          hideTodos
+        />
+      );
+      await see('Waiting for agent');
+      instance.rerender(
+        <ConversationStatus
+          source={frozenConversation({
+            ...EMPTY_CONVERSATION,
+            isThinking: true,
+            activeToolCalls: [call('wait', { task_ids: ['agent-descendant'] }, 'grandchild-delegation')],
+          })}
+          activityStream={childStream}
+          hideTodos
+        />
+      );
+      await see('Thinking');
+      instance.rerender(<StatusIndicator isProcessing awaitingHuman="approval" />);
+      await see('Awaiting approval');
+      instance.rerender(<StatusIndicator isProcessing awaitingHuman="input" />);
+      await see('Awaiting input');
+      instance.rerender(view([], false));
+      await vi.waitFor(() => expect(stripAnsi(stdout.frames.at(-1) ?? '').trim()).toBe(''));
+    } finally {
+      instance.unmount();
+    }
   });
 });

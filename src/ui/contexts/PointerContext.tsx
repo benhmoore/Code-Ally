@@ -12,11 +12,18 @@
  */
 
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef } from 'react';
+import type { MouseSupport } from '../../types/index.js';
 import type { DOMElement } from 'ink';
 import { MOUSE_TRACKING_DISABLE, MOUSE_TRACKING_ENABLE } from '@utils/terminal.js';
 import type { MouseEvent, TerminalInputStream } from '@utils/terminalInput.js';
 import { logger } from '@services/Logger.js';
 import { absoluteLayout, hitTest, layoutRoot, liveRegionTop, type LayoutNode } from '../utils/pointer.js';
+
+/** Native scrollback cannot report its viewport offset. Only an explicit mouse
+ * preference may let an unsolicited dialog capture the terminal's wheel. */
+export function shouldTrackPointer(mode: MouseSupport | undefined, interactive: boolean): boolean {
+  return mode === 'always' || (mode === 'dialogs' && interactive);
+}
 
 type PressHandler = () => void;
 

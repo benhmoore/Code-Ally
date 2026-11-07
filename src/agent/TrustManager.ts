@@ -14,6 +14,7 @@ import type { PermissionMode } from '../security/PermissionMode.js';
 import type { PermissionPolicyService, PermissionEvaluation } from '../services/PermissionPolicyService.js';
 
 export interface PermissionContext {
+  toolMetadata?: import('../security/ToolPermissionMetadata.js').ToolPermissionMetadata;
   onDecision?: (decision: import('../security/PermissionDecision.js').PermissionDecision) => void;
   requiresConfirmation: boolean;
   workspaceRoot: string;
@@ -182,6 +183,7 @@ export class TrustManager {
     if (mode === 'auto' && this.permissionPolicy) {
       const startedInManual = this.permissionPolicy.getSnapshot().effectiveMode === 'manual';
       const input: PermissionEvaluation = {
+        toolMetadata: context?.toolMetadata,
         toolName,
         args,
         workspaceRoot: context?.workspaceRoot ?? process.cwd(),

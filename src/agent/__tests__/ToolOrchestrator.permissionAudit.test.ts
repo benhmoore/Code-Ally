@@ -37,6 +37,7 @@ it.each(['allow', 'ask', 'deny'] as const)('persists exact concurrent %s audits 
   const calls: ToolCall[] = ['first', 'second'].map(marker => ({ id: marker, type: 'function', function: { name: 'read', arguments: { marker } } }));
   const messages: Message[] = [{ id: 'assistant', role: 'assistant', content: '', tool_calls: calls }];
   const tool = { runPreview: async () => {}, requiresConfirmation: () => true, effectFor: () => undefined,
+    capabilitiesFor: () => [], getFunctionDefinition: () => ({ function: { parameters: { type: 'object', properties: {} } } }),
     effectOutcomeFor: () => 'succeeded', getShellCommand: () => undefined };
   const manager = { getTool: () => tool, validateBeforePermission: async () => undefined,
     executeTool: vi.fn(async () => ({ success: true, error: '', content: 'tool content' })) };

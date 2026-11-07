@@ -74,7 +74,7 @@ export const DEFAULT_CONFIG: Config = {
   enable_idle_messages: false, // Opt in to model-generated idle status messages; reserve local inference for work
   enable_session_title_generation: true, // Enable auto-generated session titles
   enable_terminal_hyperlinks: true, // Make file names and links clickable in terminals that support OSC 8
-  mouse_support: 'dialogs', // off | dialogs | always — when clicks are sent to the app instead of the terminal
+  mouse_support: 'off', // Explicit opt-in: dialogs | always capture clicks and may capture native scrolling
 
   // ==========================================
   // TOOL CALL RETRY SETTINGS

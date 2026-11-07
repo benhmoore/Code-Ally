@@ -27,7 +27,7 @@ describe('selective Auto deterministic envelope', () => {
     for (const command of ['pwd', 'ls -la', 'cat source.ts', 'head -n 2 source.ts', 'tail -n1 source.ts', 'wc -l source.ts']) {
       const decision = await classify('bash', { command });
       expect(decision.kind, command).toBe('allow');
-      expect(decision.readCommand?.steps[0]?.executable?.startsWith('/')).toBe(true);
+      expect(decision.readCommand?.steps[0]?.stages[0]?.executable?.startsWith('/')).toBe(true);
     }
   });
 

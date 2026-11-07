@@ -5,8 +5,11 @@ import { getProjectSessionsDir } from '../../config/paths.js';
 import { PermissionManager } from '../PermissionManager.js';
 import { PolicyDeniedError } from '../PathSecurity.js';
 import type { BaseTool } from '../../tools/BaseTool.js';
+import { ToolCapability } from '../../tools/ToolCapability.js';
 
 const shellTool = {
+  capabilitiesFor: () => [ToolCapability.ShellExec],
+  getFunctionDefinition: () => ({ function: { parameters: { type: 'object', properties: {} } } }),
   requiresConfirmation: () => true,
   getShellCommand: (args: Record<string, unknown>) => String(args.command),
 } as BaseTool;

@@ -1,13 +1,12 @@
 /** Compact, event-driven activity line for the live UI region. */
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { Box, Text } from 'ink';
 import { ServiceRegistry } from '@services/ServiceRegistry.js';
-import { TodoItem, getActiveForm } from '@services/TodoManager.js';
+import { TodoItem } from '@services/TodoManager.js';
 import { ActivityEventType, ToolCallState } from '@shared/index.js';
 import { ProgressIndicator } from './ProgressIndicator.js';
 import { FreshnessLabel } from './FreshnessLabel.js';
 import { formatElapsed } from '../utils/timeUtils.js';
-import { getAgentType, getAgentDisplayName } from '@utils/agentTypeUtils.js';
 import { setTerminalProgress, clearTerminalProgress } from '@utils/terminal.js';
 import { UI_DELAYS } from '@config/constants.js';
 import { UI_COLORS } from '../constants/colors.js';
@@ -20,28 +19,34 @@ interface StatusIndicatorProps {
   isCompacting?: boolean;
   isCancelling?: boolean;
   activeToolCalls?: ToolCallState[];
-  activeSubAgents?: string[];
+  awaitingHuman?: 'approval' | 'input';
   activityStream?: ActivityStream;
   hideTodos?: boolean;
 }
 
-function getActiveAgentName(toolCalls: ToolCallState[]): string | null {
-  const ask = toolCalls.find(call => call.status === 'executing' && call.toolName === 'agent-ask');
-  if (ask) {
-    const id = ask.arguments?.agent_id;
-    if (typeof id !== 'string') return 'Assistant';
-    try {
-      const pool = ServiceRegistry.getInstance().get('agent_pool');
-      const metadata = pool?.getAgentMetadata(id);
-      return metadata ? getAgentDisplayName(getAgentType(metadata)) : 'Assistant';
-    } catch {
-      return 'Assistant';
-    }
-  }
+/** Only the selected conversation's own executing tools describe its work.
+ * Nested child calls and background fleet activity never imply foreground waiting. */
+const isOwnCall = (call: ToolCallState, parentId?: string) => !call.parentId || call.parentId === parentId;
 
-  const direct = toolCalls.find(call => call.status === 'executing' && call.toolName === 'agent');
-  const type = direct?.arguments?.agent_type;
-  return typeof type === 'string' ? getAgentDisplayName(type) : direct ? 'Agent' : null;
+export function foregroundWorkLabel(toolCalls: ToolCallState[], parentId?: string): string | undefined {
+  const executing = toolCalls.filter(call => isOwnCall(call, parentId) && call.status === 'executing');
+  if (
+    executing.some(
+      call =>
+        call.toolName === 'agent-ask' || (call.toolName === 'agent' && call.arguments?.run_in_background === false)
+    )
+  )
+    return 'Waiting for agent';
+  const wait = executing.find(call => call.toolName === 'wait');
+  if (wait) {
+    const ids: unknown = wait.arguments?.task_ids;
+    return Array.isArray(ids) && ids.length > 0 && ids.every(id => typeof id === 'string' && id.startsWith('agent-'))
+      ? ids.length === 1
+        ? 'Waiting for agent'
+        : 'Waiting for agents'
+      : 'Waiting';
+  }
+  return executing.length > 0 ? 'Running tools' : undefined;
 }
 
 /**
@@ -56,10 +61,11 @@ export const StatusIndicator: React.FC<StatusIndicatorProps> = ({
   isCompacting = false,
   isCancelling = false,
   activeToolCalls = [],
-  activeSubAgents = [],
+  awaitingHuman,
   activityStream: selectedActivityStream,
   hideTodos = false,
 }) => {
+  const ownParentId = selectedActivityStream?.getParentId();
   const active = isProcessing || isCompacting || isCancelling;
   const width = useContentWidth();
   const [todos, setTodos] = useState<TodoItem[]>([]);
@@ -82,8 +88,13 @@ export const StatusIndicator: React.FC<StatusIndicatorProps> = ({
    * minutes of silence are entirely normal.
    */
   const getSilenceMs = React.useCallback(
-    () => (waitingForOutputRef.current ? Date.now() - lastOutputAtRef.current : null),
-    []
+    () =>
+      !awaitingHuman &&
+      waitingForOutputRef.current &&
+      !toolCallsRef.current.some(call => isOwnCall(call, ownParentId) && call.status === 'executing')
+        ? Date.now() - lastOutputAtRef.current
+        : null,
+    [awaitingHuman, ownParentId]
   );
 
   useEffect(() => {
@@ -124,29 +135,29 @@ export const StatusIndicator: React.FC<StatusIndicatorProps> = ({
   // already describing the delegation.
   useEffect(() => {
     try {
-      const activityStream = selectedActivityStream
-        ?? ServiceRegistry.getInstance().get('activity_stream');
+      const activityStream = selectedActivityStream ?? ServiceRegistry.getInstance().get('activity_stream');
       if (!activityStream) return undefined;
-      const accepts = (event: { parentId?: string }) => selectedActivityStream !== undefined || !event.parentId;
+      const accepts = (event: { parentId?: string }) =>
+        !event.parentId || event.parentId === activityStream.getParentId();
 
       const unsubscribes = [
-        activityStream.subscribe(ActivityEventType.MODEL_REQUEST_START, (event) => {
+        activityStream.subscribe(ActivityEventType.MODEL_REQUEST_START, event => {
           if (!accepts(event)) return;
           setAwaitingModel(true);
           waitingForOutputRef.current = true;
         }),
-        activityStream.subscribe(ActivityEventType.MODEL_REQUEST_END, (event) => {
+        activityStream.subscribe(ActivityEventType.MODEL_REQUEST_END, event => {
           if (!accepts(event)) return;
           setAwaitingModel(false);
           waitingForOutputRef.current = false;
         }),
-        activityStream.subscribe(ActivityEventType.MODEL_STREAM_RESET, (event) => {
+        activityStream.subscribe(ActivityEventType.MODEL_STREAM_RESET, event => {
           if (!accepts(event)) return;
           setAwaitingModel(true);
           waitingForOutputRef.current = true;
         }),
         ...[ActivityEventType.ASSISTANT_CHUNK, ActivityEventType.THOUGHT_CHUNK].map(eventType =>
-          activityStream.subscribe(eventType, (event) => {
+          activityStream.subscribe(eventType, event => {
             // Synthetic status events carry no chunk; only real output counts.
             const chunk = (event.data as { chunk?: unknown } | undefined)?.chunk;
             if (accepts(event) && typeof chunk === 'string' && chunk.length > 0) {
@@ -193,7 +204,8 @@ export const StatusIndicator: React.FC<StatusIndicatorProps> = ({
     const update = () => {
       const now = Date.now();
       const longRunning = toolCallsRef.current.some(call => {
-        if (call.status !== 'executing' || call.executionStartTime === undefined) return false;
+        if (!isOwnCall(call, ownParentId) || call.status !== 'executing' || call.executionStartTime === undefined)
+          return false;
         return now - call.executionStartTime >= UI_DELAYS.TOOL_DURATION_DISPLAY_THRESHOLD;
       });
       if (longRunning) setTerminalProgress(0, 'indeterminate');
@@ -202,29 +214,26 @@ export const StatusIndicator: React.FC<StatusIndicatorProps> = ({
     update();
     const interval = setInterval(update, 1000);
     return () => clearInterval(interval);
-  }, [isProcessing, isCompacting]);
+  }, [isProcessing, isCompacting, ownParentId]);
 
   useEffect(() => () => clearTerminalProgress(), []);
 
-  const activeAgent = getActiveAgentName(activeToolCalls);
-  const currentTodo = todos.find(todo => todo.status === 'in_progress');
   const completedCount = todos.filter(todo => todo.status === 'completed').length;
   const todoProgress = todos.length > 0 ? `${completedCount}/${todos.length}` : null;
-
-  const label = useMemo(() => {
-    if (isCancelling) return 'Cancelling';
-    if (isCompacting) return 'Compacting conversation';
-    if (currentTodo) return getActiveForm(currentTodo.task);
-    if (activeAgent) return `Working with ${activeAgent}`;
-    if (activeSubAgents.length > 0) {
-      return `Working with ${activeSubAgents.map(getAgentDisplayName).join(', ')}`;
-    }
-    return 'Thinking';
-  }, [isCancelling, isCompacting, currentTodo, activeAgent, activeSubAgents]);
+  const workLabel = foregroundWorkLabel(activeToolCalls, ownParentId);
+  const label = isCancelling
+    ? 'Cancelling'
+    : isCompacting
+      ? 'Compacting conversation'
+      : awaitingHuman === 'approval'
+        ? 'Awaiting approval'
+        : awaitingHuman === 'input'
+          ? 'Awaiting input'
+          : (workLabel ?? 'Thinking');
 
   // A grey hollow circle flashing on and off while the request is out with
   // nothing back; the yellow arc means output is actually arriving.
-  const showBlink = awaitingModel && !isCancelling && !isCompacting;
+  const showBlink = awaitingModel && !workLabel && !awaitingHuman && !isCancelling && !isCompacting;
   const suffix = `${todoProgress ? ` · ${todoProgress}` : ''} · ${formatElapsed(elapsedSeconds)} · esc interrupt`;
   // One padding cell, one indicator and FreshnessLabel's leading space form
   // the same label gutter as the idle shell row. Metadata never pushes it out.
@@ -237,9 +246,7 @@ export const StatusIndicator: React.FC<StatusIndicatorProps> = ({
     <Box paddingLeft={1} width={width}>
       <ProgressIndicator
         type={showBlink ? 'blink' : 'arc'}
-        color={
-          isCancelling ? UI_COLORS.ERROR : showBlink ? UI_COLORS.TEXT_DIM : UI_COLORS.PRIMARY
-        }
+        color={isCancelling ? UI_COLORS.ERROR : showBlink ? UI_COLORS.TEXT_DIM : UI_COLORS.PRIMARY}
       />
       <FreshnessLabel
         text={visibleLabel}

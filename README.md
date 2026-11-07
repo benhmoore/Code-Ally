@@ -48,6 +48,8 @@ ally --init                 # Initial setup
 ally --profile work         # Use profile
 ```
 
+Mouse reporting is off by default so new approvals do not interrupt native terminal scrollback. `/config set mouse_support=dialogs` enables clicks in dialogs and focused fleet lists; `mouse_support=always` enables clicks throughout the UI. These opt-in modes may capture the scroll wheel; `mouse_support=off` restores native scrolling.
+
 ## Commands
 
 ### Core
@@ -402,10 +404,16 @@ its parent instructions.
 Auto permits file reads inside the repository, including instruction files,
 configuration, and credentials. Filename-based protections apply to writes,
 not reads. Targets resolving outside the repository still require approval.
+Delegation, questions, and other baseline permission-free operations use the
+tool's declared capabilities rather than a separate name allowlist. Delegated
+agents still check permission independently for each action they perform.
 Eligible literal
 shell reads execute pinned utilities directly, with no shell expansion. Verified
 `&&` chains can combine workspace `cd`, literal `echo`, file-listing/read commands,
-and supported Git status, log, branch, remote, and diff reads. Git options
+and supported Git status, log, branch, remote, and diff reads. Pipelines compose
+workspace reads with stdin transformations, including `find … | sort`; quoted
+patterns remain literal arguments. Each stage is checked for paths and effects.
+Git options
 are validated by operation family, including common aliases and flag ordering.
 Repositories with external content filters or submodules require approval for
 working-tree inspection. Scripts, unknown command forms, package runners,
