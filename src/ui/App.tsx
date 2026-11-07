@@ -398,7 +398,6 @@ const AppContentComponent: React.FC<AppContentProps> = ({
         {/* Bottom interaction region */}
         <Box flexDirection="column">
       {completedChild && <Text dimColor wrap="truncate-end">Completed conversation · Esc returns to main · queued text can be recalled with Alt+↑</Text>}
-      {displayedIsThinking && <Text dimColor wrap="truncate-end">{isChildSelected ? 'Enter steers this agent · Esc stops' : 'Enter steers · Alt+Enter queues a follow-up · Esc stops'}</Text>}
       {pendingInput.length > 0 && (
         <Box flexDirection="column" marginTop={1}>
           <Text dimColor wrap="truncate-end">Queued follow-ups ({pendingInput.length}) · Alt+↑ recalls the last message to edit or discard</Text>
@@ -423,6 +422,8 @@ const AppContentComponent: React.FC<AppContentProps> = ({
               <Text dimColor wrap="truncate-end">{completedChild ? 'Completed' : 'Ready'} · {displayedAgentName}</Text>
             </Box>
           )}
+
+          {displayedIsThinking && <Text dimColor wrap="truncate-end">{isChildSelected ? 'Enter steers this agent · Esc stops' : 'Enter steers · Alt+Enter queues a follow-up · Esc stops'}</Text>}
 
           {/* Input Prompt */}
           <InputPrompt
