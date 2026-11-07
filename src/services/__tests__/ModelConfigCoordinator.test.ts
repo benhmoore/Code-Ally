@@ -110,6 +110,22 @@ describe('ModelConfigCoordinator', () => {
       expect(second.applyRuntimeConfig).toHaveBeenLastCalledWith({ model: 'new' });
     });
 
+    it('distinguishes a persisted selection from failed runtime activation', async () => {
+      const manager = makeConfigManager();
+      const coordinator = new ModelConfigCoordinator({
+        getConfigManager: () => manager,
+        testModelCapabilities: async () => makeCapabilities(),
+        applyRuntimeConfig: () => {
+          throw new Error('active client unavailable');
+        },
+      });
+      const outcome = await coordinator.switchModel('saved-model', 'ally');
+      expect(manager.setValue).toHaveBeenCalledExactlyOnceWith('model', 'saved-model');
+      expect(outcome.status).toBe('error');
+      expect(outcome.configUpdate).toEqual({ model: 'saved-model' });
+      expect(outcome.messages.join(' ')).toContain('Model saved, but could not be applied');
+    });
+
     it('probes, persists and syncs the ally model', async () => {
       const configManager = makeConfigManager();
       const probe = vi.fn(async () => makeCapabilities());
@@ -123,7 +139,7 @@ describe('ModelConfigCoordinator', () => {
       expect(outcome).toEqual({
         status: 'switched',
         configUpdate: { model: 'llama3' },
-        messages: ['Model changed to: llama3'],
+        messages: ['Model changed to: llama3\nSaved to profile and applied to subsequent requests.'],
       });
     });
 
@@ -135,7 +151,9 @@ describe('ModelConfigCoordinator', () => {
 
       expect(configManager.setValue).toHaveBeenCalledWith('service_model', 'small');
       expect(applyRuntimeConfig).toHaveBeenCalledWith({ service_model: 'small' });
-      expect(outcome.messages).toEqual(['Service model changed to: small']);
+      expect(outcome.messages).toEqual([
+        'Service model changed to: small\nSaved to profile and applied to subsequent requests.',
+      ]);
     });
 
     it('persists before syncing the live services', async () => {
@@ -163,7 +181,9 @@ describe('ModelConfigCoordinator', () => {
 
       const outcome = await coordinator.switchModel('llama3', 'ally');
 
-      expect(outcome.messages).toEqual(['Model changed to: llama3 (cached) (no image support)']);
+      expect(outcome.messages).toEqual([
+        'Model changed to: llama3 (cached) (no image support)\nSaved to profile and applied to subsequent requests.',
+      ]);
     });
 
     it('falls back to the default endpoint when none is configured', async () => {
@@ -190,7 +210,9 @@ describe('ModelConfigCoordinator', () => {
 
       expect(outcome.status).toBe('unsupported');
       expect(outcome.configUpdate).toBeUndefined();
-      expect(outcome.messages).toEqual(["Model 'toyllm' does not support tools. Ally model requires tool support."]);
+      expect(outcome.messages).toEqual([
+        "Model 'toyllm' does not support tools. Choose another model with /model, or use /model service toyllm for background work.",
+      ]);
       expect(configManager.setValue).not.toHaveBeenCalled();
       expect(applyRuntimeConfig).not.toHaveBeenCalled();
     });
@@ -209,12 +231,12 @@ describe('ModelConfigCoordinator', () => {
 
     // A missing ConfigManager is silent - the picker just closes. It gets its
     // own status so the oddity stays visible to callers.
-    it('reports a missing config manager without telling the user', async () => {
+    it('gives setup guidance when configuration is unavailable', async () => {
       const { coordinator, applyRuntimeConfig } = makeCoordinator(null);
 
       const outcome = await coordinator.switchModel('llama3', 'ally');
 
-      expect(outcome).toEqual({ status: 'unavailable', messages: [] });
+      expect(outcome).toEqual({ status: 'unavailable', messages: ['Configuration unavailable. Run /config setup.'] });
       expect(applyRuntimeConfig).not.toHaveBeenCalled();
     });
 
@@ -227,7 +249,9 @@ describe('ModelConfigCoordinator', () => {
 
       expect(outcome).toEqual({
         status: 'error',
-        messages: ['Error changing model: endpoint unreachable'],
+        messages: [
+          'Error changing model: endpoint unreachable\nCheck the connection with /config setup, then retry /model.',
+        ],
       });
       expect(applyRuntimeConfig).not.toHaveBeenCalled();
     });
@@ -243,7 +267,9 @@ describe('ModelConfigCoordinator', () => {
       const outcome = await coordinator.switchModel('llama3', 'ally');
 
       expect(outcome.status).toBe('error');
-      expect(outcome.messages).toEqual(['Error changing model: config is read-only']);
+      expect(outcome.messages).toEqual([
+        'Error changing model: config is read-only\nCheck the configuration file permissions, then retry /model.',
+      ]);
       expect(applyRuntimeConfig).not.toHaveBeenCalled();
     });
 
@@ -254,27 +280,9 @@ describe('ModelConfigCoordinator', () => {
 
       const outcome = await coordinator.switchModel('llama3', 'ally');
 
-      expect(outcome.messages).toEqual(['Error changing model: Unknown error']);
-    });
-  });
-
-  describe('config updates', () => {
-    it('passes a usable patch through', () => {
-      const { coordinator } = makeCoordinator(makeConfigManager());
-      expect(coordinator.normalizeConfigUpdates({ model: 'llama3' })).toEqual({ model: 'llama3' });
-    });
-
-    it.each([[null], [undefined], ['model=llama3'], [42]])('rejects %p as a config patch', input => {
-      const { coordinator } = makeCoordinator(makeConfigManager());
-      expect(coordinator.normalizeConfigUpdates(input)).toBeNull();
-    });
-
-    it('forwards a patch to the live services', () => {
-      const { coordinator, applyRuntimeConfig } = makeCoordinator(makeConfigManager());
-
-      coordinator.applyRuntimeUpdates({ model: 'llama3' });
-
-      expect(applyRuntimeConfig).toHaveBeenCalledWith({ model: 'llama3' });
+      expect(outcome.messages).toEqual([
+        'Error changing model: Unknown error\nCheck the connection with /config setup, then retry /model.',
+      ]);
     });
   });
 });

@@ -10,6 +10,8 @@ describe('terminal-relative layout budgets', () => {
 
   test('multi-row items consume the same finite viewport budget', () => {
     expect(visibleItemBudget(24, { chromeRows: 9, rowsPerItem: 3, maximum: 10 })).toBe(5);
+    expect(visibleItemBudget(12, { chromeRows: 9, rowsPerItem: 3 })).toBe(1);
+    expect(visibleItemBudget(8)).toBe(1);
   });
 
   test('live output is capped without reserving rows', () => {

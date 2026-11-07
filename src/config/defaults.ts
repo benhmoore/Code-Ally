@@ -9,7 +9,7 @@ import type { Config } from '../types/index.js';
 import { isHooksConfigShape } from '../hooks/types.js';
 import { formatError } from '../utils/errorUtils.js';
 import { REASONING_EFFORT } from './constants.js';
-import { CONFIG_CHOICES } from './metadata.js';
+import { CONFIG_CHOICES, CONFIG_NUMBER_RULES } from './metadata.js';
 import { TIMEOUT_LIMITS } from './toolDefaults.js';
 
 /**
@@ -253,7 +253,10 @@ export function validateConfigValue(
   }
 
   // An unset temperature means "use the backend/model default".
-  if (['temperature', 'top_p', 'top_k', 'min_p', 'repeat_penalty'].includes(key) && (value === undefined || value === null)) {
+  if (
+    ['temperature', 'top_p', 'top_k', 'min_p', 'repeat_penalty'].includes(key) &&
+    (value === undefined || value === null)
+  ) {
     return { valid: true, coercedValue: undefined };
   }
 
@@ -325,6 +328,16 @@ export function validateConfigValue(
     return { valid: false, error: 'hooks must be an object keyed by hook event' };
   }
 
+  const validateNumber = (number: number) => {
+    const rule = CONFIG_NUMBER_RULES[key];
+    if (rule?.integer && !Number.isInteger(number)) return { valid: false, error: `${key} must be a whole number` };
+    if (rule?.minimum !== undefined && number < rule.minimum)
+      return { valid: false, error: `${key} must be at least ${rule.minimum}` };
+    if (rule?.maximum !== undefined && number > rule.maximum)
+      return { valid: false, error: `${key} must be at most ${rule.maximum}` };
+    return { valid: true, coercedValue: number };
+  };
+
   try {
     switch (expectedType) {
       case 'string':
@@ -335,12 +348,12 @@ export function validateConfigValue(
 
       case 'number':
         if (typeof value === 'number' && Number.isFinite(value)) {
-          return { valid: true, coercedValue: value };
+          return validateNumber(value);
         }
         if (typeof value === 'string') {
           const parsed = Number(value);
           if (value.trim() && Number.isFinite(parsed)) {
-            return { valid: true, coercedValue: parsed };
+            return validateNumber(parsed);
           }
         }
         return { valid: false, error: `Expected number, got ${typeof value}` };

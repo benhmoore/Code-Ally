@@ -48,24 +48,6 @@ function getCompletionIcon(type: Completion['type']): string {
 }
 
 /**
- * Get color for completion type
- */
-function getCompletionColor(type: Completion['type']): string {
-  switch (type) {
-    case 'command':
-      return 'yellow';
-    case 'file':
-      return 'cyan';
-    case 'directory':
-      return 'magenta';
-    case 'option':
-      return 'blue';
-    default:
-      return 'white';
-  }
-}
-
-/**
  * CompletionDropdown Component
  */
 export const CompletionDropdown: React.FC<CompletionDropdownProps> = ({
@@ -120,14 +102,14 @@ export const CompletionDropdown: React.FC<CompletionDropdownProps> = ({
               </Text>
 
               {/* Icon */}
-              <Text color={getCompletionColor(completion.type)}>
+              <Text color={isSelected ? UI_COLORS.PRIMARY : UI_COLORS.TEXT_DIM}>
                 {getCompletionIcon(completion.type)}{' '}
               </Text>
 
               {/* Value */}
               <Box width="30%">
                 <Text
-                  color={isSelected ? 'white' : undefined}
+                  color={isSelected ? UI_COLORS.PRIMARY : undefined}
                   bold={isSelected}
                   wrap="truncate"
                 >

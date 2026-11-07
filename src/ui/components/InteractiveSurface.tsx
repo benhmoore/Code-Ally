@@ -39,10 +39,10 @@ export const InteractiveSurface: React.FC<InteractiveSurfaceProps> = ({
     <Box flexDirection="column" paddingX={1}>
       <Text dimColor>{createDivider(Math.max(1, width - 2))}</Text>
       {title && (
-        <Box>
+        <Text wrap="truncate-end">
           <Text color={tone} bold>{title}</Text>
           {meta && <Text dimColor> · {meta}</Text>}
-        </Box>
+        </Text>
       )}
       {description && <Text dimColor>{description}</Text>}
       <Box flexDirection="column" marginTop={description ? 1 : 0}>

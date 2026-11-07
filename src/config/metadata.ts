@@ -24,6 +24,33 @@ export const CONFIG_CHOICES: Partial<Record<keyof Config, readonly string[]>> = 
   mouse_support: MOUSE_SUPPORT_VALUES,
 };
 
+export interface ConfigNumberRule {
+  minimum?: number;
+  maximum?: number;
+  integer?: boolean;
+}
+
+/** Valid numeric domains shared by setting validation and focused help. */
+export const CONFIG_NUMBER_RULES: Partial<Record<keyof Config, ConfigNumberRule>> = {
+  context_size: { minimum: 1, integer: true },
+  max_tokens: { minimum: 1, integer: true },
+  temperature: { minimum: 0, maximum: 2 },
+  top_p: { minimum: 0, maximum: 1 },
+  min_p: { minimum: 0, maximum: 1 },
+  top_k: { minimum: 0, integer: true },
+  repeat_penalty: { minimum: 0 },
+  bash_timeout: { minimum: 1, integer: true },
+  tool_call_activity_timeout: { minimum: 0, integer: true },
+  tool_call_max_retries: { minimum: 0, integer: true },
+  dir_tree_max_depth: { minimum: 0, integer: true },
+  dir_tree_max_files: { minimum: 1, integer: true },
+  diff_display_max_file_size: { minimum: 1, integer: true },
+  diff_display_context_lines: { minimum: 0, integer: true },
+  tool_result_max_context_percent: { minimum: 0, maximum: 1 },
+  tool_result_min_tokens: { minimum: 0, integer: true },
+  read_max_tokens: { minimum: 1, integer: true },
+};
+
 export const CONFIG_CATEGORIES: Record<string, (keyof Config)[]> = {
   'LLM Model Settings': [
     'provider',
@@ -97,10 +124,17 @@ export const CONFIG_DESCRIPTIONS: Partial<Record<keyof Config, string>> = {
   provider: 'Model provider',
   endpoint: 'Provider base URL',
   api_key: 'Provider API key (stored encrypted)',
-  context_size: 'Context window size (tokens)',
+  context_size:
+    'Context window in tokens. Use at least 32768 for everyday coding; smaller windows are for stress testing.',
   temperature: 'Generation temperature override (unset uses model default)',
-  max_tokens: 'Max tokens per response',
-  reasoning_effort: 'Reasoning effort level (low/medium/high)',
+  max_tokens: 'Maximum response tokens. The request budget also reserves space for conversation and tools.',
+  reasoning_effort: 'Reasoning effort for providers that support it: low, medium or high.',
+  top_p: 'Sampling probability cutoff (unset uses the model default)',
+  top_k: 'Sampling candidate count (unset uses the model default)',
+  min_p: 'Minimum token probability (unset uses the model default)',
+  repeat_penalty: 'Repetition penalty override (unset uses the model default)',
+  stop: 'JSON array of sequences that end generation',
+  stream_responses: 'Stream model output as it arrives',
 
   // Agent Settings
   default_agent: 'Default agent at startup',

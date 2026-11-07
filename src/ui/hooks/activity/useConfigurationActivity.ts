@@ -2,9 +2,7 @@
 import { useEffect, useMemo, useRef } from 'react';
 import { ActivityEventType } from '@shared/index.js';
 import { ServiceRegistry } from '@services/ServiceRegistry.js';
-import { applyRuntimeConfigUpdates } from '@services/RuntimeConfigSync.js';
-import { ModelConfigCoordinator } from '@services/ModelConfigCoordinator.js';
-import { probeModelCapabilities } from '@llm/ProviderAdapter.js';
+import { createModelConfigCoordinator } from '@services/createModelConfigCoordinator.js';
 import type { ActivitySubscriptionContext } from './ActivitySubscriptionContext.js';
 import { useDomainActivityEvent } from './useDomainActivityEvent.js';
 
@@ -20,22 +18,7 @@ export function useConfigurationActivity({ actions, modal, agent, lifetime }: Ac
     };
   }, []);
   const modelConfigCoordinator = useMemo(
-    () =>
-      new ModelConfigCoordinator({
-        getConfigManager: () => ServiceRegistry.getInstance().get('config_manager'),
-        applyRuntimeConfig: updates => applyRuntimeConfigUpdates(ServiceRegistry.getInstance(), updates),
-        validatePrimaryModelSwitch: modelName => agent.getModelIdentityChangeBlock({ model: modelName }),
-        testModelCapabilities: async (_endpoint, modelName) => {
-          const config = ServiceRegistry.getInstance().get('config_manager')?.getConfig();
-          if (!config) return { supportsTools: true, supportsImages: true, fromCache: false };
-          const capabilities = await probeModelCapabilities(config, modelName);
-          return {
-            supportsTools: capabilities.tools !== 'unsupported',
-            supportsImages: capabilities.images !== 'unsupported',
-            fromCache: capabilities.fromCache ?? false,
-          };
-        },
-      }),
+    () => createModelConfigCoordinator(ServiceRegistry.getInstance(), agent),
     [agent]
   );
 
@@ -45,7 +28,8 @@ export function useConfigurationActivity({ actions, modal, agent, lifetime }: Ac
       const { requestId, models, currentModel, modelType, typeName } = event.data;
       loadingOwner.current = undefined;
       modal.setModelSelectRequest({ requestId, models, currentModel, modelType, typeName });
-      modal.setModelSelectedIndex(0);
+      const current = models.findIndex(model => model.name === currentModel);
+      modal.setModelSelectedIndex(Math.max(0, current));
     },
     lifetime
   );
@@ -60,39 +44,9 @@ export function useConfigurationActivity({ actions, modal, agent, lifetime }: Ac
 
   useDomainActivityEvent(
     ActivityEventType.SETUP_WIZARD_COMPLETE,
-    async (_event, isCurrent) => {
+    () => {
       modal.setSetupWizardOpen(false);
-
-      const registry = ServiceRegistry.getInstance();
-      const configManager = registry.get('config_manager');
-
-      if (configManager) {
-        try {
-          await configManager.initialize();
-          if (!isCurrent()) return;
-          const newConfig = configManager.getConfig();
-
-          applyRuntimeConfigUpdates(registry, newConfig);
-
-          actions.updateConfig(newConfig);
-
-          actions.addMessage({
-            role: 'assistant',
-            content: 'Setup completed successfully! Code Ally is ready to use.',
-          });
-        } catch (error) {
-          if (!isCurrent()) return;
-          actions.addMessage({
-            role: 'assistant',
-            content: `Setup completed, but failed to apply some changes: ${error instanceof Error ? error.message : 'Unknown error'}`,
-          });
-        }
-      } else {
-        actions.addMessage({
-          role: 'assistant',
-          content: 'Setup completed successfully! Code Ally is ready to use.',
-        });
-      }
+      actions.addMessage({ role: 'assistant', content: 'Setup complete. Your saved settings are active.' });
     },
     lifetime
   );
@@ -103,7 +57,7 @@ export function useConfigurationActivity({ actions, modal, agent, lifetime }: Ac
       modal.setSetupWizardOpen(false);
       actions.addMessage({
         role: 'assistant',
-        content: 'Setup wizard skipped. You can run /init anytime to configure Code Ally.',
+        content: 'Setup closed. Run /config setup to return.',
       });
     },
     lifetime
@@ -165,12 +119,8 @@ export function useConfigurationActivity({ actions, modal, agent, lifetime }: Ac
   useDomainActivityEvent(
     ActivityEventType.CONFIG_UPDATED,
     event => {
-      const updates = modelConfigCoordinator.normalizeConfigUpdates(event.data);
-      if (!updates) return;
-
-      // UI state first, runtime services second.
-      actions.updateConfig(updates);
-      modelConfigCoordinator.applyRuntimeUpdates(updates);
+      // Commands publish saved configuration, including saved changes awaiting runtime recovery.
+      actions.updateConfig(event.data);
     },
     lifetime
   );

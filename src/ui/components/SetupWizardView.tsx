@@ -1,1253 +1,474 @@
-/**
- * SetupWizardView - Interactive first-run setup wizard UI
- *
- * Multi-step wizard for configuring Code Ally on first run:
- * 1. Welcome screen
- * 2. Model provider and endpoint configuration
- * 3. Laptop preference (optional, for local endpoints)
- * 4. Model selection
- * 5. Context size selection
- * 6. Search provider configuration (optional)
- * 7. Completion screen
- */
-
-import React, { useState, useEffect } from 'react';
-import { Box, Text, useInput } from 'ink';
-import { SetupWizard, SetupConfig } from '@services/SetupWizard.js';
+/** Essential setup with cancellable discovery and an explicit review before saving. */
+import React, { useEffect, useRef, useState } from 'react';
+import { Text, useInput } from 'ink';
+import { SetupWizard, type SetupConfig } from '@services/SetupWizard.js';
 import { ServiceRegistry } from '@services/ServiceRegistry.js';
-import { logger } from '@services/Logger.js';
-import { ChickAnimation } from './ChickAnimation.js';
+import type { ProviderModel } from '@llm/ProviderAdapter.js';
+import { MODEL_PROVIDERS } from '@config/providers.js';
 import { InteractiveSurface } from './InteractiveSurface.js';
-import { ProgressIndicator } from './ProgressIndicator.js';
-import { probeModelCapabilities } from '@llm/ProviderAdapter.js';
 import { SelectionIndicator } from './SelectionIndicator.js';
 import { TextInput } from './TextInput.js';
 import { UI_COLORS } from '../constants/colors.js';
-import { SEARCH_PROVIDER_INFO, SearchProviderType } from '../../types/integration.js';
-import { MCP_PRESETS, MCP_PRESET_ORDER, buildConfigFromPreset } from '@mcp/MCPPresets.js';
-import { tokenizeCommand } from '@mcp/MCPServerSpec.js';
-import { MODEL_PROVIDERS } from '@config/providers.js';
+import { KeyboardHintFooter } from './KeyboardHintFooter.js';
+import { useTerminalRows } from '../hooks/useTerminalRows.js';
+import { useContentWidth } from '../hooks/useContentWidth.js';
+import { truncateAnsiToWidth } from '@utils/terminalText.js';
+import { applyRuntimeConfigUpdates } from '@services/RuntimeConfigSync.js';
+import { ActivityEventType } from '@shared/index.js';
 
-enum SetupStep {
-  WELCOME,
-  PROVIDER,
-  PROVIDER_API_KEY,
-  ENDPOINT,
-  VALIDATING_ENDPOINT,
-  LAPTOP_PREFERENCE,
-  MODEL,
-  MODEL_MANUAL,
-  VALIDATING_MODEL,
-  CONTEXT_SIZE,
-  SEARCH_PROMPT,       // Ask if user wants to configure search
-  SEARCH_PROVIDER,     // Select provider (brave/serper)
-  SEARCH_API_KEY,      // Enter API key
-  MCP_PROMPT,          // Ask if user wants to configure an MCP server
-  MCP_SERVER_SELECT,   // Select from presets (or "Custom")
-  MCP_SERVER_INPUT,    // Enter path or env var for selected preset
-  MCP_CUSTOM_NAME,     // Enter custom server name
-  MCP_CUSTOM_COMMAND,  // Enter custom server command
-  APPLYING,
-  COMPLETED,
-}
-
-interface SetupWizardViewProps {
+type Step =
+  | 'provider'
+  | 'endpoint'
+  | 'credentials'
+  | 'discovering'
+  | 'discovery-error'
+  | 'model'
+  | 'manual'
+  | 'checking'
+  | 'unverified'
+  | 'context'
+  | 'review'
+  | 'saving'
+  | 'complete';
+interface Props {
   onComplete: () => void;
   onSkip?: () => void;
 }
 
-function isLocalEndpoint(endpointUrl: string): boolean {
-  try {
-    const url = new URL(endpointUrl);
-    const hostname = url.hostname.toLowerCase();
-    return hostname === 'localhost' || hostname === '127.0.0.1' || hostname.startsWith('127.');
-  } catch {
-    return false;
-  }
-}
-
-export const SetupWizardView: React.FC<SetupWizardViewProps> = ({ onComplete, onSkip }) => {
-  const [step, setStep] = useState<SetupStep>(SetupStep.WELCOME);
-  const [welcomeChoiceIndex, setWelcomeChoiceIndex] = useState(0); // 0 = Continue, 1 = Skip
-  const [initialConfig] = useState(() => ServiceRegistry.getInstance().getRequired('config_manager').getConfig());
-  const providers = MODEL_PROVIDERS;
-  const [providerIndex, setProviderIndex] = useState(() => Math.max(0, providers.findIndex(p => p.value === (initialConfig.provider ?? 'ollama'))));
-  const selectedProvider = providers[providerIndex]?.value ?? 'ollama';
-  const [endpoint, setEndpoint] = useState('http://localhost:11434');
-  const [endpointBuffer, setEndpointBuffer] = useState('http://localhost:11434');
-  const [endpointCursor, setEndpointCursor] = useState('http://localhost:11434'.length);
-  const [providerApiKey, setProviderApiKey] = useState('');
-  const [providerApiKeyBuffer, setProviderApiKeyBuffer] = useState('');
-  const [providerApiKeyCursor, setProviderApiKeyCursor] = useState(0);
-  const [availableModels, setAvailableModels] = useState<string[]>([]);
-  const [selectedModelIndex, setSelectedModelIndex] = useState(0);
-  const [modelBuffer, setModelBuffer] = useState('');
-  const [modelCursor, setModelCursor] = useState(0);
-  const [setupWizard] = useState(() => {
-    const registry = ServiceRegistry.getInstance();
-    const configManager = registry.getRequired('config_manager');
-    return new SetupWizard(configManager);
-  });
-  const [selectedContextSizeIndex, setSelectedContextSizeIndex] = useState(() => initialConfig.setup_completed
-    ? Math.max(0, setupWizard.getContextSizeOptions().findIndex(option => option.value === initialConfig.context_size))
-    : 1);
-  const [isLaptop, setIsLaptop] = useState(false);
-  const [selectedLaptopChoiceIndex, setSelectedLaptopChoiceIndex] = useState(1); // Default to "No"
-  const [error, setError] = useState<string | null>(null);
-
-
-  // Search configuration state
-  const [searchPromptIndex, setSearchPromptIndex] = useState(1); // 0 = Yes, 1 = Skip (default to skip)
-  const [searchProviderIndex, setSearchProviderIndex] = useState(0); // Index into searchProviderOptions
-  const [searchApiKeyBuffer, setSearchApiKeyBuffer] = useState('');
-  const [searchApiKeyCursor, setSearchApiKeyCursor] = useState(0);
-  const [selectedSearchProvider, setSelectedSearchProvider] = useState<SearchProviderType>('none');
-
-  // MCP configuration state
-  const [mcpPromptIndex, setMcpPromptIndex] = useState(1); // 0 = Yes, 1 = Skip (default to skip)
-  const [mcpPresetIndex, setMcpPresetIndex] = useState(0);
-  const [mcpInputBuffer, setMcpInputBuffer] = useState('');
-  const [mcpInputCursor, setMcpInputCursor] = useState(0);
-  const [selectedMcpPresetKey, setSelectedMcpPresetKey] = useState<string>('');
-  const [mcpCustomNameBuffer, setMcpCustomNameBuffer] = useState('');
-  const [mcpCustomNameCursor, setMcpCustomNameCursor] = useState(0);
-  const [mcpCustomCommandBuffer, setMcpCustomCommandBuffer] = useState('');
-  const [mcpCustomCommandCursor, setMcpCustomCommandCursor] = useState(0);
-  const [mcpCustomName, setMcpCustomName] = useState('');
-
-  /** Preset list with "Custom" appended */
-  const mcpOptions = [...MCP_PRESET_ORDER.map(key => ({ key, preset: MCP_PRESETS[key]! })), { key: 'custom', preset: null }];
-
-  // Available search providers (excluding 'none')
-  const searchProviderOptions = Object.entries(SEARCH_PROVIDER_INFO)
-    .filter(([key]) => key !== 'none')
-    .map(([key, info]) => ({ key: key as SearchProviderType, ...info }));
-
-  const contextSizeOptions = setupWizard.getContextSizeOptions();
-
-  // TextInput is active on text entry steps
-  const isTextInputStep = step === SetupStep.PROVIDER_API_KEY || step === SetupStep.ENDPOINT || step === SetupStep.MODEL_MANUAL || step === SetupStep.SEARCH_API_KEY
-    || step === SetupStep.MCP_SERVER_INPUT || step === SetupStep.MCP_CUSTOM_NAME || step === SetupStep.MCP_CUSTOM_COMMAND;
-
-  // Handle exit from TextInput's onCtrlC (empty buffer)
-  const handleCtrlC = () => {
-    onSkip?.();
+export const SetupWizardView: React.FC<Props> = ({ onComplete, onSkip }) => {
+  const [wizard] = useState(() => new SetupWizard(ServiceRegistry.getInstance().getRequired('config_manager')));
+  const [initial] = useState(() => ServiceRegistry.getInstance().getRequired('config_manager').getConfig());
+  const [providerIndex, setProviderIndex] = useState(() =>
+    Math.max(
+      0,
+      MODEL_PROVIDERS.findIndex(provider => provider.value === initial.provider)
+    )
+  );
+  const provider = MODEL_PROVIDERS[providerIndex]!;
+  const [endpoint, setEndpoint] = useState(initial.endpoint);
+  const [apiKey, setApiKey] = useState(initial.api_key ?? '');
+  const [model, setModel] = useState(initial.model ?? '');
+  const [cursor, setCursor] = useState(initial.endpoint.length);
+  const [step, setStep] = useState<Step>('provider');
+  const [models, setModels] = useState<ProviderModel[]>([]);
+  const [modelIndex, setModelIndex] = useState(0);
+  const [contextOptions] = useState(() => wizard.getContextSizeOptions(initial.context_size));
+  const [contextIndex, setContextIndex] = useState(() =>
+    Math.max(
+      0,
+      contextOptions.findIndex(option => option.value === initial.context_size)
+    )
+  );
+  const [choice, setChoice] = useState(0);
+  const [error, setError] = useState('');
+  const [notice, setNotice] = useState('');
+  const request = useRef<AbortController | undefined>(undefined);
+  const mounted = useRef(true);
+  const saveInProgress = useRef(false);
+  const persistedDraft = useRef<string | undefined>(undefined);
+  const completed = useRef(false);
+  const activated = useRef(false);
+  const terminalRows = useTerminalRows();
+  const contentWidth = Math.max(8, useContentWidth() - 4);
+  const connectionProvider = useRef(initial.provider ?? 'ollama');
+  const draft: SetupConfig = {
+    provider: provider.value,
+    endpoint: endpoint.trim(),
+    api_key: apiKey.trim() || null,
+    model: model.trim(),
+    context_size: contextOptions[contextIndex]!.value,
   };
 
-  // Handle keyboard input for selection screens
-  useInput((input, key) => {
-    // Exclude certain steps from keyboard handling
-    const isProtectedStep = step === SetupStep.APPLYING ||
-                            step === SetupStep.COMPLETED ||
-                            step === SetupStep.VALIDATING_ENDPOINT ||
-                            step === SetupStep.VALIDATING_MODEL;
-
-    // ESC - exit (except protected steps)
-    if (key.escape && !isProtectedStep && !isTextInputStep) {
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+      request.current?.abort();
+    };
+  }, []);
+  const go = (next: Step) => {
+    request.current?.abort();
+    request.current = undefined;
+    setStep(next);
+    setChoice(0);
+    setError('');
+  };
+  const complete = () => {
+    if (!completed.current) {
+      completed.current = true;
+      onComplete();
+    }
+  };
+  const back = () => {
+    if (step === 'saving') return;
+    if (step === 'complete') {
+      complete();
+      return;
+    }
+    if (step === 'provider') {
       onSkip?.();
       return;
     }
-
-    // Ctrl+C - only handle for non-TextInput steps (TextInput handles its own)
-    if (key.ctrl && input === 'c' && !isProtectedStep && !isTextInputStep) {
-      onSkip?.();
-      return;
-    }
-
-    if (step === SetupStep.WELCOME) {
-      if (key.upArrow) {
-        setWelcomeChoiceIndex((prev) => Math.max(0, prev - 1));
-      } else if (key.downArrow) {
-        setWelcomeChoiceIndex((prev) => Math.min(1, prev + 1));
-      } else if (key.return) {
-        if (welcomeChoiceIndex === 0) {
-          // Continue
-          setStep(SetupStep.PROVIDER);
-        } else {
-          // Skip
-          if (onSkip) {
-            onSkip();
-          }
-        }
-      }
-    } else if (step === SetupStep.PROVIDER) {
-      if (key.upArrow) {
-        setProviderIndex((prev) => Math.max(0, prev - 1));
-      } else if (key.downArrow) {
-        setProviderIndex((prev) => Math.min(providers.length - 1, prev + 1));
-      } else if (key.return) {
-        const defaultEndpoint = selectedProvider === (initialConfig.provider ?? 'ollama')
-          ? initialConfig.endpoint : providers[providerIndex]!.endpoint;
-        setEndpoint(defaultEndpoint);
-        setEndpointBuffer(defaultEndpoint);
-        setEndpointCursor(defaultEndpoint.length);
-        const apiKey = selectedProvider === (initialConfig.provider ?? 'ollama') ? initialConfig.api_key ?? '' : '';
-        setProviderApiKeyBuffer(apiKey);
-        setProviderApiKeyCursor(apiKey.length);
-        setStep(SetupStep.PROVIDER_API_KEY);
-      }
-    } else if (step === SetupStep.MODEL) {
-      if (key.upArrow) {
-        setSelectedModelIndex((prev) => Math.max(0, prev - 1));
-      } else if (key.downArrow) {
-        setSelectedModelIndex((prev) => Math.min(availableModels.length - 1, prev + 1));
-      } else if (key.return) {
-        setStep(SetupStep.VALIDATING_MODEL);
-      }
-    } else if (step === SetupStep.CONTEXT_SIZE) {
-      if (key.upArrow) {
-        setSelectedContextSizeIndex((prev) => Math.max(0, prev - 1));
-      } else if (key.downArrow) {
-        setSelectedContextSizeIndex((prev) => Math.min(contextSizeOptions.length - 1, prev + 1));
-      } else if (key.return) {
-        // Go to optional search configuration prompt
-        setStep(SetupStep.SEARCH_PROMPT);
-      }
-    } else if (step === SetupStep.SEARCH_PROMPT) {
-      if (key.upArrow) {
-        setSearchPromptIndex((prev) => Math.max(0, prev - 1));
-      } else if (key.downArrow) {
-        setSearchPromptIndex((prev) => Math.min(1, prev + 1));
-      } else if (key.return) {
-        if (searchPromptIndex === 0) {
-          // Yes - configure search
-          setStep(SetupStep.SEARCH_PROVIDER);
-        } else {
-          // Skip search - go to MCP prompt
-          setStep(SetupStep.MCP_PROMPT);
-        }
-      }
-    } else if (step === SetupStep.SEARCH_PROVIDER) {
-      if (key.upArrow) {
-        setSearchProviderIndex((prev) => Math.max(0, prev - 1));
-      } else if (key.downArrow) {
-        setSearchProviderIndex((prev) => Math.min(searchProviderOptions.length - 1, prev + 1));
-      } else if (key.return) {
-        const provider = searchProviderOptions[searchProviderIndex];
-        if (provider) {
-          setSelectedSearchProvider(provider.key);
-          setStep(SetupStep.SEARCH_API_KEY);
-        }
-      }
-    } else if (step === SetupStep.LAPTOP_PREFERENCE) {
-      if (key.upArrow) {
-        setSelectedLaptopChoiceIndex((prev) => Math.max(0, prev - 1));
-      } else if (key.downArrow) {
-        setSelectedLaptopChoiceIndex((prev) => Math.min(1, prev + 1));
-      } else if (key.return) {
-        const laptopValue = selectedLaptopChoiceIndex === 0; // Yes = true, No = false
-        setIsLaptop(laptopValue);
-        // Set context size based on laptop preference
-        if (laptopValue) {
-          setSelectedContextSizeIndex(0); // 16K for laptops
-        }
-        setStep(SetupStep.MODEL);
-      }
-    } else if (step === SetupStep.MCP_PROMPT) {
-      if (key.upArrow) {
-        setMcpPromptIndex((prev) => Math.max(0, prev - 1));
-      } else if (key.downArrow) {
-        setMcpPromptIndex((prev) => Math.min(1, prev + 1));
-      } else if (key.return) {
-        if (mcpPromptIndex === 0) {
-          setStep(SetupStep.MCP_SERVER_SELECT);
-        } else {
-          applyAllConfiguration();
-        }
-      }
-    } else if (step === SetupStep.MCP_SERVER_SELECT) {
-      if (key.upArrow) {
-        setMcpPresetIndex((prev) => Math.max(0, prev - 1));
-      } else if (key.downArrow) {
-        setMcpPresetIndex((prev) => Math.min(mcpOptions.length - 1, prev + 1));
-      } else if (key.return) {
-        const option = mcpOptions[mcpPresetIndex];
-        if (option) {
-          if (option.key === 'custom') {
-            setMcpCustomNameBuffer('');
-            setMcpCustomNameCursor(0);
-            setStep(SetupStep.MCP_CUSTOM_NAME);
-          } else {
-            const preset = option.preset;
-            setSelectedMcpPresetKey(option.key);
-            if (preset && (preset.needsPath || preset.needsEnvKey)) {
-              setMcpInputBuffer('');
-              setMcpInputCursor(0);
-              setStep(SetupStep.MCP_SERVER_INPUT);
-            } else {
-              applyAllConfiguration(option.key);
-            }
-          }
-        }
-      }
-    } else if (step === SetupStep.COMPLETED) {
-      if (key.return) {
-        onComplete();
-      }
-    }
-  });
-
-  const validateEndpointAndFetchModels = React.useCallback(async () => {
-    setError(null);
-
-    const discovery = await setupWizard.discoverModels(endpoint, selectedProvider, providerApiKey || null);
-    if (discovery.error) {
-      setError(`Unable to list models: ${discovery.error}. Check the endpoint and credentials.`);
-      setStep(SetupStep.ENDPOINT);
-      return;
-    }
-
-    const models = discovery.models.map(model => model.name);
-    if (models.length === 0) {
-      setError(null);
-      setModelBuffer('');
-      setModelCursor(0);
-      setStep(SetupStep.MODEL_MANUAL);
-      return;
-    }
-
-    setAvailableModels(models);
-    const currentModelIndex = models.indexOf(initialConfig.model ?? '');
-    setSelectedModelIndex(Math.max(0, currentModelIndex));
-
-    if (initialConfig.setup_completed) {
-      setStep(SetupStep.MODEL);
-      return;
-    }
-
-    // Check if endpoint is local - if so, ask about laptop preference
-    if (isLocalEndpoint(endpoint)) {
-      setStep(SetupStep.LAPTOP_PREFERENCE);
-    } else {
-      // Remote endpoint - skip laptop question
-      setIsLaptop(false);
-      // Keep default context size (32K - index 1) for desktop/server
-      setStep(SetupStep.MODEL);
-    }
-  }, [setupWizard, endpoint, selectedProvider, providerApiKey, initialConfig]);
-
-  const validateModelCapabilities = React.useCallback(async () => {
-    setError(null);
-
-    const selectedModel = availableModels[selectedModelIndex];
-    if (!selectedModel) {
-      setError('No model selected');
-      setStep(SetupStep.MODEL);
-      return;
-    }
-
+    if (step === 'endpoint') go('provider');
+    else if (step === 'credentials') {
+      setCursor(endpoint.length);
+      go('endpoint');
+    } else if (['discovering', 'discovery-error', 'model', 'manual'].includes(step)) {
+      setCursor(endpoint.length);
+      go('endpoint');
+    } else if (['checking', 'unverified', 'context'].includes(step)) {
+      go(models.length ? 'model' : 'manual');
+      setCursor(model.length);
+    } else go('context');
+  };
+  const discover = async () => {
+    go('discovering');
+    setModels([]);
+    const controller = new AbortController();
+    request.current = controller;
     try {
-      const result = await probeModelCapabilities({ provider: selectedProvider, endpoint, api_key: providerApiKey || null }, selectedModel);
-
-      if (result.tools === 'unsupported') {
-        setError(`Model '${selectedModel}' does not support tools. Please select a different model.`);
-        setStep(SetupStep.MODEL);
+      const result = await wizard.discoverModels(draft.endpoint, draft.provider, draft.api_key, controller.signal);
+      if (!mounted.current || controller.signal.aborted) return;
+      if (result.error) {
+        setError(result.error);
+        setStep('discovery-error');
         return;
       }
-
-      // Model supports tools, continue
-      setStep(SetupStep.CONTEXT_SIZE);
-    } catch (error) {
-      // Network errors or timeouts - allow user to continue
-      logger.warn('[SetupWizardView] Model validation error:', error);
-      setStep(SetupStep.CONTEXT_SIZE);
+      setModels(result.models);
+      setModelIndex(
+        Math.max(
+          0,
+          result.models.findIndex(item => item.name === model)
+        )
+      );
+      if (!result.models.length) {
+        setNotice(
+          result.supported
+            ? 'No models are installed. Enter a model name, or go back after installing one.'
+            : 'Model listing is unavailable. Enter the exact model name.'
+        );
+        setCursor(model.length);
+        setStep('manual');
+      } else setStep('model');
+    } catch (failure) {
+      if (!mounted.current || controller.signal.aborted) return;
+      setError(failure instanceof Error ? failure.message : 'Connection failed');
+      setStep('discovery-error');
     }
-  }, [availableModels, selectedModelIndex, selectedProvider, endpoint, providerApiKey]);
-
-  // Validation is driven by explicit transient states so each transition runs once.
-  useEffect(() => {
-    if (step === SetupStep.VALIDATING_ENDPOINT) {
-      void validateEndpointAndFetchModels();
-    } else if (step === SetupStep.VALIDATING_MODEL) {
-      void validateModelCapabilities();
-    }
-  }, [step, validateEndpointAndFetchModels, validateModelCapabilities]);
-
-  const handleEndpointSubmit = (value: string) => {
-    if (!value.trim()) {
-      setError('Endpoint cannot be empty');
-      return;
-    }
-    setEndpoint(value);
-    setError(null);
-    setStep(SetupStep.VALIDATING_ENDPOINT);
   };
-
-  const handleProviderApiKeySubmit = (value: string) => {
-    setProviderApiKey(value.trim());
-    setError(null);
-    setStep(SetupStep.ENDPOINT);
+  const checkModel = async (name: string) => {
+    if (!name.trim()) {
+      setError('Enter a model name.');
+      return;
+    }
+    setModel(name.trim());
+    go('checking');
+    const controller = new AbortController();
+    request.current = controller;
+    try {
+      const result = await wizard.inspectModel(
+        { ...draft, model: name.trim() },
+        models.find(item => item.name === name.trim()),
+        controller.signal
+      );
+      if (!mounted.current || controller.signal.aborted) return;
+      if (result.tools === 'unsupported') {
+        setError(`${name} does not support tools. Choose another model.`);
+        setStep(models.length ? 'model' : 'manual');
+        setCursor(name.length);
+        return;
+      }
+      setNotice(result.note ?? '');
+      setStep(result.tools === 'unknown' ? 'unverified' : 'context');
+    } catch (failure) {
+      if (!mounted.current || controller.signal.aborted) return;
+      setNotice(failure instanceof Error ? failure.message : 'Tool support could not be verified.');
+      setStep('unverified');
+    }
   };
-
-  const handleModelSubmit = (value: string) => {
-    const model = value.trim();
-    if (!model) {
-      setError('Model name cannot be empty');
-      return;
-    }
-    setAvailableModels([model]);
-    setSelectedModelIndex(0);
-    setError(null);
-    setStep(SetupStep.VALIDATING_MODEL);
-  };
-
-  const [searchApiKey, setSearchApiKey] = useState('');
-
-  const handleSearchApiKeySubmit = (value: string) => {
-    if (!value.trim()) {
-      setError('API key cannot be empty. Press ESC to cancel setup.');
-      return;
-    }
-    setError(null);
-    setSearchApiKey(value);
-    // Continue to MCP prompt
-    setStep(SetupStep.MCP_PROMPT);
-  };
-
-  const handleMcpInputSubmit = (value: string) => {
-    if (!value.trim()) {
-      setError('Value cannot be empty. Press ESC to cancel setup.');
-      return;
-    }
-    setError(null);
-    applyAllConfiguration(selectedMcpPresetKey, value);
-  };
-
-  const handleMcpCustomNameSubmit = (value: string) => {
-    const name = value.trim();
-    if (!name) {
-      setError('Server name cannot be empty. Press ESC to cancel setup.');
-      return;
-    }
-    setError(null);
-    setMcpCustomName(name);
-    setMcpCustomCommandBuffer('');
-    setMcpCustomCommandCursor(0);
-    setStep(SetupStep.MCP_CUSTOM_COMMAND);
-  };
-
-  const handleMcpCustomCommandSubmit = (value: string) => {
-    const command = value.trim();
-    if (!command) {
-      setError('Command cannot be empty. Press ESC to cancel setup.');
-      return;
-    }
-    setError(null);
-    applyAllConfiguration(undefined, undefined, mcpCustomName, command);
-  };
-
-  /**
-   * Unified apply function — saves core config, optional search, and optional MCP.
-   * Reads search state from component state (selectedSearchProvider, searchApiKey).
-   * MCP preset is passed in when selected; custom server uses customName + customCommand.
-   */
-  const applyAllConfiguration = async (mcpPresetKey?: string, mcpInput?: string, customName?: string, customCommand?: string) => {
-    setStep(SetupStep.APPLYING);
-
-    const selectedModel = availableModels[selectedModelIndex];
-    if (!selectedModel) {
-      setError('No model selected. Please go back and select a model.');
-      setStep(SetupStep.MODEL);
-      return;
-    }
-
-    const selectedContextSize = contextSizeOptions[selectedContextSizeIndex];
-    if (!selectedContextSize) {
-      setError('No context size selected.');
-      setStep(SetupStep.CONTEXT_SIZE);
-      return;
-    }
-
-    const config: SetupConfig = {
-      provider: selectedProvider,
-      endpoint,
-      api_key: providerApiKey || null,
-      model: selectedModel,
-      service_model: selectedProvider === initialConfig.provider ? initialConfig.service_model ?? null : null,
-      context_size: selectedContextSize.value,
-      auto_confirm: initialConfig.auto_confirm,
-      enable_idle_messages: initialConfig.setup_completed ? initialConfig.enable_idle_messages : !isLaptop,
-      enable_session_title_generation: initialConfig.setup_completed ? initialConfig.enable_session_title_generation : !isLaptop,
-      tool_call_activity_timeout: initialConfig.setup_completed ? initialConfig.tool_call_activity_timeout : isLaptop ? 90 : 120,
-    };
-
+  const save = async () => {
+    if (saveInProgress.current) return;
+    saveInProgress.current = true;
+    go('saving');
     try {
       const registry = ServiceRegistry.getInstance();
-      const block = registry.get('agent')?.getModelIdentityChangeBlock(config)
-        ?? registry.get('agent_pool')?.getModelIdentityChangeBlock(config);
+      const block =
+        registry.get('agent')?.getModelIdentityChangeBlock(draft) ??
+        registry.get('agent_pool')?.getModelIdentityChangeBlock(draft);
       if (block) throw new Error(block);
-      await setupWizard.applySetupConfig(config);
-
-      // Apply search configuration if user provided one
-      if (selectedSearchProvider !== 'none' && searchApiKey) {
-        const registry = ServiceRegistry.getInstance();
-        const integrationStore = registry.get('integration_store');
-        if (integrationStore) {
-          await integrationStore.setSearchProvider(selectedSearchProvider);
-          await integrationStore.setSearchAPIKey(searchApiKey);
-          logger.debug('[SetupWizardView] Search configuration saved:', selectedSearchProvider);
-        }
+      const identity = JSON.stringify(draft);
+      if (persistedDraft.current !== identity) {
+        await wizard.applySetupConfig(draft);
+        persistedDraft.current = identity;
       }
-
-      // Apply MCP server configuration if user selected a preset
-      if (mcpPresetKey) {
-        const preset = MCP_PRESETS[mcpPresetKey];
-        if (preset) {
-          const path = preset.needsPath ? mcpInput : undefined;
-          const envValue = preset.needsEnvKey ? mcpInput : undefined;
-          const serverConfig = buildConfigFromPreset(preset, path, envValue);
-
-          const registry = ServiceRegistry.getInstance();
-          const mcpManager = registry.get('mcp_server_manager');
-          if (mcpManager) {
-            await mcpManager.addServerConfig(mcpPresetKey, serverConfig);
-            logger.debug(`[SetupWizardView] MCP server '${mcpPresetKey}' configured`);
-          }
-        }
+      const committed = registry.getRequired('config_manager').getConfig();
+      const applied = applyRuntimeConfigUpdates(registry, committed);
+      if (!applied) throw new Error('Runtime configuration is unavailable.');
+      registry.get('activity_stream')?.emit({
+        id: `setup_config_${Date.now()}`,
+        type: ActivityEventType.CONFIG_UPDATED,
+        timestamp: Date.now(),
+        data: committed,
+      });
+      activated.current = true;
+      if (mounted.current) setStep('complete');
+    } catch (failure) {
+      if (mounted.current) {
+        const state =
+          persistedDraft.current === JSON.stringify(draft)
+            ? 'Settings saved, but activation failed'
+            : 'Settings were not saved';
+        setError(`${state}: ${failure instanceof Error ? failure.message : String(failure)}`);
+        setStep('review');
       }
-
-      // Apply custom MCP server configuration
-      if (customName && customCommand) {
-        const parts = tokenizeCommand(customCommand);
-        const serverConfig = {
-          transport: 'stdio' as const,
-          command: parts[0]!,
-          args: parts.slice(1),
-          enabled: true,
-          requiresConfirmation: true,
-          autoStart: true,
-        };
-
-        const registry = ServiceRegistry.getInstance();
-        const mcpManager = registry.get('mcp_server_manager');
-        if (mcpManager) {
-          // addServerConfig validates and throws on a broken config (e.g. a
-          // launcher command with no args) — surface that instead of saving junk.
-          await mcpManager.addServerConfig(customName, serverConfig);
-          setSelectedMcpPresetKey(customName);
-          logger.debug(`[SetupWizardView] Custom MCP server '${customName}' configured`);
-        }
-      }
-
-      setStep(SetupStep.COMPLETED);
-    } catch (error) {
-      logger.error('[SetupWizardView] Failed to apply configuration:', error);
-      setError(error instanceof Error ? error.message : 'Failed to save configuration. Please try again.');
-      setStep(SetupStep.MCP_PROMPT);
+    } finally {
+      saveInProgress.current = false;
     }
   };
+  const cancel = () => {
+    if (saveInProgress.current) return;
+    if (step === 'complete') {
+      complete();
+      return;
+    }
+    request.current?.abort();
+    onSkip?.();
+  };
+  const textStep = step === 'endpoint' || step === 'credentials' || step === 'manual';
+  useInput((input, key) => {
+    if (key.eventType === 'release') return;
+    if (activated.current) {
+      if (key.return || key.escape || (key.ctrl && input === 'c')) complete();
+      return;
+    }
+    if (key.ctrl && input === 'c' && !textStep) {
+      cancel();
+      return;
+    }
+    if (key.escape && !textStep) {
+      back();
+      return;
+    }
+    if (textStep || step === 'saving') return;
+    const move = (value: number, maximum: number) => Math.max(0, Math.min(maximum, value + (key.upArrow ? -1 : 1)));
+    if (step === 'provider') {
+      if (key.upArrow || key.downArrow) setProviderIndex(index => move(index, MODEL_PROVIDERS.length - 1));
+      if (key.return) {
+        if (connectionProvider.current !== provider.value) {
+          const same = provider.value === initial.provider;
+          const value = same ? initial.endpoint : provider.endpoint;
+          setEndpoint(value);
+          setApiKey(same ? (initial.api_key ?? '') : '');
+          setCursor(value.length);
+          connectionProvider.current = provider.value;
+        } else setCursor(endpoint.length);
+        go('endpoint');
+      }
+    } else if (step === 'model') {
+      if (key.upArrow || key.downArrow) setModelIndex(index => move(index, models.length));
+      if (key.return) {
+        if (modelIndex === models.length) {
+          setCursor(model.length);
+          go('manual');
+        } else void checkModel(models[modelIndex]!.name);
+      }
+    } else if (step === 'context') {
+      if (key.upArrow || key.downArrow) setContextIndex(index => move(index, contextOptions.length - 1));
+      if (key.return) go('review');
+    } else if (step === 'discovery-error' || step === 'unverified') {
+      if (key.upArrow || key.downArrow) setChoice(index => move(index, 2));
+      if (key.return) {
+        if (choice === 0) {
+          if (step === 'discovery-error') void discover();
+          else void checkModel(model);
+        } else if (choice === 1) back();
+        else if (step === 'unverified') go('context');
+        else {
+          setCursor(model.length);
+          go('manual');
+        }
+      }
+    } else if (step === 'review' && key.return) void save();
+    else if (step === 'complete' && key.return) complete();
+  });
 
+  const submitText = (value: string) => {
+    if (step === 'endpoint') {
+      try {
+        const url = new URL(value.trim());
+        if (!['http:', 'https:'].includes(url.protocol)) throw new Error();
+      } catch {
+        setError('Enter a complete http:// or https:// endpoint.');
+        return;
+      }
+      setEndpoint(value.trim());
+      setCursor(apiKey.length);
+      go('credentials');
+    } else if (step === 'credentials') void discover();
+    else void checkModel(value);
+  };
+  const titles: Record<Step, string> = {
+    provider: '1 / 5 · Model provider',
+    endpoint: '2 / 5 · Server endpoint',
+    credentials: '2 / 5 · API key',
+    discovering: 'Connecting…',
+    'discovery-error': 'Connection needs attention',
+    model: '3 / 5 · Model',
+    manual: '3 / 5 · Model name',
+    checking: 'Checking tool support…',
+    unverified: 'Tool support is unverified',
+    context: '4 / 5 · Context window',
+    review: '5 / 5 · Review settings',
+    saving: 'Saving settings…',
+    complete: 'Ready to code',
+  };
+  const options =
+    step === 'discovery-error'
+      ? ['Retry connection', 'Edit endpoint', 'Enter model manually']
+      : ['Retry check', 'Choose another model', 'Continue with this model'];
+  const textValue = step === 'endpoint' ? endpoint : step === 'credentials' ? apiKey : model;
+  const modelRows = Math.max(1, Math.min(12, terminalRows - 9));
+  const modelWindowStart = Math.max(0, Math.min(modelIndex - Math.floor(modelRows / 2), models.length - modelRows));
+  const hints =
+    step === 'saving'
+      ? []
+      : step === 'complete'
+        ? [{ key: 'enter', label: 'start' }]
+        : step === 'discovering' || step === 'checking'
+          ? [
+              { key: 'esc', label: 'stop check' },
+              { key: 'ctrl+c', label: 'leave' },
+            ]
+          : [
+              { key: 'enter', label: step === 'review' ? (error ? 'retry save' : 'save') : 'continue' },
+              { key: 'esc', label: 'back' },
+              { key: 'ctrl+c', label: 'leave' },
+            ];
   return (
-    <InteractiveSurface>
-        <Box width="100%" flexDirection="column">
-        {/* Welcome Step */}
-        {step === SetupStep.WELCOME && (
-          <>
-            <Box marginBottom={1} flexDirection="row" gap={1}>
-              <Text bold>
-                <ChickAnimation />
-              </Text>
-              <Text color={UI_COLORS.TEXT_DEFAULT} bold>
-                Code Ally Setup
-              </Text>
-            </Box>
-            <Box marginBottom={1}>
-              <Text>
-                Quick configuration wizard for first-time setup.
-              </Text>
-            </Box>
-            <Box marginBottom={1}>
-              <Text dimColor>
-                Configuration options:
-              </Text>
-            </Box>
-            <Box paddingLeft={2} marginBottom={1} flexDirection="column">
-              <Text dimColor>• Model provider and endpoint</Text>
-              <Text dimColor>• Model selection</Text>
-              <Text dimColor>• Context size</Text>
-            </Box>
-            <Box marginTop={1} borderTop borderColor="gray" paddingTop={1} flexDirection="column" gap={1}>
-              <Text dimColor>Select an option:</Text>
-              <Box marginLeft={2} flexDirection="column">
-                <SelectionIndicator isSelected={welcomeChoiceIndex === 0}>
-                  Continue
-                </SelectionIndicator>
-                <SelectionIndicator isSelected={welcomeChoiceIndex === 1}>
-                  Skip
-                </SelectionIndicator>
-              </Box>
-            </Box>
-          </>
-        )}
-
-        {step === SetupStep.PROVIDER && (
-          <>
-            <Box marginBottom={1} flexDirection="row" gap={1}>
-              <Text bold><ChickAnimation /></Text>
-              <Text color={UI_COLORS.TEXT_DEFAULT} bold>Step 1: Model Provider</Text>
-            </Box>
-            <Box marginBottom={1}><Text>Select your model provider.</Text></Box>
-            <Box marginLeft={2} flexDirection="column">
-              {providers.map((provider, index) => (
-                <SelectionIndicator key={provider.value} isSelected={providerIndex === index}>
-                  {provider.label}
-                </SelectionIndicator>
-              ))}
-            </Box>
-          </>
-        )}
-
-        {step === SetupStep.PROVIDER_API_KEY && (
-          <>
-            <Box marginBottom={1} flexDirection="row" gap={1}>
-              <Text bold><ChickAnimation /></Text>
-              <Text color={UI_COLORS.TEXT_DEFAULT} bold>Step 2: Provider Credentials</Text>
-            </Box>
-            <Box marginBottom={1}>
-              <Text>Enter a bearer API key, or leave blank for a local unauthenticated server.</Text>
-            </Box>
-            <TextInput
-              label="API Key:"
-              value={providerApiKeyBuffer}
-              onValueChange={setProviderApiKeyBuffer}
-              cursorPosition={providerApiKeyCursor}
-              onCursorChange={setProviderApiKeyCursor}
-              onSubmit={handleProviderApiKeySubmit}
-              onEscape={handleCtrlC}
-              onCtrlC={handleCtrlC}
-              isActive={true}
-              multiline={false}
-              mask="*"
-              placeholder="Optional"
-            />
-          </>
-        )}
-
-        {/* Endpoint Configuration */}
-        {step === SetupStep.ENDPOINT && (
-          <>
-            <Box marginBottom={1} flexDirection="row" gap={1}>
-              <Text bold>
-                <ChickAnimation />
-              </Text>
-              <Text color={UI_COLORS.TEXT_DEFAULT} bold>
-                Step 2: {providers[providerIndex]?.label} Endpoint
-              </Text>
-            </Box>
-            <Box marginBottom={1}>
-              <Text>
-                Enter the provider base URL (default: {providers[providerIndex]?.endpoint})
-              </Text>
-            </Box>
-            {error && (
-              <Box marginBottom={1}>
-                <Text color={UI_COLORS.ERROR}>{error}</Text>
-              </Box>
-            )}
-            <Box marginBottom={1}>
-              <TextInput
-                label="Endpoint:"
-                value={endpointBuffer}
-                onValueChange={setEndpointBuffer}
-                cursorPosition={endpointCursor}
-                onCursorChange={setEndpointCursor}
-                onSubmit={handleEndpointSubmit}
-                onEscape={handleCtrlC}
-                onCtrlC={handleCtrlC}
-                isActive={true}
-                multiline={false}
-                placeholder={providers[providerIndex]!.endpoint}
-              />
-            </Box>
-            <Box marginTop={1} borderTop borderColor="gray" paddingTop={1}>
-              <Text dimColor>Press Enter to validate connection</Text>
-            </Box>
-          </>
-        )}
-
-        {/* Validating Endpoint */}
-        {step === SetupStep.VALIDATING_ENDPOINT && (
-          <>
-            <Box marginBottom={1} flexDirection="row" gap={1}>
-              <Text bold>
-                <ChickAnimation />
-              </Text>
-              <Text color={UI_COLORS.TEXT_DEFAULT} bold>
-                Validating Endpoint...
-              </Text>
-            </Box>
-            <Box>
-              <Text>
-                Testing connection to {endpoint}
-              </Text>
-            </Box>
-          </>
-        )}
-
-        {step === SetupStep.MODEL_MANUAL && (
-          <>
-            <Box marginBottom={1} flexDirection="row" gap={1}>
-              <Text bold><ChickAnimation /></Text>
-              <Text color={UI_COLORS.TEXT_DEFAULT} bold>Step 3: Model Name</Text>
-            </Box>
-            <Box marginBottom={1}>
-              <Text>Model discovery is unavailable. Enter the exact model identifier.</Text>
-            </Box>
-            {error && <Box marginBottom={1}><Text color={UI_COLORS.ERROR}>{error}</Text></Box>}
-            <TextInput
-              label="Model:"
-              value={modelBuffer}
-              onValueChange={setModelBuffer}
-              cursorPosition={modelCursor}
-              onCursorChange={setModelCursor}
-              onSubmit={handleModelSubmit}
-              onEscape={handleCtrlC}
-              onCtrlC={handleCtrlC}
-              isActive={true}
-              multiline={false}
-              placeholder="model-name"
-            />
-          </>
-        )}
-
-        {/* Model Selection */}
-        {step === SetupStep.MODEL && (
-          <>
-            <Box marginBottom={1} flexDirection="row" gap={1}>
-              <Text bold>
-                <ChickAnimation />
-              </Text>
-              <Text color={UI_COLORS.TEXT_DEFAULT} bold>
-                Step 3: Model Selection
-              </Text>
-            </Box>
-            <Box marginBottom={1}>
-              <Text>
-                Select a model to use (found {availableModels.length} models)
-              </Text>
-            </Box>
-            {error && (
-              <Box marginBottom={1}>
-                <Text color={UI_COLORS.ERROR}>{error}</Text>
-              </Box>
-            )}
-            <Box flexDirection="column" marginBottom={1}>
-              {availableModels.map((model, idx) => (
-                <Box key={idx}>
-                  <SelectionIndicator isSelected={idx === selectedModelIndex}>
-                    {model}
-                  </SelectionIndicator>
-                </Box>
-              ))}
-            </Box>
-            <Box marginTop={1} borderTop borderColor="gray" paddingTop={1}>
-              <Text dimColor>Use ↑↓ to select, Enter to confirm</Text>
-            </Box>
-          </>
-        )}
-
-        {/* Validating Model */}
-        {step === SetupStep.VALIDATING_MODEL && (
-          <>
-            <Box marginBottom={1} flexDirection="row" gap={1}>
-              <Text bold>
-                <ChickAnimation />
-              </Text>
-              <Text color={UI_COLORS.TEXT_DEFAULT} bold>
-                Validating Model...
-              </Text>
-            </Box>
-            <Box>
-              <Text>
-                Testing {availableModels[selectedModelIndex]} for tool support{' '}
-              </Text>
-              <ProgressIndicator type="dots" color={UI_COLORS.TEXT_DEFAULT} />
-            </Box>
-          </>
-        )}
-
-        {/* Context Size Selection */}
-        {step === SetupStep.CONTEXT_SIZE && (
-          <>
-            <Box marginBottom={1} flexDirection="row" gap={1}>
-              <Text bold>
-                <ChickAnimation />
-              </Text>
-              <Text color={UI_COLORS.TEXT_DEFAULT} bold>
-                Step 3: Context Size
-              </Text>
-            </Box>
-            <Box marginBottom={1}>
-              <Text>
-                Select the context window size (how much the model can remember)
-              </Text>
-            </Box>
-            <Box flexDirection="column" marginBottom={1}>
-              {contextSizeOptions.map((option, idx) => (
-                <Box key={idx}>
-                  <SelectionIndicator isSelected={idx === selectedContextSizeIndex}>
-                    {option.label}
-                  </SelectionIndicator>
-                </Box>
-              ))}
-            </Box>
-            <Box marginTop={1} borderTop borderColor="gray" paddingTop={1}>
-              <Text dimColor>Use ↑↓ to select, Enter to confirm</Text>
-            </Box>
-          </>
-        )}
-
-        {/* Laptop Preference */}
-        {step === SetupStep.LAPTOP_PREFERENCE && (
-          <>
-            <Box marginBottom={1} flexDirection="row" gap={1}>
-              <Text bold>
-                <ChickAnimation />
-              </Text>
-              <Text color={UI_COLORS.TEXT_DEFAULT} bold>
-                Running on a Laptop?
-              </Text>
-            </Box>
-            <Box marginBottom={1}>
-              <Text>
-                Are you running Code Ally on a laptop?
-              </Text>
-            </Box>
-            <Box marginBottom={1}>
-              <Text dimColor>
-                Optimizes settings to reduce heat and battery drain.
-              </Text>
-            </Box>
-            <Box flexDirection="column" marginBottom={1}>
-              <Box>
-                <SelectionIndicator isSelected={selectedLaptopChoiceIndex === 0}>
-                  Yes
-                </SelectionIndicator>
-                <Text dimColor> - Optimize for laptop use (disables background services)</Text>
-              </Box>
-              <Box>
-                <SelectionIndicator isSelected={selectedLaptopChoiceIndex === 1}>
-                  No
-                </SelectionIndicator>
-                <Text dimColor> - Standard settings (desktop/server)</Text>
-              </Box>
-            </Box>
-            <Box marginTop={1} borderTop borderColor="gray" paddingTop={1}>
-              <Text dimColor>Use ↑↓ arrow keys to navigate, Enter to select, ESC to cancel</Text>
-            </Box>
-          </>
-        )}
-
-        {/* Search Provider Prompt (Optional) */}
-        {step === SetupStep.SEARCH_PROMPT && (
-          <>
-            <Box marginBottom={1} flexDirection="row" gap={1}>
-              <Text bold>
-                <ChickAnimation />
-              </Text>
-              <Text color={UI_COLORS.TEXT_DEFAULT} bold>
-                Optional: Web Search
-              </Text>
-            </Box>
-            <Box marginBottom={1}>
-              <Text>
-                Would you like to configure a web search provider?
-              </Text>
-            </Box>
-            <Box marginBottom={1}>
-              <Text dimColor>
-                This enables the research agent to search the web for information.
-              </Text>
-            </Box>
-            <Box flexDirection="column" marginBottom={1}>
-              <Box>
-                <SelectionIndicator isSelected={searchPromptIndex === 0}>
-                  Yes, configure search
-                </SelectionIndicator>
-              </Box>
-              <Box>
-                <SelectionIndicator isSelected={searchPromptIndex === 1}>
-                  Skip for now
-                </SelectionIndicator>
-                <Text dimColor> - Can be configured later via /config</Text>
-              </Box>
-            </Box>
-            <Box marginTop={1} borderTop borderColor="gray" paddingTop={1}>
-              <Text dimColor>Use ↑↓ to select, Enter to confirm</Text>
-            </Box>
-          </>
-        )}
-
-        {/* Search Provider Selection */}
-        {step === SetupStep.SEARCH_PROVIDER && (
-          <>
-            <Box marginBottom={1} flexDirection="row" gap={1}>
-              <Text bold>
-                <ChickAnimation />
-              </Text>
-              <Text color={UI_COLORS.TEXT_DEFAULT} bold>
-                Select Search Provider
-              </Text>
-            </Box>
-            <Box marginBottom={1}>
-              <Text>
-                Choose a search provider (requires API key):
-              </Text>
-            </Box>
-            <Box flexDirection="column" marginBottom={1}>
-              {searchProviderOptions.map((provider, idx) => (
-                <Box key={provider.key} flexDirection="column">
-                  <Box>
-                    <SelectionIndicator isSelected={idx === searchProviderIndex}>
-                      {provider.displayName}
-                    </SelectionIndicator>
-                  </Box>
-                  {idx === searchProviderIndex && (
-                    <Box paddingLeft={4}>
-                      <Text dimColor>{provider.description}</Text>
-                    </Box>
-                  )}
-                  {idx === searchProviderIndex && provider.signupURL && (
-                    <Box paddingLeft={4}>
-                      <Text dimColor>Get API key: {provider.signupURL}</Text>
-                    </Box>
-                  )}
-                </Box>
-              ))}
-            </Box>
-            <Box marginTop={1} borderTop borderColor="gray" paddingTop={1}>
-              <Text dimColor>Use ↑↓ to select, Enter to confirm</Text>
-            </Box>
-          </>
-        )}
-
-        {/* Search API Key Input */}
-        {step === SetupStep.SEARCH_API_KEY && (
-          <>
-            <Box marginBottom={1} flexDirection="row" gap={1}>
-              <Text bold>
-                <ChickAnimation />
-              </Text>
-              <Text color={UI_COLORS.TEXT_DEFAULT} bold>
-                Enter API Key
-              </Text>
-            </Box>
-            <Box marginBottom={1}>
-              <Text>
-                Enter your {SEARCH_PROVIDER_INFO[selectedSearchProvider]?.displayName || selectedSearchProvider} API key:
-              </Text>
-            </Box>
-            {SEARCH_PROVIDER_INFO[selectedSearchProvider]?.signupURL && (
-              <Box marginBottom={1}>
-                <Text dimColor>
-                  Get one at: {SEARCH_PROVIDER_INFO[selectedSearchProvider].signupURL}
-                </Text>
-              </Box>
-            )}
-            {error && (
-              <Box marginBottom={1}>
-                <Text color={UI_COLORS.ERROR}>{error}</Text>
-              </Box>
-            )}
-            <Box marginBottom={1}>
-              <TextInput
-                label="API Key:"
-                value={searchApiKeyBuffer}
-                onValueChange={setSearchApiKeyBuffer}
-                cursorPosition={searchApiKeyCursor}
-                onCursorChange={setSearchApiKeyCursor}
-                onSubmit={handleSearchApiKeySubmit}
-                onEscape={handleCtrlC}
-                onCtrlC={handleCtrlC}
-                isActive={true}
-                multiline={false}
-                mask="*"
-                placeholder="Enter your API key..."
-              />
-            </Box>
-            <Box marginTop={1} borderTop borderColor="gray" paddingTop={1}>
-              <Text dimColor>Press Enter to save, ESC to cancel setup</Text>
-            </Box>
-          </>
-        )}
-
-        {/* MCP Server Prompt (Optional) */}
-        {step === SetupStep.MCP_PROMPT && (
-          <>
-            <Box marginBottom={1} flexDirection="row" gap={1}>
-              <Text bold>
-                <ChickAnimation />
-              </Text>
-              <Text color={UI_COLORS.TEXT_DEFAULT} bold>
-                Optional: MCP Server
-              </Text>
-            </Box>
-            <Box marginBottom={1}>
-              <Text>
-                Would you like to connect an MCP (Model Context Protocol) server?
-              </Text>
-            </Box>
-            <Box marginBottom={1}>
-              <Text dimColor>
-                MCP servers extend the assistant with external tools beyond its built-in capabilities — GitHub integration, databases, custom APIs, and more.
-              </Text>
-            </Box>
-            <Box flexDirection="column" marginBottom={1}>
-              <Box>
-                <SelectionIndicator isSelected={mcpPromptIndex === 0}>
-                  Yes, configure a server
-                </SelectionIndicator>
-              </Box>
-              <Box>
-                <SelectionIndicator isSelected={mcpPromptIndex === 1}>
-                  Skip for now
-                </SelectionIndicator>
-                <Text dimColor> - Can be configured later via /mcp add</Text>
-              </Box>
-            </Box>
-            <Box marginTop={1} borderTop borderColor="gray" paddingTop={1}>
-              <Text dimColor>Use ↑↓ to select, Enter to confirm</Text>
-            </Box>
-          </>
-        )}
-
-        {/* MCP Server Selection */}
-        {step === SetupStep.MCP_SERVER_SELECT && (
-          <>
-            <Box marginBottom={1} flexDirection="row" gap={1}>
-              <Text bold>
-                <ChickAnimation />
-              </Text>
-              <Text color={UI_COLORS.TEXT_DEFAULT} bold>
-                Select MCP Server
-              </Text>
-            </Box>
-            <Box marginBottom={1}>
-              <Text>
-                Choose a server to configure:
-              </Text>
-            </Box>
-            <Box flexDirection="column" marginBottom={1}>
-              {mcpOptions.map((option, idx) => (
-                <Box key={option.key} flexDirection="column">
-                  <Box>
-                    <SelectionIndicator isSelected={idx === mcpPresetIndex}>
-                      {option.preset ? option.preset.displayName : 'Custom'}
-                    </SelectionIndicator>
-                  </Box>
-                  {idx === mcpPresetIndex && (
-                    <Box paddingLeft={4}>
-                      <Text dimColor>
-                        {option.preset ? option.preset.description : 'Connect to your own MCP server'}
-                      </Text>
-                    </Box>
-                  )}
-                </Box>
-              ))}
-            </Box>
-            <Box marginTop={1} borderTop borderColor="gray" paddingTop={1}>
-              <Text dimColor>Use ↑↓ to select, Enter to confirm</Text>
-            </Box>
-          </>
-        )}
-
-        {/* MCP Server Input (path or env var) */}
-        {step === SetupStep.MCP_SERVER_INPUT && (() => {
-          const preset = MCP_PRESETS[selectedMcpPresetKey];
-          const label = preset?.needsPath ? 'Directory:' : 'API Key:';
-          const hint = preset?.needsPath ? (preset.pathHint || '/path/to/directory') : (preset?.envHint || 'Enter value...');
-          return (
-            <>
-              <Box marginBottom={1} flexDirection="row" gap={1}>
-                <Text bold>
-                  <ChickAnimation />
-                </Text>
-                <Text color={UI_COLORS.TEXT_DEFAULT} bold>
-                  Configure {preset?.displayName || selectedMcpPresetKey}
-                </Text>
-              </Box>
-              <Box marginBottom={1}>
-                <Text>
-                  {preset?.needsPath
-                    ? 'Enter the directory path this server should have access to:'
-                    : `Enter your ${preset?.needsEnvKey || 'API key'}:`}
-                </Text>
-              </Box>
-              {error && (
-                <Box marginBottom={1}>
-                  <Text color={UI_COLORS.ERROR}>{error}</Text>
-                </Box>
-              )}
-              <Box marginBottom={1}>
-                <TextInput
-                  label={label}
-                  value={mcpInputBuffer}
-                  onValueChange={setMcpInputBuffer}
-                  cursorPosition={mcpInputCursor}
-                  onCursorChange={setMcpInputCursor}
-                  onSubmit={handleMcpInputSubmit}
-                  onEscape={handleCtrlC}
-                  onCtrlC={handleCtrlC}
-                  isActive={true}
-                  multiline={false}
-                  placeholder={hint}
-                />
-              </Box>
-              <Box marginTop={1} borderTop borderColor="gray" paddingTop={1}>
-                <Text dimColor>Press Enter to save, ESC to cancel setup</Text>
-              </Box>
-            </>
-          );
-        })()}
-
-        {/* MCP Custom Server Name */}
-        {step === SetupStep.MCP_CUSTOM_NAME && (
-          <>
-            <Box marginBottom={1} flexDirection="row" gap={1}>
-              <Text bold>
-                <ChickAnimation />
-              </Text>
-              <Text color={UI_COLORS.TEXT_DEFAULT} bold>
-                Custom MCP Server
-              </Text>
-            </Box>
-            <Box marginBottom={1}>
-              <Text>
-                Enter a name for this server (e.g., my-tools, database):
-              </Text>
-            </Box>
-            {error && (
-              <Box marginBottom={1}>
-                <Text color={UI_COLORS.ERROR}>{error}</Text>
-              </Box>
-            )}
-            <Box marginBottom={1}>
-              <TextInput
-                label="Name:"
-                value={mcpCustomNameBuffer}
-                onValueChange={setMcpCustomNameBuffer}
-                cursorPosition={mcpCustomNameCursor}
-                onCursorChange={setMcpCustomNameCursor}
-                onSubmit={handleMcpCustomNameSubmit}
-                onEscape={handleCtrlC}
-                onCtrlC={handleCtrlC}
-                isActive={true}
-                multiline={false}
-                placeholder="my-server"
-              />
-            </Box>
-            <Box marginTop={1} borderTop borderColor="gray" paddingTop={1}>
-              <Text dimColor>Press Enter to continue, ESC to cancel setup</Text>
-            </Box>
-          </>
-        )}
-
-        {/* MCP Custom Server Command */}
-        {step === SetupStep.MCP_CUSTOM_COMMAND && (
-          <>
-            <Box marginBottom={1} flexDirection="row" gap={1}>
-              <Text bold>
-                <ChickAnimation />
-              </Text>
-              <Text color={UI_COLORS.TEXT_DEFAULT} bold>
-                Custom MCP Server: {mcpCustomName}
-              </Text>
-            </Box>
-            <Box marginBottom={1}>
-              <Text>
-                Enter the command to start this server:
-              </Text>
-            </Box>
-            <Box marginBottom={1}>
-              <Text dimColor>
-                Example: npx -y @modelcontextprotocol/server-everything
-              </Text>
-            </Box>
-            {error && (
-              <Box marginBottom={1}>
-                <Text color={UI_COLORS.ERROR}>{error}</Text>
-              </Box>
-            )}
-            <Box marginBottom={1}>
-              <TextInput
-                label="Command:"
-                value={mcpCustomCommandBuffer}
-                onValueChange={setMcpCustomCommandBuffer}
-                cursorPosition={mcpCustomCommandCursor}
-                onCursorChange={setMcpCustomCommandCursor}
-                onSubmit={handleMcpCustomCommandSubmit}
-                onEscape={handleCtrlC}
-                onCtrlC={handleCtrlC}
-                isActive={true}
-                multiline={false}
-                placeholder="npx -y @scope/server-name"
-              />
-            </Box>
-            <Box marginTop={1} borderTop borderColor="gray" paddingTop={1}>
-              <Text dimColor>Press Enter to save, ESC to cancel setup</Text>
-            </Box>
-          </>
-        )}
-
-        {/* Applying Configuration */}
-        {step === SetupStep.APPLYING && (
-          <>
-            <Box marginBottom={1} flexDirection="row" gap={1}>
-              <Text bold>
-                <ChickAnimation />
-              </Text>
-              <Text color={UI_COLORS.TEXT_DEFAULT} bold>
-                Applying Configuration...
-              </Text>
-            </Box>
-            <Box>
-              <Text>
-                Saving your settings
-              </Text>
-            </Box>
-          </>
-        )}
-
-        {/* Completion */}
-        {step === SetupStep.COMPLETED && (
-          <>
-            <Box marginBottom={1} flexDirection="row" gap={1}>
-              <Text bold>
-                <ChickAnimation />
-              </Text>
-              <Text color={UI_COLORS.PRIMARY} bold>
-                Setup Complete
-              </Text>
-            </Box>
-            <Box marginBottom={1}>
-              <Text>
-                Configuration saved. Ready to go.
-              </Text>
-            </Box>
-            <Box marginBottom={1} flexDirection="column">
-              <Text dimColor>Configuration saved:</Text>
-              <Text dimColor>• Endpoint: {endpoint}</Text>
-              {availableModels[selectedModelIndex] && (
-                <Text dimColor>• Model: {availableModels[selectedModelIndex]}</Text>
-              )}
-              {contextSizeOptions[selectedContextSizeIndex] && (
-                <Text dimColor>• Context: {contextSizeOptions[selectedContextSizeIndex].label}</Text>
-              )}
-              {selectedSearchProvider !== 'none' && (
-                <Text dimColor>• Search: {SEARCH_PROVIDER_INFO[selectedSearchProvider]?.displayName || selectedSearchProvider}</Text>
-              )}
-              {selectedMcpPresetKey && (
-                <Text dimColor>• MCP: {MCP_PRESETS[selectedMcpPresetKey]?.displayName || selectedMcpPresetKey}</Text>
-              )}
-            </Box>
-            <Box marginTop={1} borderTop borderColor="gray" paddingTop={1}>
-              <Text>
-                Press <Text color={UI_COLORS.PRIMARY}>Enter</Text> to start
-              </Text>
-            </Box>
-          </>
-        )}
-        </Box>
+    <InteractiveSurface
+      title="Setup"
+      meta={titles[step]}
+      footer={
+        step === 'saving' ? <Text dimColor>Saving your configuration</Text> : <KeyboardHintFooter hints={hints} />
+      }
+    >
+      {step === 'provider' && (
+        <>
+          <Text dimColor>Connect your model server.</Text>
+          {MODEL_PROVIDERS.map((item, index) => (
+            <SelectionIndicator key={item.value} isSelected={index === providerIndex}>
+              {item.label}
+            </SelectionIndicator>
+          ))}
+        </>
+      )}
+      {error && (
+        <Text color={UI_COLORS.ERROR} wrap="truncate-end">
+          {error}
+        </Text>
+      )}
+      {textStep && (
+        <>
+          <Text dimColor>
+            {step === 'endpoint'
+              ? 'Use the base URL of your model server.'
+              : step === 'credentials'
+                ? 'Leave empty for a local server that does not require authentication.'
+                : notice || 'Enter the exact model name served by this endpoint.'}
+          </Text>
+          <TextInput
+            key={step}
+            value={textValue}
+            onValueChange={step === 'endpoint' ? setEndpoint : step === 'credentials' ? setApiKey : setModel}
+            cursorPosition={cursor}
+            onCursorChange={setCursor}
+            onSubmit={submitText}
+            onEscape={back}
+            onCtrlC={cancel}
+            onKeyPressCapture={(input, key) => {
+              if (key.ctrl && input === 'c') {
+                cancel();
+                return true;
+              }
+              return false;
+            }}
+            mask={step === 'credentials' ? '*' : undefined}
+            multiline={false}
+            maxVisibleRows={1}
+          />
+        </>
+      )}
+      {step === 'discovering' && <Text wrap="truncate-end">Listing models at {draft.endpoint}</Text>}
+      {step === 'checking' && (
+        <>
+          <Text wrap="truncate-end">Reading capabilities for {model}</Text>
+          <Text dimColor>No response generation is needed.</Text>
+        </>
+      )}
+      {step === 'model' && (
+        <>
+          {models.slice(modelWindowStart, modelWindowStart + modelRows).map((item, index) => (
+            <SelectionIndicator key={item.name} isSelected={index + modelWindowStart === modelIndex}>
+              {truncateAnsiToWidth(item.name, contentWidth)}
+            </SelectionIndicator>
+          ))}
+          <SelectionIndicator isSelected={modelIndex === models.length}>Enter another model name</SelectionIndicator>
+          {models.length > modelRows && (
+            <Text dimColor>
+              {Math.min(modelIndex + 1, models.length)} / {models.length} models · ↑↓ to browse
+            </Text>
+          )}
+        </>
+      )}
+      {(step === 'discovery-error' || step === 'unverified') && (
+        <>
+          {step === 'unverified' && <Text wrap="truncate-end">{notice}</Text>}
+          {options.map((item, index) => (
+            <SelectionIndicator key={item} isSelected={index === choice}>
+              {item}
+            </SelectionIndicator>
+          ))}
+        </>
+      )}
+      {step === 'context' && (
+        <>
+          <Text dimColor>Larger windows use more memory. Match your server setting.</Text>
+          {contextOptions.map((item, index) => (
+            <SelectionIndicator key={item.value} isSelected={index === contextIndex}>
+              {item.label}
+            </SelectionIndicator>
+          ))}
+        </>
+      )}
+      {step === 'review' && (
+        <>
+          <Text wrap="truncate-end">
+            {provider.label} · {draft.endpoint}
+          </Text>
+          <Text wrap="truncate-end">Model: {model}</Text>
+          <Text>Context: {draft.context_size.toLocaleString()} tokens</Text>
+          <Text>API key: {apiKey ? 'configured (hidden)' : 'not required'}</Text>
+          <Text dimColor wrap="truncate-end">
+            Other saved preferences stay unchanged.
+          </Text>
+          {provider.value !== initial.provider && initial.service_model && (
+            <Text dimColor>The auxiliary model will follow this model after changing providers.</Text>
+          )}
+          {notice && (
+            <Text dimColor wrap="truncate-end">
+              {notice}
+            </Text>
+          )}
+        </>
+      )}
+      {step === 'complete' && (
+        <>
+          <Text color={UI_COLORS.PRIMARY}>Settings saved.</Text>
+          <Text dimColor>
+            Change settings with /config. Add search with /config set search_provider=… and connect tools with /mcp add.
+          </Text>
+        </>
+      )}
     </InteractiveSurface>
   );
 };

@@ -188,49 +188,6 @@ export const ANSI_COLORS = {
 } as const;
 
 /**
- * Semantic color mappings for common UI patterns
- *
- * These provide higher-level abstractions for specific use cases.
- */
-export const SEMANTIC_COLORS = {
-  // Interactive states
-  SELECTED: UI_COLORS.PRIMARY,
-  ACTIVE: UI_COLORS.PRIMARY,
-  IN_PROGRESS: UI_COLORS.PRIMARY,
-  INACTIVE: UI_COLORS.TEXT_DIM,
-  DISABLED: UI_COLORS.TEXT_DIM,
-
-  // Messages
-  USER_MESSAGE: UI_COLORS.PRIMARY,
-  ASSISTANT_MESSAGE: UI_COLORS.TEXT_DEFAULT,
-  SYSTEM_MESSAGE: UI_COLORS.TEXT_DIM,
-  TOOL_MESSAGE: UI_COLORS.TEXT_DIM,
-  ERROR_MESSAGE: UI_COLORS.ERROR,
-
-  // Status
-  SUCCESS: UI_COLORS.SUCCESS,
-  WARNING: UI_COLORS.WARNING,
-  ERROR: UI_COLORS.ERROR,
-  PENDING: UI_COLORS.TEXT_DIM,
-
-  // Borders
-  BORDER_DEFAULT: UI_COLORS.TEXT_DIM,
-  BORDER_WARNING: UI_COLORS.WARNING,
-  BORDER_ERROR: UI_COLORS.ERROR,
-
-  // UI Elements
-  HEADER: UI_COLORS.TEXT_DEFAULT,
-  CURSOR: UI_COLORS.PRIMARY,
-  PLACEHOLDER: UI_COLORS.TEXT_DIM,
-  METADATA: UI_COLORS.TEXT_DIM,
-
-  // Highlighting
-  HIGHLIGHT_BG: UI_COLORS.PRIMARY,
-  HIGHLIGHT_FG: UI_COLORS.TEXT_CONTRAST,
-  MENTION: UI_COLORS.PRIMARY,
-} as const;
-
-/**
  * Helper function to get context usage color based on percentage
  *
  * @param percent - Context usage percentage (0-100)

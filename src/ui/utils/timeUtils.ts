@@ -82,7 +82,9 @@ export function formatElapsed(seconds: number): string {
   }
 
   const hours = Math.floor(seconds / (TIME_UNITS.SECONDS_PER_MINUTE * TIME_UNITS.MINUTES_PER_HOUR));
-  const mins = Math.floor((seconds % (TIME_UNITS.SECONDS_PER_MINUTE * TIME_UNITS.MINUTES_PER_HOUR)) / TIME_UNITS.SECONDS_PER_MINUTE);
+  const mins = Math.floor(
+    (seconds % (TIME_UNITS.SECONDS_PER_MINUTE * TIME_UNITS.MINUTES_PER_HOUR)) / TIME_UNITS.SECONDS_PER_MINUTE
+  );
   const secs = seconds % TIME_UNITS.SECONDS_PER_MINUTE;
 
   if (hours > 0) {
@@ -118,11 +120,12 @@ export function formatMinutesSeconds(minutes: number): string {
  * @returns Relative time string (e.g., "5d ago", "12m ago", "just now")
  */
 export function formatRelativeTime(timestamp: Date | string | number): string {
-  const date = typeof timestamp === 'string'
-    ? new Date(timestamp)
-    : typeof timestamp === 'number'
-    ? new Date(timestamp)
-    : timestamp;
+  const date =
+    typeof timestamp === 'string'
+      ? new Date(timestamp)
+      : typeof timestamp === 'number'
+        ? new Date(timestamp)
+        : timestamp;
   const now = new Date();
   const diffMs = now.getTime() - date.getTime();
   const diffSeconds = Math.floor(diffMs / TIME_UNITS.MS_PER_SECOND);
@@ -153,4 +156,11 @@ export function formatRelativeTime(timestamp: Date | string | number): string {
 
   const diffYears = Math.floor(diffMonths / TIME_UNITS.MONTHS_PER_YEAR);
   return `${diffYears}y ago`;
+}
+
+/** Show a message's local time without turning a missing timestamp into a date. */
+export function formatMessageTime(timestamp?: number): string {
+  if (timestamp === undefined || !Number.isFinite(timestamp)) return '--:--';
+  const date = new Date(timestamp);
+  return `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
 }

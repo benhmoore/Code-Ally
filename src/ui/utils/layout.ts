@@ -1,6 +1,3 @@
-/** Minimum useful number of rows in a selectable viewport. */
-const MIN_VISIBLE_ITEMS = 3;
-
 /**
  * Derive a list window from terminal height.
  *
@@ -22,7 +19,7 @@ export function visibleItemBudget(
     chromeRows = 10,
     rowsPerItem = 1,
     maximum = 10,
-    minimum = MIN_VISIBLE_ITEMS,
+    minimum = 1,
   } = options;
   const available = Math.max(1, terminalRows - chromeRows);
   return Math.max(minimum, Math.min(maximum, Math.floor(available / Math.max(1, rowsPerItem))));

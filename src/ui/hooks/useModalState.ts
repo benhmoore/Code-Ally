@@ -32,6 +32,7 @@
 import { useReducer, useState, useCallback } from 'react';
 import { ModelOption } from '../components/ModelSelector.js';
 import { PermissionRequest } from '../components/PermissionPrompt.js';
+import type { SelectorLoadState } from '../components/SelectorLoadStatus.js';
 import type { PlanApprovalRequest } from '../components/PlanApprovalPrompt.js';
 import type { SessionInfo, Message, PromptInfo, FormRequest, FormValue, FormValues } from '@shared/index.js';
 import type { FileChangeStats } from '../components/RewindOptionsSelector.js';
@@ -105,6 +106,7 @@ export interface UndoFileListRequest {
  * Session select request
  */
 export interface SessionSelectRequest {
+  loadState?: SelectorLoadState;
   requestId: string;
   sessions: SessionInfo[];
   selectedIndex: number;
@@ -114,6 +116,7 @@ export interface SessionSelectRequest {
  * Library select request
  */
 export interface LibrarySelectRequest {
+  loadState?: SelectorLoadState;
   requestId: string;
   prompts: PromptInfo[];
   selectedIndex: number;

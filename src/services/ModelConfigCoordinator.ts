@@ -6,7 +6,6 @@
  *   - validating a picked model's capabilities before adopting it
  *   - persisting the choice through ConfigManager
  *   - pushing config changes into the live services (RuntimeConfigSync)
- *   - normalizing CONFIG_UPDATED payloads emitted by slash commands
  *
  * The UI layer keeps only event plumbing: it toggles the picker modal, applies
  * the returned config patch to React state and renders the returned messages.
@@ -35,6 +34,7 @@ export interface ModelCapabilities {
   supportsTools: boolean;
   supportsImages: boolean;
   fromCache: boolean;
+  toolsVerified?: boolean;
 }
 
 export type ModelCapabilityProbe = (endpoint: string, modelName: string) => Promise<ModelCapabilities>;
@@ -74,6 +74,7 @@ export interface ModelSwitchOutcome {
 }
 
 // Commits share the config owner's lifetime, including across foreground routes.
+const modelSelectionVersions = new WeakMap<ModelConfigManager, Map<ModelSlot, number>>();
 const modelCommitQueues = new WeakMap<ModelConfigManager, Promise<void>>();
 
 const DEFAULT_ENDPOINT = 'http://localhost:11434';
@@ -83,7 +84,6 @@ function describeError(error: unknown): string {
 }
 
 export class ModelConfigCoordinator {
-  private readonly selectionVersions = new Map<ModelSlot, number>();
   constructor(private readonly deps: ModelConfigCoordinatorDeps) {}
 
   /**
@@ -116,15 +116,20 @@ export class ModelConfigCoordinator {
     slot: ModelSlot,
     ownsRequest: () => boolean = () => true
   ): Promise<ModelSwitchOutcome> {
-    const version = (this.selectionVersions.get(slot) ?? 0) + 1;
-    this.selectionVersions.set(slot, version);
-    const isCurrent = () => this.selectionVersions.get(slot) === version && ownsRequest();
-    const superseded: ModelSwitchOutcome = { status: 'superseded', messages: [] };
     const configManager = this.deps.getConfigManager();
-    if (!configManager) {
-      return { status: 'unavailable', messages: [] };
+    if (!configManager) return { status: 'unavailable', messages: ['Configuration unavailable. Run /config setup.'] };
+    let versions = modelSelectionVersions.get(configManager);
+    if (!versions) {
+      versions = new Map();
+      modelSelectionVersions.set(configManager, versions);
     }
+    const version = (versions.get(slot) ?? 0) + 1;
+    versions.set(slot, version);
+    const isCurrent = () => versions.get(slot) === version && ownsRequest();
+    const superseded: ModelSwitchOutcome = { status: 'superseded', messages: [] };
 
+    let phase: 'probe' | 'save' | 'apply' = 'probe';
+    let savedUpdate: Partial<Config> | undefined;
     try {
       if (slot === 'ally') {
         const block = this.deps.validatePrimaryModelSwitch?.(modelName);
@@ -140,7 +145,9 @@ export class ModelConfigCoordinator {
       if (slot === 'ally' && !capabilities.supportsTools) {
         return {
           status: 'unsupported',
-          messages: [`Model '${modelName}' does not support tools. Ally model requires tool support.`],
+          messages: [
+            `Model '${modelName}' does not support tools. Choose another model with /model, or use /model service ${modelName} for background work.`,
+          ],
         };
       }
 
@@ -158,7 +165,14 @@ export class ModelConfigCoordinator {
         if (!isCurrent()) return superseded;
         // Once admitted, persistence and runtime adoption finish together. A
         // newer selection waits, so an older write cannot finish after it.
+        if (slot === 'ally') {
+          const block = this.deps.validatePrimaryModelSwitch?.(modelName);
+          if (block) return { status: 'error', messages: [block] };
+        }
+        phase = 'save';
         await configManager.setValue(configKey, modelName);
+        savedUpdate = updates;
+        phase = 'apply';
         this.deps.applyRuntimeConfig(updates);
       } finally {
         release();
@@ -168,37 +182,35 @@ export class ModelConfigCoordinator {
       const typeName = slot === 'service' ? 'Service model' : 'Model';
       const capInfo = capabilities.fromCache ? ' (cached)' : '';
       const imageNote = capabilities.supportsImages ? '' : ' (no image support)';
+      const verificationNote =
+        capabilities.toolsVerified === false
+          ? '\nTool support is unverified; choose a model that supports function calling.'
+          : '';
 
       return {
         status: 'switched',
         configUpdate: updates,
-        messages: [`${typeName} changed to: ${modelName}${capInfo}${imageNote}`],
+        messages: [
+          `${typeName} changed to: ${modelName}${capInfo}${imageNote}\nSaved to profile and applied to subsequent requests.${verificationNote}`,
+        ],
       };
     } catch (error) {
-      return {
-        status: 'error',
-        messages: [`Error changing model: ${describeError(error)}`],
-      };
+      const detail = describeError(error);
+      if (phase === 'apply') {
+        return {
+          status: 'error',
+          configUpdate: savedUpdate,
+          messages: [
+            `Model saved, but could not be applied: ${detail}\nRetry the selection or restart Ally to use the saved model.`,
+          ],
+        };
+      }
+      const recovery =
+        phase === 'save'
+          ? 'Check the configuration file permissions, then retry /model.'
+          : 'Check the connection with /config setup, then retry /model.';
+      return { status: 'error', messages: [`Error changing model: ${detail}\n${recovery}`] };
     }
-  }
-
-  /**
-   * Validate a CONFIG_UPDATED payload.
-   * Returns null when the payload is not a usable config patch.
-   */
-  normalizeConfigUpdates(updates: unknown): Partial<Config> | null {
-    if (!updates || typeof updates !== 'object') return null;
-    return updates as Partial<Config>;
-  }
-
-  /**
-   * Push a config patch into the live services.
-   *
-   * Kept separate from {@link normalizeConfigUpdates} so the hook can update its
-   * own config state in between: UI state first, runtime services second.
-   */
-  applyRuntimeUpdates(updates: Partial<Config>): void {
-    this.deps.applyRuntimeConfig(updates);
   }
 }
 

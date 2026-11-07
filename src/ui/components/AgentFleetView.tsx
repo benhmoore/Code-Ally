@@ -22,6 +22,9 @@ import { Clickable } from './Clickable.js';
 import { UI_COLORS } from '../constants/colors.js';
 import { formatElapsed } from '../utils/timeUtils.js';
 import { TEXT_LIMITS } from '@config/constants.js';
+import { KeyboardHintFooter } from './KeyboardHintFooter.js';
+import { useContentWidth } from '../hooks/useContentWidth.js';
+import { truncateAnsiToWidth, visibleLength } from '@utils/terminalText.js';
 
 export interface AgentFleetViewProps {
   /** Background agents (excludes the implicit 'main' row) */
@@ -94,6 +97,7 @@ const AgentFleetViewComponent: React.FC<AgentFleetViewProps> = ({
   onOptionPress,
   compact = false,
 }) => {
+  const rowWidth = Math.max(1, useContentWidth() - 2);
   // Nothing to show until at least one background agent exists.
   if (agents.length === 0) {
     return null;
@@ -147,16 +151,17 @@ const AgentFleetViewComponent: React.FC<AgentFleetViewProps> = ({
         const dot = agentFleetDot(isViewed);
         const color = statusColor(agent.status);
         const label = labels[startIdx + idx];
+        const suffix = `  ${formatElapsed(elapsedSeconds)} · ${formatTokens(agent.tokens)}${agent.status !== 'running' ? ` (${agent.status})` : ''}`;
+        // Selection caret and viewed-state dot take four cells. Reserve the
+        // complete metadata suffix so the semantic label alone is shortened.
+        const visibleLabel = truncateAnsiToWidth(label ?? '', Math.max(1, rowWidth - 4 - visibleLength(suffix)), '…');
 
         return (
           <Clickable key={agent.id} onPress={onOptionPress && (() => onOptionPress(actualIndex))}>
             <SelectionIndicator isSelected={isSelected}>
               <Text color={color} dimColor={agent.status === 'cancelled'}>{dot} </Text>
-              <Text bold={isViewed} wrap="truncate-end">{label}</Text>
-              <Text dimColor>  {formatElapsed(elapsedSeconds)} · {formatTokens(agent.tokens)}</Text>
-              {agent.status !== 'running' && (
-                <Text dimColor> ({agent.status})</Text>
-              )}
+              <Text bold={isViewed}>{visibleLabel}</Text>
+              <Text dimColor>{suffix}</Text>
             </SelectionIndicator>
           </Clickable>
         );
@@ -167,13 +172,10 @@ const AgentFleetViewComponent: React.FC<AgentFleetViewProps> = ({
       )}
 
       {/* Contextual hint */}
-      <Box marginTop={1}>
-        {focused ? (
-          <Text dimColor>↑↓ navigate · enter to view · x to kill · esc to exit</Text>
-        ) : (
-          <Text dimColor>↓ to manage agents · ctrl+b to background</Text>
-        )}
-      </Box>
+      <KeyboardHintFooter hints={focused ? [
+        { key: '↑↓', label: rowWidth < 40 ? '' : 'move' }, { key: 'enter', label: 'view' },
+        { key: 'x', label: 'stop' }, { key: 'esc', label: 'back' },
+      ] : [{ key: '↓', label: 'manage agents' }, { key: 'ctrl+b', label: 'background' }]}/>
     </Box>
   );
 };

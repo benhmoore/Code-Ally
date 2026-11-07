@@ -22,7 +22,7 @@ import {
 } from '../utils/versionedStore.js';
 import { CONFIG_SCHEMA } from '../config/schemas.js';
 
-import { SECRET_CONFIG_KEYS } from '../config/metadata.js';
+import { SECRET_CONFIG_KEYS, formatConfigValue } from '../config/metadata.js';
 import { providerConfigUpdates } from '../config/providers.js';
 
 export class ConfigManager implements IService {
@@ -440,7 +440,7 @@ export class ConfigManager implements IService {
    * Check if a configuration key exists
    */
   hasKey(key: string): key is keyof Config {
-    return key in DEFAULT_CONFIG;
+    return Object.hasOwn(DEFAULT_CONFIG, key);
   }
 
   /**
@@ -615,12 +615,12 @@ export class ConfigManager implements IService {
         errorMsg += '\n\nDid you mean one of these?';
         for (const suggestedKey of suggestions) {
           const currentValue = this.getValue(suggestedKey as keyof Config);
-          errorMsg += `\n  ${suggestedKey} (current: ${JSON.stringify(currentValue)})`;
+          errorMsg += `\n  ${suggestedKey} (current: ${formatConfigValue(suggestedKey as keyof Config, currentValue)})`;
         }
         throw new Error(errorMsg);
       }
 
-      throw new Error(`Unknown configuration key: ${key}. Use getKeys() to see all options.`);
+      throw new Error(`Unknown configuration key: ${key}. Use /config show all to see available settings.`);
     }
 
     // Parse value (try JSON first, fallback to string)

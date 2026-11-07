@@ -10,6 +10,8 @@ import type { Agent } from '@agent/Agent.js';
 import type { AppActions, AppState } from '../../contexts/AppContext.js';
 import { ActivityProvider } from '../../contexts/ActivityContext.js';
 import { useModalState, type ModalState } from '../useModalState.js';
+import { ConfigCommand } from '@agent/commands/ConfigCommand.js';
+import { DEFAULT_CONFIG } from '@config/defaults.js';
 import { ModelConfigCoordinator } from '@services/ModelConfigCoordinator.js';
 import { useConfigurationActivity } from '../activity/useConfigurationActivity.js';
 import { useLibraryActivity } from '../activity/useLibraryActivity.js';
@@ -239,6 +241,42 @@ describe('asynchronous activity domains', () => {
     config.model = 'new';
     completions[1]!({ status: 'switched', configUpdate: { model: 'new' }, messages: [] });
     await vi.waitFor(() => expect(f.getModal().modelSelectRequest).toBeUndefined());
+  });
+
+  it('starts model selection on the currently active model', async () => {
+    const f = setup();
+    await vi.waitFor(() => expect(f.getModal()).toBeDefined());
+    f.stream.emit({
+      id: 'models',
+      type: E.MODEL_SELECT_REQUEST,
+      timestamp: 1,
+      data: { requestId: 'models', models: [{ name: 'other' }, { name: 'current' }], currentModel: 'current' },
+    });
+    await vi.waitFor(() => expect(f.getModal().modelSelectedIndex).toBe(1));
+  });
+
+  it('applies a command setting once while the frontend adopts its notification', async () => {
+    let config = { ...DEFAULT_CONFIG };
+    const manager = {
+      getConfig: () => ({ ...config }),
+      parseKeyValue: () => ({ key: 'temperature', valueString: '0.5' }),
+      setFromString: async () => {
+        const oldValue = config.temperature;
+        config = { ...config, temperature: 0.5 };
+        return { key: 'temperature', oldValue, newValue: 0.5 };
+      },
+    };
+    const applied = vi.fn();
+    ServiceRegistry.getInstance().registerInstance('config_manager', manager as never);
+    ServiceRegistry.getInstance().registerInstance('agent', { applyConfigUpdates: applied } as never);
+    const f = setup();
+    ServiceRegistry.getInstance().registerInstance('activity_stream', f.stream);
+    await vi.waitFor(() => expect(f.getModal()).toBeDefined());
+    await new ConfigCommand().execute(['set', 'temperature=0.5'], [], ServiceRegistry.getInstance());
+    expect(applied).toHaveBeenCalledExactlyOnceWith({ temperature: 0.5 });
+    expect(f.configUpdates).toHaveBeenCalledWith({ temperature: 0.5 });
+    ServiceRegistry.getInstance()['_services'].delete('agent');
+    ServiceRegistry.getInstance()['_services'].delete('activity_stream');
   });
 
   it('observes rejected detached handlers instead of leaking an unhandled promise', async () => {

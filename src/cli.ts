@@ -247,10 +247,6 @@ async function handleConfigCommands(
 ): Promise<boolean> {
   // --init starts the normal UI and requests the same wizard as /init.
   if (options.init) {
-    console.log('\n✓ Starting Code Ally with setup wizard...\n');
-    console.log('The setup wizard will appear in the UI.');
-    console.log('You can also run setup anytime using the /init command.\n');
-    // Don't exit - let the app start and show the wizard
     return false;
   }
 

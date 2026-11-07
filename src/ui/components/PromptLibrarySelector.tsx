@@ -1,97 +1,42 @@
-/**
- * PromptLibrarySelector - Interactive prompt selection
- *
- * Shows saved prompts with keyboard navigation for /prompt command
- */
-
+/** Pick a reusable prompt without wrapping its preview outside the viewport. */
 import React from 'react';
 import { Box, Text } from 'ink';
-import { PromptInfo } from '@shared/index.js';
+import type { PromptInfo } from '@shared/index.js';
 import { formatRelativeTime } from '../utils/timeUtils.js';
-import { TEXT_LIMITS } from '@config/constants.js';
+import { selectorText } from '../utils/formatters.js';
 import { SelectionIndicator } from './SelectionIndicator.js';
 import { Clickable } from './Clickable.js';
-import { UI_COLORS } from '../constants/colors.js';
 import { KeyboardHintFooter } from './KeyboardHintFooter.js';
+import { SelectorLoadStatus, type SelectorLoadState } from './SelectorLoadStatus.js';
 import { InteractiveSurface } from './InteractiveSurface.js';
 import { useTerminalRows } from '../hooks/useTerminalRows.js';
+import { useContentWidth } from '../hooks/useContentWidth.js';
 import { centeredWindow, visibleItemBudget } from '../utils/layout.js';
 
 export interface PromptLibrarySelectorProps {
-  /** Available prompts */
+  loadState?: SelectorLoadState;
+  onRetry?: () => void;
   prompts: PromptInfo[];
-  /** Currently selected prompt index */
   selectedIndex: number;
-  /** Whether the prompt is visible */
   visible?: boolean;
-  /** Maximum visible items before windowing */
   maxVisible?: number;
-  /** Activate the option at an index, as a click on its row does. */
   onOptionPress?: (index: number) => void;
 }
 
-/**
- * Truncate title for display
- */
-function truncateTitle(title: string, maxLength: number = TEXT_LIMITS.DESCRIPTION_MAX): string {
-  if (title.length <= maxLength) return title;
-  return title.slice(0, maxLength - 3) + '...';
-}
-
-/**
- * Truncate content for display
- */
-function truncateContent(content: string, maxLength: number = TEXT_LIMITS.DESCRIPTION_MAX): string {
-  // Get first line only
-  const firstLine = content.split('\n')[0] || '';
-
-  if (firstLine.length <= maxLength) return firstLine;
-  return firstLine.slice(0, maxLength - 3) + '...';
-}
-
-/**
- * Format tags for display
- */
-function formatTagsDisplay(tags?: string[]): string {
-  if (!tags || tags.length === 0) return '';
-
-  // Show tag count if more than 3 tags
-  if (tags.length > 3) {
-    return ` • ${tags.length} tags`;
-  }
-
-  // Show tags in brackets with truncation
-  const tagsStr = tags.join(', ');
-  const maxLength = 30;
-
-  if (tagsStr.length > maxLength) {
-    return ` • [${tagsStr.slice(0, maxLength - 3)}...]`;
-  }
-
-  return ` • [${tagsStr}]`;
-}
-
-/**
- * PromptLibrarySelector Component
- */
-export const PromptLibrarySelector: React.FC<PromptLibrarySelectorProps> = ({
+export function PromptLibrarySelector({
   prompts,
   selectedIndex,
+  loadState,
+  onRetry,
   visible = true,
   maxVisible = 10,
   onOptionPress,
-}) => {
-  const terminalRows = useTerminalRows();
-  const visibleCount = Math.min(
-    maxVisible,
-    visibleItemBudget(terminalRows, { chromeRows: 9, rowsPerItem: 3, maximum: maxVisible })
-  );
-
-  if (!visible) {
-    return null;
-  }
-
-  if (prompts.length === 0) {
+}: PromptLibrarySelectorProps) {
+  const rows = useTerminalRows();
+  const width = Math.max(1, useContentWidth() - 4);
+  if (!visible) return null;
+  if (loadState) return <SelectorLoadStatus title="Prompt library" state={loadState} onRetry={onRetry} />;
+  if (!prompts.length)
     return (
       <InteractiveSurface
         title="Prompt library"
@@ -101,44 +46,41 @@ export const PromptLibrarySelector: React.FC<PromptLibrarySelectorProps> = ({
         <Text dimColor>Use /prompt add to create one.</Text>
       </InteractiveSurface>
     );
-  }
-
-  const totalPrompts = prompts.length;
-  const window = centeredWindow(prompts, selectedIndex, visibleCount);
-
+  const selected = Math.max(0, Math.min(prompts.length - 1, selectedIndex));
+  const window = centeredWindow(
+    prompts,
+    selected,
+    visibleItemBudget(rows, { chromeRows: 9, rowsPerItem: 3, maximum: maxVisible })
+  );
   return (
     <InteractiveSurface
       title="Prompt library"
-      meta={`${totalPrompts}`}
+      meta={`${selected + 1} of ${prompts.length}`}
       footer={<KeyboardHintFooter action="use" />}
     >
-          {window.above > 0 && <Text dimColor>  ↑ {window.above} more</Text>}
-          {window.items.map((prompt, idx) => {
-            const actualIndex = window.start + idx;
-            const isSelected = actualIndex === selectedIndex;
-            const displayTitle = truncateTitle(prompt.title);
-            const contentPreview = truncateContent(prompt.content);
-            const relativeTime = formatRelativeTime(prompt.createdAt);
-            const tagsDisplay = formatTagsDisplay(prompt.tags);
-
-            return (
-              <Clickable key={prompt.id} flexDirection="column" onPress={onOptionPress && (() => onOptionPress(actualIndex))}>
-                <SelectionIndicator isSelected={isSelected}>
-                  {displayTitle}
-                </SelectionIndicator>
-                <Box marginLeft={2} flexDirection="column">
-                  <Text dimColor={!isSelected} color={isSelected ? UI_COLORS.PRIMARY : undefined}>
-                    {contentPreview}
-                  </Text>
-                  <Text dimColor>
-                    {relativeTime}{tagsDisplay}
-                  </Text>
-                </Box>
-              </Clickable>
-            );
-          })}
-
-          {window.below > 0 && <Text dimColor>  ↓ {window.below} more</Text>}
+      {window.above > 0 && <Text dimColor>↑ {window.above} more</Text>}
+      {window.items.map((prompt, index) => {
+        const actualIndex = window.start + index;
+        const tags = prompt.tags?.length ? ` · ${prompt.tags.join(', ')}` : '';
+        return (
+          <Clickable
+            key={prompt.id}
+            flexDirection="column"
+            onPress={onOptionPress && (() => onOptionPress(actualIndex))}
+          >
+            <SelectionIndicator isSelected={actualIndex === selected}>
+              {selectorText(prompt.title || 'Untitled prompt', width)}
+            </SelectionIndicator>
+            <Box paddingLeft={2} flexDirection="column">
+              <Text wrap="truncate-end">{selectorText(prompt.content || 'Empty prompt', width)}</Text>
+              <Text dimColor wrap="truncate-end">
+                {selectorText(`${formatRelativeTime(prompt.createdAt)}${tags}`, width)}
+              </Text>
+            </Box>
+          </Clickable>
+        );
+      })}
+      {window.below > 0 && <Text dimColor>↓ {window.below} more</Text>}
     </InteractiveSurface>
   );
-};
+}

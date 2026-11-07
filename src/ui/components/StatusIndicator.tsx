@@ -12,6 +12,8 @@ import { setTerminalProgress, clearTerminalProgress } from '@utils/terminal.js';
 import { UI_DELAYS } from '@config/constants.js';
 import { UI_COLORS } from '../constants/colors.js';
 import type { ActivityStream } from '@services/ActivityStream.js';
+import { useContentWidth } from '../hooks/useContentWidth.js';
+import { truncateAnsiToWidth, visibleLength } from '@utils/terminalText.js';
 
 interface StatusIndicatorProps {
   isProcessing: boolean;
@@ -59,6 +61,7 @@ export const StatusIndicator: React.FC<StatusIndicatorProps> = ({
   hideTodos = false,
 }) => {
   const active = isProcessing || isCompacting || isCancelling;
+  const width = useContentWidth();
   const [todos, setTodos] = useState<TodoItem[]>([]);
   const [awaitingModel, setAwaitingModel] = useState(false);
   const [startedAt, setStartedAt] = useState(Date.now());
@@ -222,11 +225,16 @@ export const StatusIndicator: React.FC<StatusIndicatorProps> = ({
   // A grey hollow circle flashing on and off while the request is out with
   // nothing back; the yellow arc means output is actually arriving.
   const showBlink = awaitingModel && !isCancelling && !isCompacting;
+  const suffix = `${todoProgress ? ` · ${todoProgress}` : ''} · ${formatElapsed(elapsedSeconds)} · esc interrupt`;
+  // One padding cell, one indicator and FreshnessLabel's leading space form
+  // the same label gutter as the idle shell row. Metadata never pushes it out.
+  const labelWidth = Math.max(1, width - 3 - visibleLength(suffix));
+  const visibleLabel = truncateAnsiToWidth(label.replace(/\s+/g, ' '), labelWidth, '…');
 
   if (!active) return null;
 
   return (
-    <Box paddingLeft={1}>
+    <Box paddingLeft={1} width={width}>
       <ProgressIndicator
         type={showBlink ? 'blink' : 'arc'}
         color={
@@ -234,13 +242,12 @@ export const StatusIndicator: React.FC<StatusIndicatorProps> = ({
         }
       />
       <FreshnessLabel
-        text={label}
+        text={visibleLabel}
         getSilenceMs={getSilenceMs}
         color={isCancelling ? UI_COLORS.ERROR : undefined}
         dimmed={showBlink}
       />
-      {todoProgress && <Text dimColor> · {todoProgress}</Text>}
-      <Text dimColor> · {formatElapsed(elapsedSeconds)} · esc interrupt</Text>
+      <Text dimColor>{suffix}</Text>
     </Box>
   );
 };

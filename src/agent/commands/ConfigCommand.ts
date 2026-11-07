@@ -13,15 +13,15 @@ import type { IntegrationStore } from '@services/IntegrationStore.js';
 import { formatError } from '@utils/errorUtils.js';
 import { CommandRegistry } from './CommandRegistry.js';
 import type { CommandMetadata } from './types.js';
-import { CONFIG_CATEGORIES, formatConfigValue } from '@config/metadata.js';
+import { formatConfigValue } from '@config/metadata.js';
 import { DEFAULT_CONFIG, validateConfigValue } from '@config/defaults.js';
-import { ANSI_COLORS } from '../../ui/constants/colors.js';
+import { presentConfiguration } from '@config/configPresentation.js';
 import { SEARCH_PROVIDER_INFO } from '../../types/integration.js';
 import { applyRuntimeConfigUpdates } from '@services/RuntimeConfigSync.js';
 
 // Fields stored in IntegrationStore instead of ConfigManager
 const INTEGRATION_STORE_FIELDS = ['search_provider', 'search_api_key'] as const;
-type IntegrationStoreField = typeof INTEGRATION_STORE_FIELDS[number];
+type IntegrationStoreField = (typeof INTEGRATION_STORE_FIELDS)[number];
 
 export class ConfigCommand extends Command {
   static readonly metadata: CommandMetadata = {
@@ -29,10 +29,14 @@ export class ConfigCommand extends Command {
     description: 'View or modify configuration',
     helpCategory: 'Core',
     subcommands: [
-      { name: 'show', description: 'Show current configuration' },
+      {
+        name: 'show',
+        description: 'Inspect a setting, category, changed values, or all settings',
+        args: '[key|category|changed|all]',
+      },
       { name: 'setup', description: 'Configure provider, endpoint, credentials, and model' },
       { name: 'set', description: 'Set a config value', args: '<key>=<value>' },
-      { name: 'reset', description: 'Reset one setting or all settings to defaults', args: '[key]' },
+      { name: 'reset', description: 'Reset app settings or one named setting to defaults', args: '[key]' },
     ],
   };
 
@@ -44,11 +48,7 @@ export class ConfigCommand extends Command {
   readonly description = ConfigCommand.metadata.description;
   protected readonly useYellowOutput = ConfigCommand.metadata.useYellowOutput ?? false;
 
-  async execute(
-    args: string[],
-    _messages: Message[],
-    serviceRegistry: ServiceRegistry
-  ): Promise<CommandResult> {
+  async execute(args: string[], _messages: Message[], serviceRegistry: ServiceRegistry): Promise<CommandResult> {
     const argString = args.join(' ').trim();
 
     // Parse subcommands
@@ -57,7 +57,7 @@ export class ConfigCommand extends Command {
 
     // No args or "show" - show interactive config viewer
     if (!argString || subcommand?.toLowerCase() === 'show') {
-      return this.handleConfigView(serviceRegistry);
+      return this.handleConfigView(serviceRegistry, argString ? parts.slice(1).join(' ') || 'all' : undefined);
     }
 
     if (!subcommand) {
@@ -66,8 +66,10 @@ export class ConfigCommand extends Command {
 
     if (subcommand.toLowerCase() === 'setup') {
       serviceRegistry.get('activity_stream')?.emit({
-        id: `setup_${Date.now()}`, type: ActivityEventType.SETUP_WIZARD_REQUEST,
-        timestamp: Date.now(), data: {},
+        id: `setup_${Date.now()}`,
+        type: ActivityEventType.SETUP_WIZARD_REQUEST,
+        timestamp: Date.now(),
+        data: {},
       });
       return { handled: true };
     }
@@ -76,9 +78,21 @@ export class ConfigCommand extends Command {
       if (parts.length > 2) return this.createError('Use /config reset [key]');
       const key = parts[1];
       if (key) {
-        if (!Object.prototype.hasOwnProperty.call(DEFAULT_CONFIG, key)) return this.createError(`Unknown config key '${key}'`);
-        const value = DEFAULT_CONFIG[key as keyof Config];
-        return this.handleConfigSet(`${key}=${JSON.stringify(value ?? null)}`, serviceRegistry);
+        if (!Object.prototype.hasOwnProperty.call(DEFAULT_CONFIG, key))
+          return this.createError(`Unknown config key '${key}'`);
+        const setting = key as keyof Config;
+        if (INTEGRATION_STORE_FIELDS.includes(setting as IntegrationStoreField)) {
+          return this.handleIntegrationStoreSet(
+            setting as IntegrationStoreField,
+            JSON.stringify(DEFAULT_CONFIG[setting]),
+            serviceRegistry
+          );
+        }
+        const block = this.identityChangeBlock(serviceRegistry, { [setting]: DEFAULT_CONFIG[setting] });
+        if (block) return this.createError(block);
+        const manager = serviceRegistry.get('config_manager');
+        if (!manager) return this.createError('Configuration manager not available');
+        return this.persistConfigChange(serviceRegistry, () => manager.resetField(setting));
       }
       return this.handleConfigReset(serviceRegistry);
     }
@@ -89,110 +103,87 @@ export class ConfigCommand extends Command {
       return this.handleConfigSet(kvString, serviceRegistry);
     }
 
-    return this.createError('Invalid format. Use /config, /config setup, /config set key=value, or /config reset [key]');
+    return this.createError(
+      'Invalid format. Use /config, /config setup, /config set key=value, or /config reset [key]'
+    );
   }
 
-  private async handleConfigView(serviceRegistry: ServiceRegistry): Promise<CommandResult> {
-    const configManager = serviceRegistry.get('config_manager');
+  private async handleConfigView(serviceRegistry: ServiceRegistry, query?: string): Promise<CommandResult> {
+    const manager = serviceRegistry.get('config_manager');
+    if (!manager) return this.createError('Configuration manager not available');
+    const search = await this.getSearchConfig(serviceRegistry.get('integration_store') ?? undefined);
+    const config = { ...manager.getConfig(), search_provider: search.provider, search_api_key: search.apiKey };
+    const content = presentConfiguration(config, query);
+    return content
+      ? { handled: true, response: content }
+      : this.createError(
+          `No setting or category matches '${query}'. Use /config show all or /config show context_size.`
+        );
+  }
 
-    if (!configManager) {
-      return this.createError('Configuration manager not available');
-    }
+  private identityChangeBlock(registry: ServiceRegistry, updates: Partial<Config>): string | null {
+    return (
+      registry.get('agent')?.getModelIdentityChangeBlock(updates) ??
+      registry.get('agent_pool')?.getModelIdentityChangeBlock(updates) ??
+      null
+    );
+  }
 
-    const config = configManager.getConfig();
-
-    // Include newly declared settings even before they have a display category.
-    const categoryDefs = { ...CONFIG_CATEGORIES };
-    const categorized = new Set(Object.values(categoryDefs).flat());
-    categoryDefs.Other = (Object.keys(DEFAULT_CONFIG) as (keyof Config)[]).filter(key => !categorized.has(key));
-
-    // Get search config from IntegrationStore
-    const integrationStore = serviceRegistry.get('integration_store');
-    const searchConfig = await this.getSearchConfig(integrationStore ?? undefined);
-
-
-    // Find max key length and max value length for alignment
-    const allKeys = Object.values(categoryDefs).flat();
-    const maxKeyLen = Math.max(...allKeys.map(k => k.length));
-
-    // Pre-compute all values to find max value length
-    const allValues: { key: string; currentStr: string; defaultStr: string; isModified: boolean }[] = [];
-    const displayValue = (key: string, value: unknown): string => {
-      return formatConfigValue(key as keyof Config, value);
-    };
-    for (const keys of Object.values(categoryDefs)) {
-      for (const key of keys) {
-        let currentValue: any;
-        const defaultValue = (DEFAULT_CONFIG as any)[key];
-
-        // Handle IntegrationStore fields specially
-        if (key === 'search_provider') {
-          currentValue = searchConfig.provider;
-        } else if (key === 'search_api_key') {
-          // Mask API key - show only last 4 chars if set
-          const apiKey = searchConfig.apiKey;
-          currentValue = apiKey ? `****${apiKey.slice(-4)}` : null;
-        } else {
-          currentValue = (config as any)[key];
-        }
-
-        const currentStr = displayValue(key, currentValue);
-        const defaultStr = displayValue(key, defaultValue);
-        const isModified = currentStr !== defaultStr;
-        allValues.push({ key, currentStr, defaultStr, isModified });
+  /** Persist once, refresh runtime once, then notify the frontend of committed settings. */
+  private async persistConfigChange(
+    registry: ServiceRegistry,
+    write: () => Promise<{ key: string; oldValue: unknown; newValue: unknown }>
+  ): Promise<CommandResult> {
+    const manager = registry.get('config_manager');
+    if (!manager) return this.createError('Configuration manager not available');
+    let committed: Partial<Config> | undefined;
+    try {
+      const before = manager.getConfig();
+      const { key, oldValue, newValue } = await write();
+      const after = manager.getConfig();
+      const updates = Object.fromEntries(
+        (Object.keys(after) as (keyof Config)[])
+          .filter(field => !Object.is(before[field], after[field]))
+          .map(field => [field, after[field]])
+      ) as Partial<Config>;
+      // Retrying a saved-but-unapplied value must reapply the requested key.
+      Object.assign(updates, { [key]: after[key as keyof Config] });
+      if (key === 'provider') Object.assign(updates, { endpoint: after.endpoint, api_key: after.api_key });
+      committed = updates;
+      applyRuntimeConfigUpdates(registry, updates);
+      registry.get('activity_stream')?.emit({
+        id: `config_updated_${Date.now()}`,
+        type: ActivityEventType.CONFIG_UPDATED,
+        timestamp: Date.now(),
+        data: updates,
+      });
+      const phase =
+        key === 'default_agent' || key === 'setup_completed'
+          ? 'Saved to profile. Takes effect at the next launch.'
+          : 'Saved to profile and applied to subsequent work.';
+      return this.createResponse(
+        `Configuration updated: ${key}\n${phase}\n  Previous: ${formatConfigValue(key as keyof Config, oldValue)}\n  Current: ${formatConfigValue(key as keyof Config, newValue)}` +
+          (updates.provider !== undefined
+            ? `\nEndpoint: ${after.endpoint}\nChoose a model with /model. Configure credentials with /config setup.`
+            : '') +
+          (key === 'context_size' && Number(newValue) < 32768
+            ? '\nFor everyday coding, use context_size=32768 or larger. This smaller window is useful for stress testing.'
+            : '')
+      );
+    } catch (error) {
+      if (committed) {
+        registry.get('activity_stream')?.emit({
+          id: `config_updated_${Date.now()}`,
+          type: ActivityEventType.CONFIG_UPDATED,
+          timestamp: Date.now(),
+          data: committed,
+        });
+        return this.createError(
+          `Settings saved, but could not be applied: ${formatError(error)}\nRestart Ally to use the saved settings, or retry the change.`
+        );
       }
+      return this.createError(formatError(error));
     }
-    const maxValueLen = Math.max(...allValues.map(v => v.currentStr.length));
-
-    // Helper to escape URLs in values (wrap in backticks to prevent link rendering)
-    const escapeValue = (val: string): string => {
-      // If value contains :// it's likely a URL, wrap in backticks
-      if (val.includes('://')) {
-        return `\`${val}\``;
-      }
-      return val;
-    };
-
-    // Build markdown output
-    const lines: string[] = [];
-    lines.push('# Configuration');
-    lines.push('');
-
-    let valueIdx = 0;
-    for (const [categoryName, keys] of Object.entries(categoryDefs)) {
-      lines.push(`**${categoryName}**`);
-
-      for (const key of keys) {
-        const entry = allValues[valueIdx++]!;
-        const { currentStr, defaultStr, isModified } = entry;
-        const paddedKey = key.padEnd(maxKeyLen);
-        const paddedValue = currentStr.padEnd(maxValueLen);
-
-        let line: string;
-        if (isModified) {
-          // Highlight modified values in orange
-          line = `\`${paddedKey}\`  ${ANSI_COLORS.WARNING}${escapeValue(paddedValue)}${ANSI_COLORS.RESET}  (default: ${escapeValue(defaultStr)})`;
-        } else {
-          line = `\`${paddedKey}\`  ${escapeValue(paddedValue)}  (default)`;
-        }
-
-        lines.push(line);
-      }
-
-      lines.push('');
-    }
-
-    // Footer
-    lines.push('---');
-    lines.push('');
-    lines.push('Use `/config set key=value` to change settings');
-    lines.push('Use `/config setup` for guided provider configuration');
-    lines.push('Use `/config reset [key]` to restore one setting or all defaults');
-
-    return {
-      handled: true,
-      response: lines.join('\n'),
-    };
   }
 
   /**
@@ -206,10 +197,7 @@ export class ConfigCommand extends Command {
    * - search_provider: shows available providers if no value, routes to IntegrationStore
    * - search_api_key: routes to IntegrationStore with encryption
    */
-  private async handleConfigSet(
-    kvString: string,
-    serviceRegistry: ServiceRegistry
-  ): Promise<CommandResult> {
+  private async handleConfigSet(kvString: string, serviceRegistry: ServiceRegistry): Promise<CommandResult> {
     const configManager = serviceRegistry.get('config_manager');
 
     if (!configManager) {
@@ -231,55 +219,25 @@ export class ConfigCommand extends Command {
     // Parse key=value to check if it's an IntegrationStore field
     const parsed = configManager.parseKeyValue(kvString);
     if (parsed && INTEGRATION_STORE_FIELDS.includes(parsed.key as IntegrationStoreField)) {
-      return this.handleIntegrationStoreSet(
-        parsed.key as IntegrationStoreField,
-        parsed.valueString,
-        serviceRegistry
-      );
+      return this.handleIntegrationStoreSet(parsed.key as IntegrationStoreField, parsed.valueString, serviceRegistry);
     }
 
     if (parsed && (parsed.key === 'provider' || parsed.key === 'model' || parsed.key === 'endpoint')) {
       let parsedValue: unknown = parsed.valueString;
-      try { parsedValue = JSON.parse(parsed.valueString); } catch { /* plain string */ }
+      try {
+        parsedValue = JSON.parse(parsed.valueString);
+      } catch {
+        /* plain string */
+      }
       const validation = validateConfigValue(parsed.key, parsedValue);
       if (validation.valid) {
-        const activeAgent = serviceRegistry.get('agent');
-        const block = activeAgent?.getModelIdentityChangeBlock?.({
-          [parsed.key]: validation.coercedValue,
-        }) ?? serviceRegistry.get('agent_pool')?.getModelIdentityChangeBlock?.({ [parsed.key]: validation.coercedValue });
+        const block = this.identityChangeBlock(serviceRegistry, { [parsed.key]: validation.coercedValue });
         if (block) return this.createError(block);
       }
     }
 
-    try {
-      const before = configManager.getConfig();
-      const { key, oldValue, newValue } = await configManager.setFromString(kvString);
-      const after = configManager.getConfig();
-      const updates = Object.fromEntries(
-        (Object.keys(after) as (keyof Config)[]).filter(field => !Object.is(before[field], after[field]))
-          .map(field => [field, after[field]]),
-      ) as Partial<Config>;
-
-      applyRuntimeConfigUpdates(serviceRegistry, updates);
-
-      // Notify UI of config change for immediate effect
-      const activityStream = serviceRegistry.get('activity_stream');
-      if (activityStream && typeof (activityStream as any).emit === 'function') {
-        (activityStream as any).emit({
-          id: `config_updated_${Date.now()}`,
-          type: ActivityEventType.CONFIG_UPDATED,
-          timestamp: Date.now(),
-          data: updates,
-        });
-      }
-
-      return this.createResponse(
-        `Configuration updated: ${key}\n  Old value: ${formatConfigValue(key as keyof Config, oldValue)}\n  New value: ${formatConfigValue(key as keyof Config, newValue)}`
-        + (updates.provider !== undefined ? `\nEndpoint: ${after.endpoint}\nUse /model to select a model from this provider. Provider credentials were cleared unless configured in setup.` : '')
-      );
-    } catch (error) {
-      return this.createError(formatError(error));
-    }
+    if (!parsed && configManager.hasKey(trimmed)) return this.handleConfigView(serviceRegistry, trimmed);
+    return this.persistConfigChange(serviceRegistry, () => configManager.setFromString(kvString));
   }
 
   /**
@@ -320,7 +278,9 @@ export class ConfigCommand extends Command {
   /**
    * Get search configuration from IntegrationStore
    */
-  private async getSearchConfig(integrationStore: IntegrationStore | undefined): Promise<{ provider: string; apiKey: string | null }> {
+  private async getSearchConfig(
+    integrationStore: IntegrationStore | undefined
+  ): Promise<{ provider: Config['search_provider']; apiKey: string | null }> {
     if (!integrationStore) {
       return { provider: 'none', apiKey: null };
     }
@@ -378,10 +338,16 @@ export class ConfigCommand extends Command {
 
     try {
       const currentSettings = await integrationStore.getSettings();
+      let parsedValue: unknown = value;
+      try {
+        parsedValue = JSON.parse(value);
+      } catch {
+        /* Plain text value. */
+      }
 
       if (key === 'search_provider') {
         // Validate provider value
-        const validation = validateConfigValue('search_provider', value);
+        const validation = validateConfigValue('search_provider', parsedValue);
         if (!validation.valid) {
           return this.createError(validation.error || 'Invalid search provider');
         }
@@ -401,11 +367,11 @@ export class ConfigCommand extends Command {
         }
 
         return this.createResponse(
-          `Configuration updated: search_provider\n  Old value: "${oldValue}"\n  New value: "${validation.coercedValue}"${note}`
+          `Configuration updated: search_provider\nSaved securely and applied to subsequent searches.\n  Old value: "${oldValue}"\n  New value: "${validation.coercedValue}"${note}`
         );
       } else if (key === 'search_api_key') {
         // Handle API key - validate it's a string
-        const validation = validateConfigValue('search_api_key', value);
+        const validation = validateConfigValue('search_api_key', parsedValue);
         if (!validation.valid) {
           return this.createError(validation.error || 'Invalid API key');
         }
@@ -417,7 +383,7 @@ export class ConfigCommand extends Command {
         await integrationStore.setSearchAPIKey(validation.coercedValue);
 
         return this.createResponse(
-          `Configuration updated: search_api_key\n  Old value: "${oldDisplay}"\n  New value: "${newDisplay}"`
+          `Configuration updated: search_api_key\nSaved securely and applied to subsequent searches.\n  Old value: "${oldDisplay}"\n  New value: "${newDisplay}"`
         );
       }
 
@@ -434,42 +400,48 @@ export class ConfigCommand extends Command {
       return this.createError('Configuration manager not available');
     }
 
+    let committed: Partial<Config> | undefined;
     try {
-      const block = serviceRegistry.get('agent')?.getModelIdentityChangeBlock?.({
-        provider: DEFAULT_CONFIG.provider,
-        model: DEFAULT_CONFIG.model,
-        endpoint: DEFAULT_CONFIG.endpoint,
-      }) ?? serviceRegistry.get('agent_pool')?.getModelIdentityChangeBlock?.(DEFAULT_CONFIG);
+      const block =
+        serviceRegistry.get('agent')?.getModelIdentityChangeBlock({
+          provider: DEFAULT_CONFIG.provider,
+          model: DEFAULT_CONFIG.model,
+          endpoint: DEFAULT_CONFIG.endpoint,
+        }) ?? serviceRegistry.get('agent_pool')?.getModelIdentityChangeBlock(DEFAULT_CONFIG);
       if (block) return this.createError(block);
       const changes = await configManager.reset();
       const changedKeys = Object.keys(changes);
 
-      if (changedKeys.length === 0) {
-        return this.createResponse('Configuration is already at default values.');
-      }
-
       const currentConfig = configManager.getConfig();
-      const updates = Object.fromEntries(
-        changedKeys.map(key => [key, (currentConfig as any)[key]])
-      ) as Partial<Config>;
+      // Reset is also an activation retry when defaults were saved earlier.
+      const updates: Partial<Config> = { ...currentConfig };
 
+      committed = updates;
       applyRuntimeConfigUpdates(serviceRegistry, updates);
 
       // Notify UI of all config changes for immediate effect
-      const activityStream = serviceRegistry.get('activity_stream');
-      if (activityStream && typeof (activityStream as any).emit === 'function') {
-        (activityStream as any).emit({
+      serviceRegistry.get('activity_stream')?.emit({
+        id: `config_updated_${Date.now()}`,
+        type: ActivityEventType.CONFIG_UPDATED,
+        timestamp: Date.now(),
+        data: updates,
+      });
+
+      return this.createResponse(
+        `Configuration reset to defaults. ${changedKeys.length} settings changed. Saved to profile; live settings refreshed.\nSearch integration settings are retained; reset them by name with /config reset search_provider or /config reset search_api_key.\nUse /config to review.`
+      );
+    } catch (error) {
+      if (committed) {
+        serviceRegistry.get('activity_stream')?.emit({
           id: `config_updated_${Date.now()}`,
           type: ActivityEventType.CONFIG_UPDATED,
           timestamp: Date.now(),
-          data: updates,
+          data: committed,
         });
+        return this.createError(
+          `Defaults saved, but could not be applied: ${formatError(error)}\nRestart Ally to use the saved defaults.`
+        );
       }
-
-      return this.createResponse(
-        `Configuration reset to defaults. ${changedKeys.length} settings changed.`
-      );
-    } catch (error) {
       return this.createError(`Error resetting configuration: ${formatError(error)}`);
     }
   }

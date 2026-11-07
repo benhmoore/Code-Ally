@@ -54,7 +54,7 @@ const KeyboardHintFooterComponent: React.FC<KeyboardHintFooterProps> = ({
         {resolvedHints.map((hint, index) => (
           <React.Fragment key={`${hint.key}-${hint.label}`}>
             {index > 0 && ` ${UI_SYMBOLS.SEPARATOR.MIDDLE_DOT} `}
-            {hint.key} {hint.label}
+            {hint.key}{hint.label ? ` ${hint.label}` : ''}
           </React.Fragment>
         ))}
         {autoAllowMode !== undefined

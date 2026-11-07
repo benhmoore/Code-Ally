@@ -567,7 +567,7 @@ const ConversationViewComponent: React.FC<ConversationViewProps> = ({
   }, [completedTimeline, staticRemountKey]);
 
   const renderCompletedItem = React.useCallback((entry: StaticTimelineEntry) => {
-    const divider = createDivider(terminalWidth);
+    const divider = createDivider(terminalWidth - LAYOUT.MESSAGE_INDENT);
     const item = entry.item;
     const spacing = { marginTop: entry.spacingBefore ? 1 : 0 };
 

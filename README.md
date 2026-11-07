@@ -254,8 +254,11 @@ Run `ally --init` for interactive setup. Profile overrides live at
 lives at `~/.ally/config.json`.
 
 Inside Ally, use `/config setup` to choose a provider, enter its endpoint and
-optional API key, and select a discovered model. Escape cancels setup and returns
-to the conversation. `/config` shows all settings; `/config set ` completes setting
+optional API key, select a model and context window, then review before saving.
+Escape goes back a step (or closes the first step); Ctrl+C cancels setup.
+Rerunning setup preserves unrelated settings and integrations. `/config` shows
+common settings; `/config show all` shows the full catalogue, and
+`/config show <key>` explains an individual setting. `/config set ` completes setting
 names, then offers valid choices, provider endpoints, and available models.
 Use `/config reset <key>` to reset one setting, or `null` to clear optional sampling overrides or make a secondary model inherit
 the primary model. Secrets are hidden in configuration output and completion.

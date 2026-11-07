@@ -419,7 +419,9 @@ const AppContentComponent: React.FC<AppContentProps> = ({
 
           {statusIndicator}
           {!displayedIsThinking && !displayedIsCompacting && !isCancelling && (
-            <Text dimColor>{completedChild ? 'Completed' : 'Ready'} · {displayedAgentName}</Text>
+            <Box paddingLeft={3}>
+              <Text dimColor wrap="truncate-end">{completedChild ? 'Completed' : 'Ready'} · {displayedAgentName}</Text>
+            </Box>
           )}
 
           {/* Input Prompt */}

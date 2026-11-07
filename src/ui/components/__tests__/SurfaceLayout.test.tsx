@@ -1,9 +1,10 @@
 import React from 'react';
 import { EventEmitter } from 'events';
-import { render } from 'ink';
+import { render, Text } from 'ink';
 import { describe, expect, test } from 'vitest';
 import { ModelSelector } from '../ModelSelector.js';
 import { PromptLibrarySelector } from '../PromptLibrarySelector.js';
+import { InteractiveSurface } from '../InteractiveSurface.js';
 
 class FakeStdout extends EventEmitter {
   public frames: string[] = [];
@@ -38,6 +39,16 @@ function renderFrame(node: React.ReactElement, columns = 80, rows = 24): string[
 }
 
 describe('compact interactive surfaces', () => {
+  test('long titles and metadata share one bounded row on narrow terminals', () => {
+    const lines = renderFrame(
+      <InteractiveSurface title="A very long surface title that needs truncation" meta="20 of 100">
+        <Text>Content</Text>
+      </InteractiveSurface>, 40, 12
+    );
+    expect(lines.filter(line => line.trim())).toHaveLength(3);
+    expect(lines.every(line => line.length <= 40)).toBe(true);
+    expect(lines.join('\n')).toContain('Content');
+  });
   test('a two-item model selector does not manufacture empty height', () => {
     const lines = renderFrame(
       <ModelSelector
@@ -47,8 +58,20 @@ describe('compact interactive surfaces', () => {
       />
     );
 
-    expect(lines.filter(line => line.trim())).toHaveLength(6);
+    expect(lines.filter(line => line.trim())).toHaveLength(5);
     expect(lines.join('\n')).toContain('↑↓ move · enter select · esc cancel');
+  });
+
+  test('model selection keeps one information row per model and one hint row at 40 columns', () => {
+    const lines = renderFrame(
+      <ModelSelector models={[{ name: 'qwen3.8:27b-mlx' }, { name: 'small' }]} selectedIndex={0} currentModel="qwen3.8:27b-mlx" />,
+      40, 12
+    );
+    const content = lines.join('\n');
+    expect(content.match(/qwen3\.8:27b-mlx/g)).toHaveLength(1);
+    expect(content).toContain('1 of 2');
+    expect(lines.some(line => line.includes('↑↓ move · enter select · esc cancel'))).toBe(true);
+    expect(lines.length).toBeLessThanOrEqual(8);
   });
 
   test('a one-item prompt library remains compact', () => {

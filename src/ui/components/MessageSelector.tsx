@@ -1,102 +1,67 @@
-/**
- * MessageSelector - Select a previous user message for prompt content
- *
- * Shows user messages chronologically with keyboard navigation.
- * Used when creating prompts to pre-fill content from conversation history.
- */
-
+/** Pick a previous message or create an empty reusable prompt. */
 import React from 'react';
 import { Text } from 'ink';
-import { Message } from '@shared/index.js';
-import { TEXT_LIMITS } from '@config/constants.js';
+import type { Message } from '@shared/index.js';
+import { formatMessageTime } from '../utils/timeUtils.js';
+import { selectorText } from '../utils/formatters.js';
 import { SelectionIndicator } from './SelectionIndicator.js';
 import { Clickable } from './Clickable.js';
-import { UI_COLORS } from '../constants/colors.js';
 import { KeyboardHintFooter } from './KeyboardHintFooter.js';
 import { InteractiveSurface } from './InteractiveSurface.js';
 import { useTerminalRows } from '../hooks/useTerminalRows.js';
+import { useContentWidth } from '../hooks/useContentWidth.js';
 import { centeredWindow, visibleItemBudget } from '../utils/layout.js';
 
 export interface MessageSelectorProps {
-  /** User messages only (pre-filtered) */
   messages: Message[];
-  /** Currently selected message index */
   selectedIndex: number;
-  /** Whether the selector is visible */
   visible?: boolean;
-  /** Maximum visible items before windowing */
   maxVisible?: number;
-  /** Activate the option at an index, as a click on its row does. */
   onOptionPress?: (index: number) => void;
 }
 
-/**
- * Format timestamp for display
- */
-function formatTime(timestamp?: number): string {
-  if (!timestamp) return '??:??';
-  const date = new Date(timestamp);
-  const hours = date.getHours().toString().padStart(2, '0');
-  const minutes = date.getMinutes().toString().padStart(2, '0');
-  return `${hours}:${minutes}`;
-}
-
-/**
- * Truncate message content for display
- */
-function truncateContent(content: string, maxLength: number = TEXT_LIMITS.DESCRIPTION_MAX): string {
-  const firstLine = content.split('\n')[0] || '';
-  if (firstLine.length <= maxLength) return firstLine;
-  return firstLine.slice(0, maxLength - 3) + '...';
-}
-
-/**
- * MessageSelector Component
- */
-export const MessageSelector: React.FC<MessageSelectorProps> = ({
+export function MessageSelector({
   messages,
   selectedIndex,
   visible = true,
   maxVisible = 10,
   onOptionPress,
-}) => {
-  const terminalRows = useTerminalRows();
-  const visibleCount = Math.min(
-    maxVisible,
-    visibleItemBudget(terminalRows, { chromeRows: 9, maximum: maxVisible })
-  );
-
-  if (!visible) {
-    return null;
-  }
-
-  const totalMessages = messages.length;
-  const window = centeredWindow(messages, selectedIndex, visibleCount);
-
+}: MessageSelectorProps) {
+  const rows = useTerminalRows();
+  const width = Math.max(1, useContentWidth() - 4);
+  if (!visible) return null;
+  const selected = Math.max(0, Math.min(messages.length - 1, selectedIndex));
+  const window = centeredWindow(messages, selected, visibleItemBudget(rows, { chromeRows: 9, maximum: maxVisible }));
+  const hints = messages.length
+    ? [
+        { key: '↑↓', label: 'move' },
+        { key: 'enter', label: 'use' },
+        { key: 'n', label: 'new' },
+        { key: 'esc', label: 'cancel' },
+      ]
+    : [
+        { key: 'n', label: 'new' },
+        { key: 'esc', label: 'close' },
+      ];
   return (
     <InteractiveSurface
       title="Create prompt from message"
-      meta={`${totalMessages}`}
-      footer={<KeyboardHintFooter hints={[{ key: '↑↓', label: 'move' }, { key: 'enter', label: 'use' }, { key: 'n', label: 'new' }, { key: 'esc', label: 'cancel' }]} />}
+      meta={messages.length ? `${selected + 1} of ${messages.length}` : undefined}
+      footer={<KeyboardHintFooter hints={hints} />}
     >
-      {window.above > 0 && <Text dimColor>  ↑ {window.above} more</Text>}
-      {window.items.map((msg, idx) => {
-        const actualIndex = window.start + idx;
-        const isSelected = actualIndex === selectedIndex;
-        const timestamp = formatTime(msg.timestamp);
-        const preview = truncateContent(msg.content, 80);
-
+      {!messages.length && <Text>No previous user messages. Press n to write a new prompt.</Text>}
+      {window.above > 0 && <Text dimColor>↑ {window.above} more</Text>}
+      {window.items.map((message, index) => {
+        const actualIndex = window.start + index;
         return (
-          <Clickable key={actualIndex} marginBottom={0} onPress={onOptionPress && (() => onOptionPress(actualIndex))}>
-            <SelectionIndicator isSelected={isSelected}>
-              <Text color={UI_COLORS.TEXT_DIM} bold={isSelected}>{timestamp}</Text>
-              <Text bold={isSelected}> - {preview}</Text>
+          <Clickable key={message.id ?? actualIndex} onPress={onOptionPress && (() => onOptionPress(actualIndex))}>
+            <SelectionIndicator isSelected={actualIndex === selected}>
+              {selectorText(`${formatMessageTime(message.timestamp)} · ${message.content || 'Empty message'}`, width)}
             </SelectionIndicator>
           </Clickable>
         );
       })}
-
-      {window.below > 0 && <Text dimColor>  ↓ {window.below} more</Text>}
+      {window.below > 0 && <Text dimColor>↓ {window.below} more</Text>}
     </InteractiveSurface>
   );
-};
+}

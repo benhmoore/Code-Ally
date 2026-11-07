@@ -1,3 +1,5 @@
+import { truncateAnsiToWidth } from '@utils/terminalText.js';
+
 /**
  * Shared formatting utilities for UI components
  *
@@ -59,4 +61,9 @@ export function truncatePath(path: string, maxLength: number = 60): string {
   }
 
   return `${first}${middle}/${last}`;
+}
+
+/** Fit list previews to one physical terminal row, including CJK and emoji. */
+export function selectorText(value: string, width: number): string {
+  return truncateAnsiToWidth(value.replace(/\s+/g, ' ').trim(), Math.max(1, width), '…');
 }

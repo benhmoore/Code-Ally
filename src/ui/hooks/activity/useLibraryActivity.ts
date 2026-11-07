@@ -8,24 +8,23 @@ import { useDomainActivityEvent } from './useDomainActivityEvent.js';
 export function useLibraryActivity({ actions, modal, lifetime }: ActivitySubscriptionContext) {
   useDomainActivityEvent(
     ActivityEventType.LIBRARY_SELECT_REQUEST,
-    async (_event, isCurrent) => {
-      const serviceRegistry = ServiceRegistry.getInstance();
-      const promptLibraryManager = serviceRegistry.getPromptLibraryManager();
-
-      if (!promptLibraryManager) return;
-
+    async event => {
+      const requestId = event.data.requestId ?? `library_select_${Date.now()}`;
+      const isCurrent = lifetime.claimRoute(`library:${requestId}`);
+      modal.setLibrarySelectRequest({ requestId, prompts: [], selectedIndex: 0, loadState: { kind: 'loading' } });
+      const manager = ServiceRegistry.getInstance().getPromptLibraryManager();
       try {
-        const prompts = await promptLibraryManager.getPrompts();
-        if (!isCurrent()) return;
-
-        modal.setLibrarySelectRequest({
-          requestId: `library_select_${Date.now()}`,
-          prompts,
-          selectedIndex: 0,
-        });
+        if (!manager) throw new Error('Prompt storage is unavailable.');
+        const prompts = await manager.getPrompts();
+        if (isCurrent()) modal.setLibrarySelectRequest({ requestId, prompts, selectedIndex: 0 });
       } catch (error) {
-        if (!isCurrent()) return;
-        logger.error('Failed to fetch prompts:', error);
+        if (isCurrent())
+          modal.setLibrarySelectRequest({
+            requestId,
+            prompts: [],
+            selectedIndex: 0,
+            loadState: { kind: 'error', message: error instanceof Error ? error.message : String(error) },
+          });
       }
     },
     lifetime

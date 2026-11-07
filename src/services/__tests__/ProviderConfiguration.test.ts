@@ -7,7 +7,7 @@ import { ServiceRegistry } from '../ServiceRegistry.js';
 import { CompletionProvider } from '../CompletionProvider.js';
 import { ConfigCommand } from '../../agent/commands/ConfigCommand.js';
 import { DEFAULT_CONFIG, CONFIG_TYPES, validateConfigValue } from '../../config/defaults.js';
-import { MODEL_PROVIDERS } from '../../config/providers.js';
+import { MODEL_PROVIDERS, getModelProvider } from '../../config/providers.js';
 import { createModelClient } from '../../llm/createModelClient.js';
 import { validateModel, validateModelToolCapability } from '../../utils/agentValidationUtils.js';
 import { SetupWizard } from '../SetupWizard.js';
@@ -45,10 +45,9 @@ describe('provider configuration across user entry points', () => {
 
   it('offers registered providers, with matching validation and setup defaults', async () => {
     expect((await complete('/config set provider=')).map(c => c.value)).toEqual(MODEL_PROVIDERS.map(p => p.value));
-    const wizard = new SetupWizard(manager);
     for (const provider of MODEL_PROVIDERS) {
       expect(validateConfigValue('provider', provider.value)).toMatchObject({ valid: true });
-      expect(wizard.getDefaultEndpoint(provider.value)).toBe(provider.endpoint);
+      expect(getModelProvider(provider.value).endpoint).toBe(provider.endpoint);
     }
     expect(await complete('/config set provider=rap')).toEqual([
       expect.objectContaining({ insertText: 'provider=rapid-mlx' }),
@@ -117,8 +116,7 @@ describe('provider configuration across user entry points', () => {
 
   it('preserves explicit endpoints and does not leak API keys in display or completions', async () => {
     await manager.setValues({ endpoint: 'http://127.0.0.1:9999', api_key: 'private-key' });
-    const shown = await command.execute([], [], registry);
-    expect(shown.response).toContain('provider');
+    const shown = await command.execute(['show', 'api_key'], [], registry);
     expect(shown.response).toContain('api_key');
     expect(shown.response).not.toContain('private-key');
     expect(JSON.stringify(await complete('/config set api'))).not.toContain('private-key');
@@ -141,7 +139,7 @@ describe('provider configuration across user entry points', () => {
     await wizard.applySetupConfig({
       ...manager.getConfig(),
       provider: 'rapid-mlx',
-      endpoint: wizard.getDefaultEndpoint('rapid-mlx'),
+      endpoint: getModelProvider('rapid-mlx').endpoint,
       model: 'test-model',
       temperature: 0.7,
       top_p: 0.9,

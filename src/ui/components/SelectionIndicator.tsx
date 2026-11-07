@@ -6,7 +6,7 @@
  *
  * Purpose:
  * - Provides consistent visual indicator for selected vs unselected items
- * - Uses yellow chevron and bold text for selected items
+ * - Uses the profile-colored chevron and bold text for selected items
  * - Maintains proper spacing for unselected items to preserve alignment
  *
  * Usage:
@@ -33,7 +33,7 @@ export interface SelectionIndicatorProps {
  * SelectionIndicator Component
  *
  * Displays a visual indicator for selected items in lists and menus.
- * Selected items show a yellow chevron prefix and bold text.
+ * Selected items show the profile-colored chevron prefix and bold text.
  * Unselected items show spacing to maintain alignment.
  */
 const SelectionIndicatorComponent: React.FC<SelectionIndicatorProps> = ({

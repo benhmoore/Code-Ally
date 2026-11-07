@@ -4,32 +4,12 @@
  * Common UI patterns and utilities for consistent rendering across components.
  */
 
-import { TEXT_LIMITS, isAgentDelegationTool } from '@config/constants.js';
+import { isAgentDelegationTool } from '@config/constants.js';
 import { UI_SYMBOLS } from '@config/uiSymbols.js';
 
-/**
- * Creates a horizontal divider line for visual separation
- *
- * The divider respects minimum width and padding constraints to ensure
- * consistent appearance across different terminal sizes.
- *
- * @param terminalWidth - Current terminal width in columns
- * @returns A string of repeated horizontal line characters
- *
- * @example
- * ```typescript
- * const divider = createDivider(80);
- * // Returns: '────────────────────────────────────────────────────────'
- * ```
- */
-export function createDivider(terminalWidth: number): string {
-  // Calculate effective width by subtracting padding and ensuring minimum
-  const effectiveWidth = Math.max(
-    TEXT_LIMITS.DIVIDER_MIN_WIDTH,
-    terminalWidth - TEXT_LIMITS.DIVIDER_PADDING
-  );
-
-  return UI_SYMBOLS.BORDER.HORIZONTAL.repeat(effectiveWidth);
+/** Fill the caller's available content width; padding belongs to the layout. */
+export function createDivider(availableWidth: number): string {
+  return UI_SYMBOLS.BORDER.HORIZONTAL.repeat(Math.max(1, Math.floor(availableWidth)));
 }
 
 /**

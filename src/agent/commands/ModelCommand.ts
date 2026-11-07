@@ -8,7 +8,7 @@
  */
 
 import { Command } from './Command.js';
-import type { Config, Message } from '@shared/index.js';
+import type { Message } from '@shared/index.js';
 import { ActivityEventType } from '@shared/index.js';
 import type { ServiceRegistry } from '@services/ServiceRegistry.js';
 import type { CommandResult } from '../CommandHandler.js';
@@ -16,8 +16,8 @@ import { formatError } from '@utils/errorUtils.js';
 import { BYTE_CONVERSIONS, FORMATTING } from '@config/constants.js';
 import { CommandRegistry } from './CommandRegistry.js';
 import type { CommandMetadata } from './types.js';
-import { listProviderModels, probeModelCapabilities } from '@llm/ProviderAdapter.js';
-import { applyRuntimeConfigUpdates } from '@services/RuntimeConfigSync.js';
+import { listProviderModels } from '@llm/ProviderAdapter.js';
+import { createModelConfigCoordinator } from '@services/createModelConfigCoordinator.js';
 
 export class ModelCommand extends Command {
   static readonly metadata: CommandMetadata = {
@@ -25,7 +25,8 @@ export class ModelCommand extends Command {
     description: 'Switch LLM model',
     helpCategory: 'Core',
     subcommands: [
-      { name: '<model>', description: 'Switch to specified model' },
+      { name: '<model>', description: 'Select the main coding model' },
+      { name: 'service', description: 'Choose the background model', args: '[model]' },
     ],
     useYellowOutput: true,
   };
@@ -38,11 +39,7 @@ export class ModelCommand extends Command {
   readonly description = ModelCommand.metadata.description;
   protected readonly useYellowOutput = ModelCommand.metadata.useYellowOutput ?? false;
 
-  async execute(
-    args: string[],
-    _messages: Message[],
-    serviceRegistry: ServiceRegistry
-  ): Promise<CommandResult> {
+  async execute(args: string[], _messages: Message[], serviceRegistry: ServiceRegistry): Promise<CommandResult> {
     const configManager = serviceRegistry.get('config_manager');
 
     if (!configManager) {
@@ -74,46 +71,18 @@ export class ModelCommand extends Command {
 
     // Direct model name provided - set it immediately
     if (modelName) {
-      try {
-        if (modelType === 'ally') {
-          const block = serviceRegistry.get('agent')?.getModelIdentityChangeBlock?.({ model: modelName });
-          if (block) return this.createError(block);
-        }
-        // Get endpoint from config
-        const config = configManager.getConfig();
-        const capabilities = await probeModelCapabilities(config, modelName);
-
-        // For ally model, require tool support
-        if (modelType === 'ally' && capabilities.tools === 'unsupported') {
-          return this.createError(`Model '${modelName}' does not support tools. Ally model requires tool support.`);
-        }
-
-        const configKey = modelType === 'service' ? 'service_model' : 'model';
-        await configManager.setValue(configKey, modelName);
-
-        const updates = { [configKey]: modelName } as Partial<Config>;
-        applyRuntimeConfigUpdates(serviceRegistry, updates);
-
-        // Notify UI of config change
-        const activityStream = serviceRegistry.get('activity_stream');
-        if (activityStream && typeof (activityStream as any).emit === 'function') {
-          (activityStream as any).emit({
-            id: `config_updated_${Date.now()}`,
-            type: ActivityEventType.CONFIG_UPDATED,
-            timestamp: Date.now(),
-            data: updates,
-          });
-        }
-
-        // Enhance response message with capability info
-        const typeName = modelType === 'service' ? 'Service model' : 'Model';
-        const capInfo = capabilities.fromCache ? ' (cached)' : '';
-        const imageNote = capabilities.images === 'unsupported' ? ' (no image support)' : '';
-        const capabilityNote = capabilities.tools === 'unknown' ? ' (capabilities will be verified on first use)' : '';
-        return this.createResponse(`${typeName} changed to: ${modelName}${capInfo}${imageNote}${capabilityNote}`);
-      } catch (error) {
-        return this.createError(`Error changing model: ${formatError(error)}`);
-      }
+      const outcome = await createModelConfigCoordinator(serviceRegistry).switchModel(modelName, modelType);
+      if (outcome.configUpdate)
+        serviceRegistry.get('activity_stream')?.emit({
+          id: `config_updated_${Date.now()}`,
+          type: ActivityEventType.CONFIG_UPDATED,
+          timestamp: Date.now(),
+          data: outcome.configUpdate,
+        });
+      const content = outcome.messages.join('\n');
+      if (outcome.status === 'switched') return this.createResponse(content);
+      if (outcome.status === 'superseded') return this.createResponse('A newer model selection replaced this request.');
+      return this.createError(content || 'Model selection unavailable. Run /config setup.');
     }
 
     // No model name - show interactive selector
@@ -122,33 +91,40 @@ export class ModelCommand extends Command {
       const currentModel = configManager.getValue(configKey);
       const config = configManager.getConfig();
       const discovery = await listProviderModels(config);
+      const directCommand = `/model${modelType === 'service' ? ' service' : ''} <name>`;
       if (discovery.error) {
         return this.createError(
-          `Failed to fetch models from the configured provider (${discovery.error}). Try /model <name> to set directly.`
+          `Failed to fetch models from the configured provider (${discovery.error}). Check /config setup or use ${directCommand} to set the exact identifier.`
         );
       }
 
       if (!discovery.supported) {
-        return this.createResponse('This provider does not support model discovery. Use /model <name> to set the exact model identifier.');
+        return this.createResponse(
+          `This provider does not support model discovery. Use ${directCommand} to set the exact model identifier.`
+        );
       }
-      const models = discovery.models.map(m => ({
-        name: m.name,
-        size: m.size ? this.formatSize(m.size) : undefined,
-        modified: m.modified,
-      }));
+      const models = [...discovery.models]
+        .sort((left, right) => left.name.localeCompare(right.name))
+        .map(m => ({
+          name: m.name,
+          size: m.size ? this.formatSize(m.size) : undefined,
+          modified: m.modified,
+        }));
 
       if (models.length === 0) {
         const providerName = config.provider ?? 'ollama';
-        return this.createResponse(`No models were reported by ${providerName}. Use /model <name> to set one directly.`);
+        return this.createResponse(
+          `No models were reported by ${providerName}. Use ${directCommand} to set one directly.`
+        );
       }
 
       // Emit interactive selection request
       const activityStream = serviceRegistry.get('activity_stream');
-      if (activityStream && typeof (activityStream as any).emit === 'function') {
+      if (activityStream) {
         const requestId = `model_select_${Date.now()}`;
         const typeName = modelType === 'service' ? 'service model' : 'ally model';
 
-        (activityStream as any).emit({
+        activityStream.emit({
           id: requestId,
           type: ActivityEventType.MODEL_SELECT_REQUEST,
           timestamp: Date.now(),

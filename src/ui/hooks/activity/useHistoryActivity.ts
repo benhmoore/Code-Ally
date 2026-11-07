@@ -178,20 +178,25 @@ export function useHistoryActivity({ actions, modal, agent, lifetime }: Activity
 
   useDomainActivityEvent(
     ActivityEventType.SESSION_SELECT_REQUEST,
-    async (event, isCurrent) => {
+    async event => {
       const { requestId } = event.data;
-
-      // Both failure modes (no session manager, listing threw) are deliberately
-      // silent for the user; the coordinator logs them.
+      const isCurrent = lifetime.claimRoute(`session:${requestId}`);
+      modal.setSessionSelectRequest({ requestId, sessions: [], selectedIndex: 0, loadState: { kind: 'loading' } });
       const outcome = await sessionRestoreCoordinator.listSessions();
       if (!isCurrent()) return;
-      if (outcome.status !== 'ok') return;
-
-      modal.setSessionSelectRequest({
-        requestId,
-        sessions: outcome.sessions,
-        selectedIndex: 0,
-      });
+      modal.setSessionSelectRequest(
+        outcome.status === 'ok'
+          ? { requestId, sessions: outcome.sessions, selectedIndex: 0 }
+          : {
+              requestId,
+              sessions: [],
+              selectedIndex: 0,
+              loadState: {
+                kind: 'error',
+                message: outcome.status === 'error' ? outcome.message : 'Session storage is unavailable.',
+              },
+            }
+      );
     },
     lifetime
   );

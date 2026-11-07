@@ -26,6 +26,23 @@ export class ActivityRequestScope {
     this.route = route;
   }
 
+  /** Own the loading route before React commits it, without cancelling our read. */
+  claimRoute(route: string): () => boolean {
+    this.invalidate();
+    this.route = route;
+    const previousRoute = this.readRoute();
+    const generation = this.generation;
+    return () => {
+      const currentRoute = this.readRoute();
+      return (
+        this.mounted &&
+        this.ownsForeground() &&
+        generation === this.generation &&
+        (!currentRoute || currentRoute === route || currentRoute === previousRoute)
+      );
+    };
+  }
+
   capture(): () => boolean {
     const generation = this.generation;
     const route = this.readRoute();

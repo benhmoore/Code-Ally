@@ -597,7 +597,7 @@ export const COMMAND_TIPS = [
   '`/model` to switch AI models',
   'Press `Esc` to interrupt Ally anytime',
   '`/agent list` shows specialized agents',
-  '`/config` to view all settings',
+  '`/config show all` to view all settings',
   '`ally --once "question"` for quick answers',
   '`/help` shows all available commands',
   '`+plugin-name` activates a tagged plugin',
@@ -671,17 +671,6 @@ export const CONTEXT_SIZES = {
   XXLARGE: 262144,
 } as const;
 
-/**
- * Array of all valid context sizes for UI selection
- */
-export const VALID_CONTEXT_SIZES = [
-  CONTEXT_SIZES.SMALL,
-  CONTEXT_SIZES.MEDIUM,
-  CONTEXT_SIZES.LARGE,
-  CONTEXT_SIZES.XLARGE,
-  CONTEXT_SIZES.XXLARGE,
-] as const;
-
 // ===========================================
 // LAYOUT
 // ===========================================
@@ -719,20 +708,11 @@ export const TEXT_LIMITS = {
   /** Maximum session title length (60 chars) */
   SESSION_TITLE_MAX: 60,
 
-  /** Maximum lines in reasoning display */
-  REASONING_MAX_LINES: 2,
-
-  /** Characters per line in reasoning display */
-  REASONING_CHARS_PER_LINE: 80,
-
   /** Description truncation length (50 chars) */
   DESCRIPTION_MAX: 50,
 
   /** Command display length (40 chars) */
   COMMAND_DISPLAY_MAX: 40,
-
-  /** Generic value display length (30 chars) */
-  VALUE_DISPLAY_MAX: 30,
 
   /** Error message display length (60 chars) */
   ERROR_DISPLAY_MAX: 60,
@@ -740,17 +720,11 @@ export const TEXT_LIMITS = {
   /** Message preview length (100 chars) */
   MESSAGE_PREVIEW_MAX: 100,
 
-  /** Line display max length (120 chars) */
-  LINE_DISPLAY_MAX: 120,
-
   /** Content preview length (200 chars) */
   CONTENT_PREVIEW_MAX: 200,
 
   /** Terminal width fallback (80 columns) */
   TERMINAL_WIDTH_FALLBACK: 80,
-
-  /** Terminal width fallback for markdown (120 columns) */
-  TERMINAL_WIDTH_MARKDOWN_FALLBACK: 120,
 
   /** Maximum content width for readability on wide screens (200 columns) */
   MAX_CONTENT_WIDTH: 200,
@@ -758,53 +732,20 @@ export const TEXT_LIMITS = {
   /** Terminal height fallback (24 rows) */
   TERMINAL_HEIGHT_FALLBACK: 24,
 
-  /** Static UI height in rows (4 rows) */
-  STATIC_UI_HEIGHT: 4,
-
-  /** Minimum height per tool (3 rows) */
-  MIN_HEIGHT_PER_TOOL: 3,
-
-  /** Minimum word boundary threshold ratio for smart truncation (60%) */
-  WORD_BOUNDARY_THRESHOLD: 0.6,
-
-  /** Line edit context window size (lines before/after) */
-  LINE_EDIT_CONTEXT_LINES: 4,
-
-  /** Line content display max length (80 chars) */
-  LINE_CONTENT_DISPLAY_MAX: 80,
-
   /** Minimum viable agent response length */
   AGENT_RESPONSE_MIN: 20,
 
   /** Agent result preview length (100 chars) */
   AGENT_RESULT_PREVIEW_MAX: 100,
 
-  /** Edit tool target preview length */
-  EDIT_TARGET_PREVIEW_MAX: 100,
-
-  /** Minimum target length for substring matching */
-  EDIT_TARGET_MIN_LENGTH: 5,
-
   /** Ellipsis character length for truncation calculations */
   ELLIPSIS_LENGTH: 3,
-
-  /** Session search match preview extra context (chars) */
-  SESSION_MATCH_CONTEXT: 50,
-
-  /** Session search snippet window size (chars before/after match) */
-  SESSION_SNIPPET_CONTEXT: 100,
 
   /** Tool parameter value display max length (inline display) */
   TOOL_PARAM_VALUE_MAX: 40,
 
-  /** Tool parameter array truncation display threshold */
-  TOOL_PARAM_ARRAY_DISPLAY: 3,
-
   /** Maximum idle message length (60 chars) */
   IDLE_MESSAGE_MAX: 60,
-
-  /** Model name display length (truncated for status line) */
-  MODEL_NAME_DISPLAY_MAX: 5,
 
   /** Maximum words for question/answer display in tool output */
   QUESTION_ANSWER_MAX_WORDS: 12,
@@ -812,11 +753,6 @@ export const TEXT_LIMITS = {
   /** ISO datetime string length (YYYY-MM-DD HH:MM:SS format) */
   ISO_DATETIME_LENGTH: 19,
 
-  /** Minimum divider width in terminal display */
-  DIVIDER_MIN_WIDTH: 60,
-
-  /** Divider horizontal padding */
-  DIVIDER_PADDING: 4,
 } as const;
 
 // ===========================================
