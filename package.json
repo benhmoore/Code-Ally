@@ -26,6 +26,7 @@
     "test:ui": "vitest --ui",
     "eval:models": "tsx src/evals/modelCompatibility.ts",
     "eval:harness": "tsx src/evals/harnessAblation.ts",
+    "eval:coding": "tsx src/evals/localCoding.ts",
     "lint": "eslint src --max-warnings 0",
     "format": "prettier --write 'src/**/*.{ts,tsx}'",
     "type-check": "tsc --noEmit",

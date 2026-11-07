@@ -51,9 +51,12 @@ export function getActiveProfile(): string {
 // ============================================================================
 
 /**
- * Base directory for all Code Ally data
+ * Base directory for all Code Ally data. ALLY_DATA_DIR overrides it for
+ * isolated headless runs without changing the operating system home directory.
  */
-export const ALLY_HOME = join(homedir(), '.ally');
+export const ALLY_HOME = process.env.ALLY_DATA_DIR
+  ? pathResolve(process.env.ALLY_DATA_DIR)
+  : join(homedir(), '.ally');
 
 /**
  * Command history file path (shared across profiles)

@@ -11,16 +11,17 @@ function truncateMiddle(value: string | undefined, max = TOOL_TEXT_LIMIT): strin
   return `${value.slice(0, half)}\n… ${value.length - half * 2} characters omitted …\n${value.slice(-half)}`;
 }
 
-export function boundVisibleMessages(messages: Message[]): Message[] {
-  const visible = messages
-    .filter(message => message.role !== 'system' && message.role !== 'tool')
-    .map(message => ({ ...message, content: truncateMiddle(
-      message.role === 'user' ? message.metadata?.submittedContent ?? message.content : message.content,
-      1024 * 1024) ?? '' }));
+export function boundVisibleMessages(messages: readonly Message[]): Message[] {
   const result: Message[] = [];
   let bytes = 0;
-  for (let index = visible.length - 1; index >= 0 && result.length < LIVE_MESSAGE_LIMIT; index--) {
-    const message = visible[index]!;
+  // Stop before reading and cloning discarded history. The durable transcript
+  // can grow independently of this fixed-size live projection.
+  for (let index = messages.length - 1; index >= 0 && result.length < LIVE_MESSAGE_LIMIT; index--) {
+    const source = messages[index]!;
+    if (source.role === 'system' || source.role === 'tool') continue;
+    const message = { ...source, content: truncateMiddle(
+      source.role === 'user' ? source.metadata?.submittedContent ?? source.content : source.content,
+      1024 * 1024) ?? '' };
     const size = Buffer.byteLength(JSON.stringify(message));
     if (result.length > 0 && bytes + size > LIVE_MESSAGE_BYTES) break;
     result.push(message);
@@ -31,20 +32,32 @@ export function boundVisibleMessages(messages: Message[]): Message[] {
 
 function compactSettledTool(call: ToolCallState): ToolCallState {
   if (!['success', 'error', 'cancelled'].includes(call.status)) return call;
+  const output = truncateMiddle(call.output);
+  const error = truncateMiddle(call.error);
+  const thinking = truncateMiddle(call.thinking);
+  const content = truncateMiddle(call.result?.content);
+  const resultError = call.result ? truncateMiddle(call.result.error) ?? '' : undefined;
+  const oldContent = call.diffPreview ? truncateMiddle(call.diffPreview.oldContent) ?? '' : undefined;
+  const newContent = call.diffPreview ? truncateMiddle(call.diffPreview.newContent) ?? '' : undefined;
+  // Settled rows should retain identity while an unrelated tool streams. This
+  // keeps memoized history from rendering again on every live update.
+  if (output === call.output && error === call.error && thinking === call.thinking
+    && content === call.result?.content && resultError === call.result?.error
+    && oldContent === call.diffPreview?.oldContent && newContent === call.diffPreview?.newContent) return call;
   return {
     ...call,
-    output: truncateMiddle(call.output),
-    error: truncateMiddle(call.error),
-    thinking: truncateMiddle(call.thinking),
+    output,
+    error,
+    thinking,
     result: call.result ? {
       ...call.result,
-      content: truncateMiddle(call.result.content),
-      error: truncateMiddle(call.result.error) ?? '',
+      content,
+      error: resultError!,
     } : undefined,
     diffPreview: call.diffPreview ? {
       ...call.diffPreview,
-      oldContent: truncateMiddle(call.diffPreview.oldContent) ?? '',
-      newContent: truncateMiddle(call.diffPreview.newContent) ?? '',
+      oldContent: oldContent!,
+      newContent: newContent!,
     } : undefined,
   };
 }

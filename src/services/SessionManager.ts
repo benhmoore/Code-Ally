@@ -1047,9 +1047,8 @@ export class SessionManager implements IService {
    *
    * Keeps only the most recently modified sessions up to maxSessions count.
    *
-   * IMPORTANT: This method excludes currentSession from cleanup to prevent deletion
-   * in race conditions (e.g., multiple instances or createSession flow). The exclusion
-   * means we must slice at (maxSessions - 1) to ensure total sessions don't exceed limit.
+   * The current session is protected and consumes one retention slot when present.
+   * Without a current session, all maxSessions slots remain available.
    *
    * Example: maxSessions=3
    *   - Have 5 total sessions: [current, s1, s2, s3, s4]
@@ -1086,18 +1085,17 @@ export class SessionManager implements IService {
       // Sort by modification time (newest first)
       eligibleForCleanup.sort((a, b) => b.mtime - a.mtime);
 
-      // Delete old sessions beyond the limit
-      // Since we excluded currentSession from eligible list, we need to keep maxSessions - 1
-      // to ensure total sessions (including current) don't exceed maxSessions
-      // Example: maxSessions=3, have 5 sessions (1 current + 4 eligible)
-      //   Keep 2 eligible + 1 current = 3 total
-      const toDelete = eligibleForCleanup.slice(this.maxSessions - 1);
-      for (const { path } of toDelete) {
-        try {
-          await fs.unlink(path);
-        } catch (error) {
-          logger.error(`Failed to delete old session ${path}:`, error);
-        }
+      // Reserve a slot only when the active session actually exists on disk.
+      const protectedCount = fileStats.some(file => file.name === this.currentSession) ? 1 : 0;
+      const toDelete = eligibleForCleanup.slice(Math.max(0, this.maxSessions - protectedCount));
+      for (const { name } of toDelete) {
+        // Retention is a normal deletion: drain admitted saves, serialize with
+        // writes, invalidate hydrated cache entries, and remove archive data.
+        await this.flushPendingAutoSave(name);
+        await this.enqueueSessionOperation(name, async () => {
+          // A session may have become active while waiting for its writes.
+          if (name !== this.currentSession) await this.deleteSessionFiles(name);
+        });
       }
     } catch (error) {
       logger.error('Failed to cleanup old sessions:', error);

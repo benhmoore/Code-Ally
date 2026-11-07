@@ -65,6 +65,50 @@ describe('OpenAICompatClient', () => {
     expect(res.content).toBe('hello there');
   });
 
+  it('sends the same structured-output schema in previews and requests', async () => {
+    const messages: Message[] = [{ role: 'user', content: 'Summarize' }];
+    const options = {
+      signal: signal(),
+      responseSchema: {
+        name: 'checkpoint_proposal',
+        schema: { type: 'object', properties: { summary: { type: 'string' } }, required: ['summary'] },
+      },
+    };
+    mockFetch.mockResolvedValueOnce(jsonResponse({ choices: [{ message: { content: '{"summary":"done"}' } }] }));
+
+    await client.send(messages, options);
+    const payload = JSON.parse(mockFetch.mock.calls[0]![1].body);
+    expect(payload.response_format).toEqual({ type: 'json_schema', json_schema: options.responseSchema });
+    expect(client.previewRequest(messages, options).payload).toEqual(payload);
+  });
+
+  it('flushes a final SSE event without a trailing newline', async () => {
+    mockFetch.mockResolvedValueOnce(new Response(new ReadableStream({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode('data: {"choices":[{"delta":{"content":"complete"},"finish_reason":"length"}],"usage":{"prompt_tokens":42}}'));
+        controller.close();
+      },
+    })));
+    const result = await client.send([{ role: 'user', content: 'go' }], { stream: true, signal: signal() });
+    expect(result.content).toBe('complete');
+    expect(result.finishReason).toBe('length');
+    expect(result.usage?.promptTokens).toBe(42);
+  });
+
+  it('stops reading at the SSE completion marker even if the server keeps the connection open', async () => {
+    const cancel = vi.fn();
+    mockFetch.mockResolvedValueOnce(new Response(new ReadableStream({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode('data: {"choices":[{"delta":{"content":"done"}}]}\n\ndata: [DONE]\n\n'));
+      },
+      cancel,
+    })));
+    const result = await client.send([{ role: 'user', content: 'go' }], { stream: true, signal: signal() });
+    expect(result.content).toBe('done');
+    expect(result.partial).toBeUndefined();
+    expect(cancel).toHaveBeenCalledOnce();
+  });
+
   it('preserves a length finish reason on a reasoning-only response', async () => {
     mockFetch.mockResolvedValueOnce(jsonResponse({
       choices: [{

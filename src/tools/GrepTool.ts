@@ -378,7 +378,7 @@ For multi-step investigations with unknown scope, prefer explore() to preserve c
         return this.formatSuccessResponse(responseData);
       };
 
-      const contextSize = registry.get('token_manager')?.getContextSize() ?? CONTEXT_SIZES.SMALL;
+      const contextSize = registry.get('token_manager')?.getContextSize() ?? CONTEXT_SIZES.MEDIUM;
       const budget = this.getOutputTokenAllowance(
         Math.floor(contextSize * TOKEN_MANAGEMENT.READ_CONTEXT_MAX_PERCENT),
         executionContext

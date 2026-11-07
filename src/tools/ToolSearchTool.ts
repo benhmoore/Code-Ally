@@ -45,7 +45,7 @@ export class ToolSearchTool extends BaseTool {
               description: 'Exact names as "select:name1,name2", or keywords to search for.',
             },
             max_results: {
-              type: 'number',
+              type: 'integer',
               description: `Maximum tools to load (default ${DEFAULT_MAX_RESULTS}).`,
             },
           },
@@ -95,7 +95,7 @@ export class ToolSearchTool extends BaseTool {
     // whole point is to reach tools whose schemas were withheld.
     const all: FunctionDefinition[] = toolManager.getFunctionDefinitions(
       undefined,
-      undefined,
+      executionContext?.agentName,
       undefined,
     );
 

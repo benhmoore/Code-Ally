@@ -5,6 +5,10 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { ToolSearchTool } from '@tools/ToolSearchTool.js';
+import { BaseTool } from '@tools/BaseTool.js';
+import type { FunctionDefinition, ToolResult } from '@shared/index.js';
+import type { SendOptions } from '@llm/ModelClient.js';
 import { Agent } from '../Agent.js';
 import { ToolManager } from '@tools/ToolManager.js';
 import { ActivityStream } from '@services/ActivityStream.js';
@@ -75,6 +79,38 @@ describe('root agent requirements across turns', () => {
   });
 
   afterEach(() => vi.restoreAllMocks());
+
+  it('keeps legacy and all/one-of requirement schemas exposed with normalized names', async () => {
+    class RequirementTool extends BaseTool {
+      readonly capabilities = [] as const;
+      readonly description = 'Record a required action.';
+      readonly name: string;
+      constructor(stream: ActivityStream, name: string) { super(stream); this.name = name; }
+      getFunctionDefinition(): FunctionDefinition {
+        return { type: 'function', function: { name: this.name, description: this.description, parameters: { type: 'object', properties: {} } } };
+      }
+      protected async executeImpl(): Promise<ToolResult> { return { success: true }; }
+    }
+    const stream = new ActivityStream();
+    const names = ['legacy-tool', 'web-fetch', 'ls'];
+    let exposed: string[] = [];
+    const clientSend = vi.fn(async (_messages: Message[], options: SendOptions) => {
+      exposed = options.functions?.map(definition => definition.function.name) ?? [];
+      if (clientSend.mock.calls.length === 1) {
+        return { role: 'assistant', content: '', tool_calls: names.map((name, index) => ({ id: `required-${index}`, type: 'function', function: { name, arguments: {} } })) } as LLMResponse;
+      }
+      return textResponse('done');
+    });
+    const requiredAgent = new Agent(
+      { send: clientSend, close: vi.fn(), cancel: vi.fn(), setModelName: vi.fn() } as unknown as ModelClient,
+      new ToolManager([...names.map(name => new RequirementTool(stream, name)), new ToolSearchTool(stream)]),
+      stream,
+      { config, requiredToolCalls: ['legacy-tool'], requirements: { required_tools_all: ['WebFetch'], required_tools_one_of: ['LS'] } },
+    );
+    await requiredAgent.sendMessage('complete the required actions');
+    expect(exposed).toEqual(expect.arrayContaining(names));
+    await requiredAgent.cleanup();
+  });
 
   it('forces the required call again on the second turn', async () => {
     send

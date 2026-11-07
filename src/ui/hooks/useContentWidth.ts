@@ -9,21 +9,9 @@
  * measurement (using the same derivation) if the context is unavailable.
  */
 
-import { useWindowSize } from 'ink';
-import { TEXT_LIMITS } from '@config/constants.js';
-import { deriveWidths, useTerminalContext } from '../contexts/TerminalContext.js';
+import { useTerminalDimensions } from '../contexts/TerminalContext.js';
 
-/**
- * Get the effective content width for rendering.
- *
- * @returns Readable content width in columns (capped at MAX_CONTENT_WIDTH).
- */
+/** Return the shared terminal contentWidth measurement. */
 export function useContentWidth(): number {
-  const { columns } = useWindowSize();
-  try {
-    return useTerminalContext().contentWidth;
-  } catch {
-    // Fallback to direct measurement if used outside the provider.
-    return deriveWidths(columns || TEXT_LIMITS.TERMINAL_WIDTH_FALLBACK).contentWidth;
-  }
+  return useTerminalDimensions().contentWidth;
 }

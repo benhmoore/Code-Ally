@@ -44,14 +44,15 @@ affect local-model behavior: system-prompt variants, lean/synthetic/production
 tool sets, unnecessary calls and delegation, native parallel calls versus the
 legacy batch wrapper, reasoning effort, late system reminders, and
 schema-constrained output. The production-core profile is constructed from the
-same tool factory and visibility rules used by interactive Ally.
+same tool factory, visibility rules, and compact exposure policy used by interactive Ally.
+Optional-tool schema probes explicitly activate their target capability. The `discovery` section instead performs a real two-request tool-search round trip, regenerates the exposed schemas, and scores the requested memory arguments without executing a memory write.
 
 ```bash
 npm run eval:harness -- \
   --models qwen3.8:27b-mlx,muse-glimmer:30b-mlx \
   --runs 3 \
   --temperature 0 \
-  --sections prompt_tooling,behavior,reasoning,late_reminder,structured_output \
+  --sections prompt_tooling,behavior,schema_reliability,discovery,reasoning,late_reminder,structured_output \
   --prompt-variants current_core,concise \
   --output model-eval-results/harness.json
 ```
@@ -125,3 +126,16 @@ background workload fixed. Use this decision order:
 
 Do not treat a shorter prompt as a win by itself. It is only more efficient if
 behavior remains at least as accurate and safe.
+
+## Full coding smoke test
+
+The isolated coding evaluator runs the real `Agent`, provider client, permission layer, and built-in file/shell tools. The model reads a small JavaScript fixture, repairs an inclusive-range bug, and runs `node --test`. A separate process verifies the resulting source against additional trusted cases and checks that the visible test was not changed. The evaluator records tool results and the transcript, bounds execution time, and removes temporary workspaces.
+
+```bash
+npm run eval:coding -- \
+  --model qwen3.8:27b-mlx \
+  --endpoint http://100.68.102.73:11434 \
+  --output model-eval-results/remote-coding.json
+```
+
+App state is isolated using `ALLY_DATA_DIR`, which overrides the default `~/.ally` data root. It is resolved once at process startup and can also be used for independent headless installations. Existing user configuration is not needed for this evaluator. The fixture is a smoke test, not a repository-scale coding benchmark.

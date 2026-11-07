@@ -371,7 +371,7 @@ Only set run_in_background=false when your very next step depends on the result.
 
         const contextSize = serviceRegistry.get('token_manager')?.getContextSize()
           ?? serviceRegistry.get('config_manager')?.getConfig().context_size
-          ?? CONTEXT_SIZES.SMALL;
+          ?? CONTEXT_SIZES.MEDIUM;
         const contextTokenLimit = Math.floor(
           contextSize * TOKEN_MANAGEMENT.CONTEXT_FILE_READ_MAX_PERCENT
         );

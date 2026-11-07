@@ -11,7 +11,7 @@ import { ActivityEventType, FormRequest } from '@shared/index.js';
 import { useActivityEvent } from './useActivityEvent.js';
 import { AppState, AppActions } from '../contexts/AppContext.js';
 import { ModalState } from './useModalState.js';
-import { reconstructInterjectionsFromMessages, reconstructToolCallsFromMessages, loadSessionData } from './useSessionResume.js';
+import { reconstructInterjectionsFromMessages, loadSessionData } from './useSessionResume.js';
 import { Agent } from '@agent/Agent.js';
 import { ActivityStream } from '@services/ActivityStream.js';
 import { ServiceRegistry } from '@services/ServiceRegistry.js';
@@ -167,19 +167,6 @@ export const useActivitySubscriptions = (
     setIsCancelling(true);
     state.activeSubAgents.forEach(agentName => actions.removeSubAgent(agentName));
     modal.clearTransientModals();
-  });
-
-  // Status message events (connection retries, etc.)
-  useActivityEvent(ActivityEventType.STATUS_MESSAGE, (event) => {
-    if (!event.id || !event.timestamp) {
-      return;
-    }
-
-    actions.addStatusMessage({
-      id: event.id,
-      timestamp: event.timestamp,
-      message: event.data?.message || '',
-    });
   });
 
   // Permission request events - enqueue to support concurrent permission prompts
@@ -458,83 +445,6 @@ export const useActivitySubscriptions = (
         content: `Error executing agent: ${error instanceof Error ? error.message : String(error)}`,
       });
     }
-  });
-
-  // Context usage updates
-  useActivityEvent(ActivityEventType.CONTEXT_USAGE_UPDATE, (event) => {
-    const { contextUsage, parentCallId } = event.data;
-    if (typeof contextUsage === 'number') {
-      if (parentCallId) {
-        // Update tool call context usage for specialized agents
-        actions.updateToolCall(parentCallId, { contextUsage });
-      } else {
-        // Update global context usage for main agent
-        actions.setContextUsage(contextUsage);
-      }
-    }
-  });
-
-  // Compaction start
-  useActivityEvent(ActivityEventType.COMPACTION_START, (event) => {
-    const { parentId } = event.data || {};
-    if (parentId) {
-      // Mark the tool call as compacting for delegated agents
-      actions.updateToolCall(parentId, { isCompacting: true });
-    } else {
-      // Show global compacting indicator for main agent
-      actions.setIsCompacting(true);
-    }
-  });
-
-  // Compaction complete (success or error)
-  useActivityEvent(ActivityEventType.COMPACTION_COMPLETE, (event) => {
-    const { oldContextUsage, newContextUsage, threshold, parentId, error, errorMessage, interrupted } = event.data;
-
-    // Terminal non-commit outcomes only clear the in-progress surface. Owner
-    // cancellation (usually a queued interjection) is expected control flow;
-    // the agent immediately rebuilds from the newer conversation.
-    if (error || interrupted) {
-      if (parentId) {
-        actions.updateToolCall(parentId, { isCompacting: false });
-      } else {
-        actions.setIsCompacting(false);
-      }
-      if (error) {
-        // Error will be shown via Agent error handling; just unstick the UI.
-        logger.debug('[useActivitySubscriptions] Compaction error:', errorMessage);
-      }
-      return;
-    }
-
-    // For delegated agent compaction, only add the notice and clear compacting state
-    // Don't touch main agent's conversation or tool calls
-    if (parentId) {
-      actions.updateToolCall(parentId, { isCompacting: false });
-      actions.addCompactionNotice({
-        id: event.id,
-        timestamp: event.timestamp,
-        oldContextUsage,
-        threshold,
-        parentId,
-      });
-      return;
-    }
-
-    // The visible transcript is append-only. Compaction replaces only the
-    // model-facing window, so the UI needs a marker rather than a reset.
-    actions.addCompactionNotice({
-      id: event.id,
-      timestamp: event.timestamp,
-      oldContextUsage,
-      threshold,
-      parentId,
-    });
-
-    if (typeof newContextUsage === 'number') {
-      actions.setContextUsage(newContextUsage);
-    }
-
-    actions.setIsCompacting(false);
   });
 
   // Model select response
@@ -978,30 +888,12 @@ export const useActivitySubscriptions = (
           failedRestorations,
         } = await undoCoordinator.performRewind(selectedIndex, options);
 
-        const serviceRegistry = ServiceRegistry.getInstance();
-
-        // Clear all state
-        actions.clearToolCalls();
         actions.clearRewindNotices();
 
         undoCoordinator.clearTodos();
 
-        // Reset conversation view (this will clear terminal and set new messages)
-        actions.resetConversationView(rewindedMessages);
-
-        // Reconstruct tool calls from message history
-        // This populates activeToolCalls with completed tool calls so they appear in the timeline
-        const reconstructedToolCalls = reconstructToolCallsFromMessages(rewindedMessages, serviceRegistry);
-        reconstructedToolCalls.forEach(toolCall => {
-          try {
-            actions.addToolCall(toolCall);
-          } catch (error) {
-            // Log but don't fail rewind if a tool call can't be added
-            // This could happen if there are duplicate IDs in the session data.
-            // Use logger (not console) — raw stdout writes corrupt the Ink frame.
-            logger.warn(`Failed to add reconstructed tool call ${toolCall.id}:`, error);
-          }
-        });
+        // UndoCoordinator already replaced the owner's transcript and tools.
+        actions.repaintConversationSurface();
 
         reconstructInterjectionsFromMessages(rewindedMessages, activityStream);
 
@@ -1011,9 +903,7 @@ export const useActivitySubscriptions = (
           actions.setContextUsage(contextUsage);
         }
 
-        // CRITICAL: Defer rewind notice addition until after resetConversationView completes
-        // resetConversationView uses setImmediate, so we need to wait for it to finish
-        // Otherwise the notice gets added while terminal is clearing, causing rendering issues
+        // Publish after the surface reset, unless this frontend has unmounted.
         setImmediate(() => {
           // Bail if the component unmounted while the conversation view was clearing.
           if (!isMountedRef.current) return;
@@ -1046,8 +936,6 @@ export const useActivitySubscriptions = (
     const serviceRegistry = ServiceRegistry.getInstance();
 
     // Clear all UI state
-    actions.clearToolCalls();
-    actions.clearCompactionNotices();
     actions.clearRewindNotices();
 
     // Clear todos
@@ -1057,7 +945,7 @@ export const useActivitySubscriptions = (
     }
 
     // Reset conversation view to empty (like initial app load)
-    actions.resetConversationView([]);
+    actions.repaintConversationSurface();
 
     // Reset context usage
     actions.setContextUsage(0);

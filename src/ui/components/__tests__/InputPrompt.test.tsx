@@ -611,7 +611,8 @@ test('completed conversations cannot submit or interrupt a reused agent', async 
     stdin.write('\r');
     await settle();
     stdin.write('\x1b');
-    await settle();
+    // Ink buffers bare Escape for 20ms to distinguish split key sequences.
+    await vi.waitFor(() => expect(onExitAgent).toHaveBeenCalledOnce());
     expect(onSubmit).not.toHaveBeenCalled();
     expect(interrupt).not.toHaveBeenCalled();
     expect(onExitAgent).toHaveBeenCalledOnce();

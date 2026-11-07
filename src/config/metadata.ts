@@ -6,7 +6,7 @@ export const SECRET_CONFIG_KEYS = new Set<keyof Config>(['api_key', 'search_api_
 
 export const CONFIG_SUGGESTIONS: Partial<Record<keyof Config, readonly unknown[]>> = {
   temperature: [null, 0, 0.3, 0.5, 0.7, 1],
-  context_size: [8192, 16384, 32768, 65536, 131072, 262144],
+  context_size: [32768, 65536, 131072, 262144],
   max_tokens: [2000, 4000, 7000, 10000, 16000],
   top_p: [null, 0.9, 0.95, 1],
   top_k: [null, 0, 20, 40],

@@ -302,6 +302,39 @@ describe('ToolValidator', () => {
       },
     };
 
+    it('checks schema types before invoking semantic validators', () => {
+      mockTool.validateArgs = (args) => {
+        (args.string_param as string).trim();
+        return null;
+      };
+      expect(validator.validateArguments(mockTool, typeFunctionDef, { string_param: 123 }).valid).toBe(false);
+    });
+
+    it('enforces additionalProperties at the root of tool arguments', () => {
+      const closed = {
+        ...typeFunctionDef,
+        function: {
+          ...typeFunctionDef.function,
+          parameters: { ...typeFunctionDef.function.parameters, additionalProperties: false },
+        },
+      };
+      expect(validator.validateArguments(mockTool, closed, { string_param: 'x', typo: 'y' }).error)
+        .toContain('typo: property is not allowed');
+    });
+
+    it.each([Infinity, -Infinity, NaN])('rejects non-finite numbers: %s', (number_param) => {
+      expect(validator.validateArguments(mockTool, typeFunctionDef, { string_param: 'x', number_param }).valid).toBe(false);
+    });
+
+    it.each([null, [], 'text', 7])('rejects a non-object argument envelope: %s', (args) => {
+      expect(validator.validateArguments(mockTool, typeFunctionDef, args as unknown as Record<string, unknown>).error)
+        .toContain('arguments must be an object');
+    });
+
+    it('requires own properties rather than accepting inherited arguments', () => {
+      expect(validator.validateArguments(mockTool, typeFunctionDef, Object.create({ string_param: 'x' })).valid).toBe(false);
+    });
+
     it('should reject wrong type for string parameter', () => {
       const result = validator.validateArguments(mockTool, typeFunctionDef, {
         string_param: 123,

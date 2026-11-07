@@ -70,6 +70,60 @@ describe('renderCheckpointForModel', () => {
 });
 
 describe('extractSemanticCheckpoint', () => {
+  it('preserves complete intermediate user directions through repeated extractive generations and fitted views', () => {
+    let state = extractSemanticCheckpoint([{ id: 'start', role: 'user', content: 'Build the service.' }]);
+    const directions = Array.from({ length: 20 }, (_, index) => ({
+      id: `steering-${index}`, role: 'user' as const,
+      content: `Constraint ${index}: ${'detail '.repeat(220)} Preserve exact identifier Api_${index} and trailing acceptance criterion.`,
+    }));
+    for (const direction of directions) {
+      state = extractSemanticCheckpoint([direction, { id: `continue-${direction.id}`, role: 'user', content: 'Continue.' }], state);
+      const durable = structuredClone(state);
+      fitSemanticCheckpointToTokenBudget(state, 1000, text => Math.ceil(text.length / 4));
+      expect(state).toEqual(durable);
+      state = JSON.parse(JSON.stringify(state)); // Session persistence round trip.
+    }
+    for (const direction of directions) {
+      expect(state.userDirections).toContainEqual({ text: direction.content, sourceMessageIds: [direction.id] });
+    }
+    expect(state.userDirections).toHaveLength(41);
+    expect(state.durableFacts.length).toBeLessThan(directions.length);
+    const merged = mergeSemanticCheckpoint(state, emptySemanticCheckpoint());
+    expect(merged.userDirections).toEqual(state.userDirections);
+  });
+
+  it('archives original submitted text and excludes harness-authored user-role messages', () => {
+    const state = extractSemanticCheckpoint([
+      { id: 'user', role: 'user', content: 'Original request.\nHook instructions', metadata: { submittedContent: 'Original request.' } },
+      { id: 'ephemeral', role: 'user', content: 'Retry the response.', metadata: { ephemeral: true } },
+      { id: 'checkpoint', role: 'user', content: 'Prior summary', metadata: { isConversationCheckpoint: true } },
+      { id: 'catalogue', role: 'user', content: 'Tools available', metadata: { deferredToolCatalogue: true } },
+    ]);
+    expect(state.userDirections).toEqual([{ text: 'Original request.', sourceMessageIds: ['user'] }]);
+    expect(state.objective?.text).toBe('Original request.');
+    expect(state.currentRequest?.text).toBe('Original request.');
+  });
+
+  it('reads legacy v1 checkpoints without an archive and retains their exact authoritative requests', () => {
+    const legacy = emptySemanticCheckpoint();
+    delete legacy.userDirections;
+    legacy.objective = { text: 'Original objective', sourceMessageIds: ['old-first'] };
+    legacy.currentRequest = { text: 'Prior steering', sourceMessageIds: ['old-last'] };
+    const state = extractSemanticCheckpoint([{ id: 'new', role: 'user', content: 'Newest steering' }], legacy);
+    expect(state.userDirections?.map(item => item.text)).toEqual(['Original objective', 'Prior steering', 'Newest steering']);
+    expect(legacy.userDirections).toBeUndefined();
+  });
+
+  it('fails explicitly instead of dropping directions at the durable retention bound', () => {
+    const previous = emptySemanticCheckpoint();
+    previous.userDirections = [{ text: 'x'.repeat(1000000), sourceMessageIds: ['prior'] }];
+    expect(() => extractSemanticCheckpoint([{ id: 'new', role: 'user', content: 'Retain this too.' }], previous)).toThrow('Cannot compact without losing user directions');
+    expect(previous.userDirections[0]!.text).toHaveLength(1000000);
+    expect(() => extractSemanticCheckpoint(Array.from({ length: 4097 }, (_, index) => ({
+      id: `u-${index}`, role: 'user' as const, content: 'Keep this direction.',
+    })))).toThrow('4096 messages');
+  });
+
   it('preserves authoritative user requests without dropping trailing requirements', () => {
     const objective = `Build the complete system. ${'scope '.repeat(300)}FINAL_ACCEPTANCE_CRITERION`;
     const currentRequest = `Continue carefully. ${'detail '.repeat(350)}LATEST_REQUIREMENT`;

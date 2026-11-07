@@ -20,10 +20,11 @@ function setup() {
   });
   const cancel = vi.fn();
   const close = vi.fn(async () => { input.close(); await input.whenIdle(); view.close(); });
+  const steer = vi.fn(() => busy);
   const runtime = new SessionRuntime({ view, input, execute, resume, cancel, close,
-    isProcessing: () => busy, steer: () => busy });
+    isProcessing: () => busy, steer });
   cleanup.push(() => { input.close(); runtime.dispose(); view.close(); });
-  return { runtime, execute, input, resume, cancel, close, setBusy: (value: boolean) => { busy = value; } };
+  return { runtime, execute, input, resume, cancel, close, steer, setBusy: (value: boolean) => { busy = value; } };
 }
 
 describe('SessionRuntime', () => {
@@ -56,6 +57,41 @@ describe('SessionRuntime', () => {
     expect(await next).toEqual({ kind: 'completed', value: 'edited' });
     await waiting;
     expect(execute).toHaveBeenCalledExactlyOnceWith('edited', undefined);
+  });
+
+  it('queues image submissions behind active work without steering away their attachments', async () => {
+    const { runtime, setBusy, input, execute, steer } = setup();
+    setBusy(true);
+    const images = ['image-one'];
+    const submission = runtime.submit('describe attachment', { images });
+    images[0] = 'caller mutation';
+    await tick();
+    expect(steer).not.toHaveBeenCalled();
+    expect(execute).not.toHaveBeenCalled();
+    expect(runtime.getSnapshot().pendingInputs).toHaveLength(1);
+    setBusy(false);
+    input.drain();
+    expect(await submission).toEqual({ kind: 'completed', value: 'describe attachment' });
+    expect(execute).toHaveBeenCalledExactlyOnceWith('describe attachment', ['image-one']);
+  });
+
+  it('keeps attachment-free submissions eligible for steering', async () => {
+    const { runtime, setBusy, steer, execute } = setup();
+    setBusy(true);
+    expect(await runtime.submit('direction', { images: [] })).toEqual({ kind: 'steered' });
+    expect(steer).toHaveBeenCalledExactlyOnceWith('direction');
+    expect(execute).not.toHaveBeenCalled();
+  });
+
+  it('does not execute attachment preparation canceled before admission', async () => {
+    const { runtime, execute } = setup();
+    const prepare = vi.fn(async () => 'prepared');
+    const submission = runtime.submit('attachment', { images: ['image-one'], execute: prepare });
+    runtime.cancel();
+    expect(await submission).toEqual({ kind: 'not_sent' });
+    await runtime.whenIdle();
+    expect(prepare).not.toHaveBeenCalled();
+    expect(execute).not.toHaveBeenCalled();
   });
 
   it('cancels queued preparation without changing a neighboring session', async () => {

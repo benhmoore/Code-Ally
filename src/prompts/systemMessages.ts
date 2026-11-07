@@ -29,7 +29,11 @@ const ALLY_IDENTITY = 'You are Ally, a coding assistant. Complete the request wi
 
 // Cache-stable rules shared by every main-agent request. Tool-specific details
 // belong in tool schemas/guidance so this prefix stays short and unambiguous.
-const BEHAVIORAL_DIRECTIVES = `Tool rules:
+const DELEGATION_DIRECTIVES = `- Delegate self-contained work or synthesis, not raw context transport. Ask for compact conclusions, exact symbols or locations, or an independently verifiable change.
+- Never ask a delegate to dump whole files or large tool outputs. Create scratch notes only to preserve durable synthesized conclusions across a long investigation.`;
+
+function behavioralDirectives(allowDelegation: boolean): string {
+  return `Tool rules:
 - Choose the narrowest tool that directly matches the operation.
 - Read a file before editing it.
 - When scope is unknown, search or list first; when the target is known, read only the required ranges.
@@ -37,15 +41,15 @@ const BEHAVIORAL_DIRECTIVES = `Tool rules:
 - After a checkpoint, trust its carried state and query only a specific missing fact needed by the next action.
 - Once evidence supports the next edit or verification, act and use build/test feedback for narrow follow-up.
 - Treat self-authored plans, contracts, and tests as fallible interpretations of the original request. Resolve conflicts against the user's requirements, correcting generated documents and tests together with the implementation. Passing tests alone does not prove the request is satisfied.
-- Delegate self-contained work or synthesis, not raw context transport. Ask for compact conclusions, exact symbols or locations, or an independently verifiable change.
-- Never ask a delegate to dump whole files or large tool outputs. Create scratch notes only to preserve durable synthesized conclusions across a long investigation.
+${allowDelegation ? DELEGATION_DIRECTIVES : '- Complete this assigned task directly with available tools. Return missing dependencies or unresolved work to the parent; do not delegate.'}
 - For different independent operations, emit separate native tool calls in one response.
 - Do not call unrelated tools or describe a tool call instead of making it.`;
+}
 
 // Complete directives for main Ally assistant
 const CORE_DIRECTIVES = `${ALLY_IDENTITY}
 
-${BEHAVIORAL_DIRECTIVES}`;
+${behavioralDirectives(true)}`;
 
 /**
  * Get the cache-stable context for the system prompt (msg[0]).
@@ -413,13 +417,13 @@ export async function getAgentSystemPrompt(options: {
   const promptWithDirectives = `**Primary Identity:**
 ${agentSystemPrompt}
 
-${BEHAVIORAL_DIRECTIVES}`;
+${behavioralDirectives(agentDepth < 1)}`;
 
   // Apply thoroughness-specific adjustments if available
   // Thoroughness adjustments are inserted between base prompt and final execution guidelines
   let thoroughnessSection = '';
   if (thoroughness && agentType) {
-    const thoroughnessGuidelines = getThoroughnessGuidelines(agentType, thoroughness);
+    const thoroughnessGuidelines = getThoroughnessGuidelines(agentType, thoroughness, agentDepth < 1);
     if (thoroughnessGuidelines) {
       thoroughnessSection = `\n\n${thoroughnessGuidelines}`;
     }

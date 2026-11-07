@@ -29,7 +29,7 @@ import { ToolManager } from '../tools/ToolManager.js';
 import { ConversationOperationQueue } from './ConversationOperationQueue.js';
 import { DURABLE_OBJECTIVE_TOOLS, getRuntimeToolExclusions, needsTemporalContext } from '../tools/runtimeToolSelection.js';
 import { ActivityStream } from '../services/ActivityStream.js';
-import { ServiceRegistry } from '../services/ServiceRegistry.js';
+import { ServiceRegistry, type ScopedServiceRegistryProxy } from '../services/ServiceRegistry.js';
 import { ToolOrchestrator } from './ToolOrchestrator.js';
 import { TokenManager } from './TokenManager.js';
 import {
@@ -171,7 +171,7 @@ export interface AgentConfig {
   /** Agent call stack for circular delegation detection (tracks agent names in call chain) */
   agentCallStack?: string[];
   /** Internal: Scoped registry for this agent (shadows global for 'agent' key to prevent race conditions) */
-  _scopedRegistry?: any; // ScopedServiceRegistryProxy - typed as 'any' to avoid circular dependency
+  _scopedRegistry?: ScopedServiceRegistryProxy;
   /** Internal: this root agent is executing an unattended scheduled task. */
   isScheduledRun?: boolean;
   /** Internal: this root agent is executing a single noninteractive request. */
@@ -222,7 +222,7 @@ export class Agent {
   private readonly agentCallStack: string[];
 
   // Scoped registry for this agent (prevents race conditions in parallel execution)
-  private readonly scopedRegistry?: any; // ScopedServiceRegistryProxy
+  private readonly scopedRegistry?: ScopedServiceRegistryProxy;
 
   // Activity monitoring - detects agents stuck generating tokens without tool calls
   private activityMonitor: ActivityMonitor;
@@ -668,7 +668,7 @@ export class Agent {
   /**
    * Get the scoped registry for this agent (used by ToolOrchestrator for tool execution context)
    */
-  getScopedRegistry(): any | undefined {
+  getScopedRegistry(): ScopedServiceRegistryProxy | undefined {
     return this.scopedRegistry;
   }
 
@@ -1023,6 +1023,7 @@ export class Agent {
     // corrupts the shared interruption, context, and lifecycle state. A hook
     // can hold its await open for its whole timeout, so it runs claimed and
     // the finally below releases the claim on its block path too.
+    this.interruptionManager.reset();
     this.turnAdmissionActive = true;
     let finishTurn!: () => void;
     this.turnCompletion = new Promise<void>(resolve => { finishTurn = resolve; });
@@ -1047,7 +1048,7 @@ export class Agent {
       const waitedForOperation = this.conversationOperations.hasWork;
       if (waitedForOperation) await this.conversationOperations.drain();
       if (this.closing) throw new Error('Agent is closing and cannot begin the admitted turn');
-      if (waitedForOperation && this.interruptionManager.getCause()?.kind === 'user_cancel') {
+      if (this.interruptionManager.getCause()?.kind === 'user_cancel') {
         this.invocationState.agentEndEmitted = false;
         return await this.handleInterruption();
       }
@@ -1118,107 +1119,100 @@ export class Agent {
     // This prevents count corruption if parentAgent changes during sendMessage execution
     const parentAgentRef = this.parentAgent;
 
-    // Pause parent agent's activity monitoring before sub-agent execution
-    // This prevents false timeout triggers while the sub-agent is actively working
-    if (parentAgentRef) {
-      parentAgentRef.pauseActivityMonitoring();
-      logger.debug('[AGENT]', this.instanceId,
-        `Pausing parent agent activity monitoring (parent: ${parentAgentRef.instanceId})`);
-    }
-
-    // Start activity monitoring for specialized agents
-    this.startActivityMonitoring();
-
-    // Reset all loop detection (tool cycles and text loops) on new user input
-    this.loopDetector.reset();
-
-    // Reset internal recovery tracking on new user input
-    this.invocationState.recoveryAttempts = 0;
-    this.invocationState.recoverySuccessStreak = 0;
-    this.captureTodoBaseline();
-
-    this.turnController.start();
-
-    // Reset exploratory tool streak on new user input
-    this.toolOrchestrator.resetExploratoryStreak();
-
-    // Reset cleanup queue on new user input
-    this.invocationState.pendingCleanupIds = [];
-
-    // Reset checkpoint counters at turn start
-    // Ensures counters only track within this turn, not across turns
-    // Counters accumulate across all tool calls in this turn (including continuation loops)
-    this.checkpointTracker.reset();
-
-    // Reset turn start time for specialized agents on each new turn
-    if (this.config.isSpecializedAgent && this.turnManager.getMaxDuration() !== undefined) {
-      this.turnManager.resetTurn();
-    }
-
-    // Parse and activate/deactivate plugins from the message
-    const { systemMessage } = this.lifecycleHandler.parsePluginActivations(message);
-    if (systemMessage) {
-      this.conversationManager.addMessage(systemMessage);
-    }
-
-    // Notify lifecycle services about user message
-    this.lifecycleHandler.notifyUserMessageStart();
-
-    // Capture user prompt for this turn
-    // Used for checkpoint reminders to remind agent of current turn's goal
-    // Updated each turn since user messages provide natural cross-turn checkpoints
-    this.checkpointTracker.setInitialPrompt(message);
-
-    // Add user message
-    const userMessage: Message = {
-      role: 'user',
-      content: message,
-      timestamp: Date.now(),
-      images,
-      ...(submittedContent === message ? {} : { metadata: { submittedContent } }),
-    };
-    this.conversationManager.addMessage(userMessage);
-    if (objectiveReminder) this.conversationManager.addMessage(objectiveReminder);
-
-    // If the previous request was interrupted, add a system reminder
-    if (this.interruptionManager.wasRequestInterrupted()) {
-      // PERSIST: false - Ephemeral, one-time navigation signal after interruption
-      const systemReminder = createInterruptionReminder();
-      this.conversationManager.addMessage(systemReminder);
-      logger.debug('[AGENT_INTERRUPTION]', this.instanceId, 'Injected system reminder after interruption');
-
-      // Reset the flag after injecting the reminder
-      this.interruptionManager.clearWasInterrupted();
-    }
-
-    // The initiating user message is a durable run boundary. Commit it before
-    // making an endpoint request so a crash cannot strand an unrecorded prompt.
-    await this.sessionPersistence.commitTurnStart();
-
-    // Surface relevant long-term memory as ephemeral background context (main agent only).
-    // Stripped each turn so it never accumulates; the service applies strict caps.
-    if (!this.config.isSpecializedAgent) {
-      await this.injectRelevantMemory(message);
-    }
-
-    // Emit user message event
-    this.emitEvent({
-      id: this.generateId(),
-      type: ActivityEventType.AGENT_START,
-      timestamp: Date.now(),
-      data: {
-        message,
-        isSpecializedAgent: this.config.isSpecializedAgent || false,
-        instanceId: this.instanceId,
-        agentName: this.config.agentType || 'ally',
-      },
-    });
-
-    // Track whether delegation succeeded for parent activity monitoring
-    // Assume success unless an exception occurs (catches errors/timeouts)
     let delegationSucceeded = true;
-
     try {
+      // Preparation owns the parent pause and idle-model lease too. A failed
+      // turn-start save must unwind them just like a failed model request.
+      // Pause parent agent's activity monitoring before sub-agent execution
+      // This prevents false timeout triggers while the sub-agent is actively working
+      if (parentAgentRef) {
+        parentAgentRef.pauseActivityMonitoring();
+        logger.debug('[AGENT]', this.instanceId,
+          `Pausing parent agent activity monitoring (parent: ${parentAgentRef.instanceId})`);
+      }
+
+      // Start activity monitoring for specialized agents
+      this.startActivityMonitoring();
+
+      // Reset all loop detection (tool cycles and text loops) on new user input
+      this.loopDetector.reset();
+
+      // Reset internal recovery tracking on new user input
+      this.invocationState.recoveryAttempts = 0;
+      this.invocationState.recoverySuccessStreak = 0;
+      this.captureTodoBaseline();
+
+      this.turnController.start();
+
+      // Reset exploratory tool streak on new user input
+      this.toolOrchestrator.resetExploratoryStreak();
+
+      // Reset cleanup queue on new user input
+      this.invocationState.pendingCleanupIds = [];
+
+      // Reset checkpoint counters at turn start
+      // Ensures counters only track within this turn, not across turns
+      // Counters accumulate across all tool calls in this turn (including continuation loops)
+      this.checkpointTracker.reset();
+
+      // Reset turn start time for specialized agents on each new turn
+      if (this.config.isSpecializedAgent && this.turnManager.getMaxDuration() !== undefined) {
+        this.turnManager.resetTurn();
+      }
+
+      // Notify lifecycle services about user message
+      this.lifecycleHandler.notifyUserMessageStart();
+
+      // Capture user prompt for this turn
+      // Used for checkpoint reminders to remind agent of current turn's goal
+      // Updated each turn since user messages provide natural cross-turn checkpoints
+      this.checkpointTracker.setInitialPrompt(message);
+
+      // Add user message
+      const userMessage: Message = {
+        role: 'user',
+        content: message,
+        timestamp: Date.now(),
+        images,
+        ...(submittedContent === message ? {} : { metadata: { submittedContent } }),
+      };
+      this.conversationManager.addMessage(userMessage);
+      if (objectiveReminder) this.conversationManager.addMessage(objectiveReminder);
+
+      // If the previous request was interrupted, add a system reminder
+      if (this.interruptionManager.wasRequestInterrupted()) {
+        // PERSIST: false - Ephemeral, one-time navigation signal after interruption
+        const systemReminder = createInterruptionReminder();
+        this.conversationManager.addMessage(systemReminder);
+        logger.debug('[AGENT_INTERRUPTION]', this.instanceId, 'Injected system reminder after interruption');
+
+        // Reset the flag after injecting the reminder
+        this.interruptionManager.clearWasInterrupted();
+      }
+
+      // The initiating user message is a durable run boundary. Commit it before
+      // making an endpoint request so a crash cannot strand an unrecorded prompt.
+      await this.sessionPersistence.commitTurnStart();
+
+      // Surface relevant long-term memory as ephemeral background context (main agent only).
+      // Stripped each turn so it never accumulates; the service applies strict caps.
+      if (!this.config.isSpecializedAgent) {
+        await this.injectRelevantMemory(message);
+      }
+
+      // Emit user message event
+      this.emitEvent({
+        id: this.generateId(),
+        type: ActivityEventType.AGENT_START,
+        timestamp: Date.now(),
+        data: {
+          message,
+          isSpecializedAgent: this.config.isSpecializedAgent || false,
+          instanceId: this.instanceId,
+          agentName: this.config.agentType || 'ally',
+        },
+      });
+
       // Send to LLM and process response
       const response = await this.getLLMResponse({
         parentCallId,
@@ -1648,9 +1642,14 @@ export class Agent {
       activated: runtimeRegistry.get('tool_activation_registry')?.get(this.instanceId),
       requested: runtimeRegistry.get('tool_activation_registry')?.getRequested(this.instanceId),
       disallowed: runtimeRegistry.get('trust_manager')?.getDisallowedToolPatterns(),
-      // A run with a structured output schema cannot end without that tool, so
-      // its schema stays on the wire however tight the window is.
-      pinned: runtimeRegistry.get('structured_output_sink') ? [STRUCTURED_OUTPUT_TOOL] : undefined,
+      // Completion requirements must remain directly callable, including
+      // legacy requirements and every alternative in a one-of requirement.
+      pinned: [
+        ...this.requiredToolTracker.getRequiredTools(),
+        ...(this.config.requirements?.required_tools_all ?? []),
+        ...(this.config.requirements?.required_tools_one_of ?? []),
+        ...(runtimeRegistry.get('structured_output_sink') ? [STRUCTURED_OUTPUT_TOOL] : []),
+      ],
       estimateTokens: text => this.tokenManager.estimateTokens(text),
     });
     const functions = exposure.exposed;

@@ -11,10 +11,10 @@ describe('runtime tool profiles', () => {
     const definitions = createRuntimeCoreToolDefinitions();
     const profile = describeToolProfile(definitions);
 
-    expect(profile.count).toBe(21);
+    expect(profile.count).toBe(8);
     expect(profile.names).toContain('read');
     expect(profile.names).toContain('tool-search');
-    expect(profile.names).toContain('ask-user-question');
+    expect(profile.names).not.toContain('ask-user-question');
     expect(profile.names).not.toContain('write-agent');
     expect(profile.names).not.toContain('scheduled-tasks');
     expect(profile.names).not.toContain('bash-output');
@@ -23,9 +23,9 @@ describe('runtime tool profiles', () => {
     expect(profile.names).toContain('apply-patch');
     expect(profile.names).not.toContain('agent-ask');
     expect(profile.names).not.toContain('cleanup-call');
-    expect(profile.characters).toBeGreaterThan(12_000);
-    expect(profile.estimatedTokens).toBeGreaterThan(2_500);
-    expect(profile.estimatedTokens).toBeLessThan(4_000);
+    expect(profile.characters).toBeGreaterThan(6_000);
+    expect(profile.estimatedTokens).toBeGreaterThan(1_500);
+    expect(profile.estimatedTokens).toBeLessThan(2_200);
     expect(profile.sha256).toMatch(/^[a-f0-9]{64}$/);
   });
 
@@ -44,8 +44,8 @@ describe('runtime tool profiles', () => {
     const definitions = createRuntimeCoreToolDefinitionsForContext({
       planModeActive: false,
       latestUserText: 'Schedule the test suite daily at 9 AM',
-    });
+    }, undefined, ['scheduled-tasks']);
     expect(definitions.map(item => item.function.name)).toContain('scheduled-tasks');
-    expect(definitions).toHaveLength(22);
+    expect(definitions).toHaveLength(9);
   });
 });

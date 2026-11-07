@@ -1,51 +1,12 @@
-import type { ConversationViewStore } from '@services/ConversationViewStore.js';
-/**
- * AppContext - Global application state management
- *
- * Provides centralized state for messages, configuration, context usage,
- * and active tool calls. This context enables components throughout the
- * tree to access and update global application state.
- */
-
-import React, { createContext, useContext, useState, useCallback, useRef, useEffect, useSyncExternalStore } from 'react';
+/** Application presentation state backed by the conversation owner's projection. */
+import React, { createContext, useContext, useState, useCallback, useSyncExternalStore } from 'react';
 import { useStdout } from 'ink';
-import type { Message, Config, ToolCallState } from '@shared/index.js';
-import { UI_DELAYS } from '@config/constants.js';
-import { generateMessageId } from '@utils/id.js';
-import { isToolCallExpanded } from '../utils/toolVisibility.js';
+import type { Message, Config } from '@shared/index.js';
+import type { ConversationViewStore, ConversationViewSnapshot } from '@services/ConversationViewStore.js';
 
-import { boundVisibleMessages, boundToolCalls } from '@services/conversationBounds.js';
-const NOTICE_LIMIT = 100;
-const STATUS_LIMIT = 50;
+export type CompactionNotice = ConversationViewSnapshot['compactionNotices'][number];
+export type StatusMessage = ConversationViewSnapshot['statusMessages'][number];
 
-function applyToolCallUpdates(
-  calls: ToolCallState[],
-  updates: ReadonlyMap<string, Partial<ToolCallState>>
-): ToolCallState[] {
-  let hasChanges = false;
-  const updated = calls.map((call) => {
-    const update = updates.get(call.id);
-    if (!update) return call;
-    hasChanges = true;
-    return { ...call, ...update };
-  });
-  return hasChanges ? boundToolCalls(updated) : calls;
-}
-
-/**
- * Compaction notice for UI display
- */
-export interface CompactionNotice {
-  id: string;
-  timestamp: number;
-  oldContextUsage: number;
-  threshold: number;
-  parentId?: string;
-}
-
-/**
- * Rewind notice for UI display
- */
 export interface RewindNotice {
   id: string;
   timestamp: number;
@@ -54,185 +15,45 @@ export interface RewindNotice {
   failedRestorations?: string[];
 }
 
-/**
- * Status message for UI display (connection retries, etc.)
- */
-export interface StatusMessage {
-  id: string;
-  timestamp: number;
-  message: string;
-}
-
-/**
- * Global application state
- */
-export interface AppState {
-  generationRate?: number;
-  /** Conversation message history */
-  messages: Message[];
-
-  /** Application configuration */
+export interface AppState extends ConversationViewSnapshot {
   config: Config;
-
-  /** Current context usage percentage (0-100) */
-  contextUsage: number;
-
-  /** Number of active tool calls */
   activeToolCallsCount: number;
-
-  /** Active tool call states */
-  activeToolCalls: ToolCallState[];
-
-  /** Whether the assistant is currently thinking/processing */
-  isThinking: boolean;
-
-  /** Current streaming assistant content (if any) */
-  streamingContent?: string;
-
-  /** Whether the conversation is being compacted */
-  isCompacting: boolean;
-
-  /** Compaction notices to display in conversation */
-  compactionNotices: CompactionNotice[];
-
-  /** Rewind notices to display in conversation */
   rewindNotices: RewindNotice[];
-
-  /** Status messages to display in conversation (connection retries, etc.) */
-  statusMessages: StatusMessage[];
-
-  /** Counter to force Static component remount (for rewind/compaction) */
   staticRemountKey: number;
-
-  /** Current active agent type (e.g., 'ally', 'task', 'explore', 'plan', custom agent name) */
   currentAgent: string;
-
-  /** Active agent model override. Empty means the agent uses config.model. */
   currentAgentModel: string;
-
-  /** Active sub-agents (specialized agents currently running) */
   activeSubAgents: string[];
-
-  /**
-   * Which agent's transcript is currently shown in the conversation view.
-   * 'main' = the primary conversation. Any other value = a background agent
-   * the user has "entered" to view. Child projections are isolated from this
-   * root conversation state and sourced from the child's scoped activity stream.
-   */
   activeAgentId: string;
 }
 
-/**
- * Actions to update application state
- */
 export interface AppActions {
-  /** Add a message to the conversation */
   addMessage: (message: Message) => void;
-
-  /** Update multiple messages at once */
-  setMessages: (messages: Message[]) => void;
-
-  /** Update configuration */
   updateConfig: (config: Partial<Config>) => void;
-
-  /** Update context usage percentage */
   setContextUsage: (percentage: number) => void;
-
-  /** Add an active tool call */
-  addToolCall: (toolCall: ToolCallState) => void;
-
-  /** Update an existing tool call */
-  updateToolCall: (id: string, updates: Partial<ToolCallState>) => void;
-
-  /** Remove a tool call (when completed or cancelled) */
-  removeToolCall: (id: string) => void;
-
-  /** Clear all active tool calls */
-  clearToolCalls: () => void;
-  /** Open a tool call if it is closed, and close it if it is open */
   toggleToolCallExpanded: (id: string) => void;
-  /** Open or close every tool call at once */
   setToolCallsExpanded: (expanded: boolean) => void;
-
-  /** Set thinking state */
-  setIsThinking: (isThinking: boolean) => void;
-
-  /** Set streaming content */
-  setStreamingContent: (content?: string) => void;
-
-  /** Set compacting state */
-  setIsCompacting: (isCompacting: boolean) => void;
-
-  /** Add a compaction notice */
-  addCompactionNotice: (notice: CompactionNotice) => void;
-
-  /** Clear all compaction notices */
-  clearCompactionNotices: () => void;
-
-  /** Add a rewind notice */
   addRewindNotice: (notice: RewindNotice) => void;
-
-  /** Clear all rewind notices */
   clearRewindNotices: () => void;
-
-  /** Add a status message */
-  addStatusMessage: (message: StatusMessage) => void;
-
-  /** Clear all status messages */
-  clearStatusMessages: () => void;
-
-  /** Force Static component to remount (for rewind/compaction) */
   forceStaticRemount: () => void;
-
-  /** Repaint the selected conversation projection without replacing root state. */
+  /** Repaint the owner's current projection without replacing conversation state. */
   repaintConversationSurface: () => void;
-
-  /** Atomically reset conversation view with new messages (for resume/compact/rewind) */
-  resetConversationView: (messages: Message[]) => void;
-
-  /** Atomically restore a historical view with messages and reconstructed tool calls. */
-  resetConversationViewWithTools: (messages: Message[], toolCalls: ToolCallState[]) => void;
-
-  /** Set the current active agent and its model */
   setCurrentAgent: (agent: string, model?: string) => void;
-
-  /** Add an active sub-agent */
   addSubAgent: (agentName: string) => void;
-
-  /** Remove an active sub-agent */
   removeSubAgent: (agentName: string) => void;
-
-  /** Set which agent's transcript is currently shown ('main' or an agent id). */
   setActiveAgentId: (agentId: string) => void;
 }
 
-/**
- * Combined app context value
- */
 export interface AppContextValue {
   state: AppState;
   actions: AppActions;
 }
-
-/**
- * Context for global app state
- */
 export const AppContext = createContext<AppContextValue | null>(null);
 
-/**
- * Props for AppProvider
- */
-const emptySubscribe = () => () => {};
-const emptySnapshot = () => null;
-
 export interface AppProviderProps {
-  conversationStore?: Pick<ConversationViewStore, 'getSnapshot' | 'subscribe' | 'addDisplayMessage'>;
+  conversationStore: Pick<ConversationViewStore,
+    'getSnapshot' | 'subscribe' | 'addDisplayMessage' | 'setContextUsage' | 'toggleToolCallExpanded' | 'setToolCallsExpanded'>;
   initialConfig: Config;
   children: React.ReactNode;
-}
-
-function hasConfigUpdate<K extends keyof Config>(updates: Partial<Config>, key: K): boolean {
-  return Object.prototype.hasOwnProperty.call(updates, key);
 }
 
 export function resolveCurrentAgentModelOverride(
@@ -252,460 +73,67 @@ export function reconcileCurrentAgentModelAfterConfigUpdate(
   previousConfig: Config,
   updates: Partial<Config>
 ): string {
-  return hasConfigUpdate(updates, 'model') && currentAgentModel === previousConfig.model
+  return Object.prototype.hasOwnProperty.call(updates, 'model') && currentAgentModel === previousConfig.model
     ? ''
     : currentAgentModel;
 }
 
-/**
- * Provider component for global app state
- *
- * Manages all application state and provides actions to update it.
- *
- * @example
- * ```tsx
- * <AppProvider initialConfig={config}>
- *   <App />
- * </AppProvider>
- * ```
- */
-export const AppProvider: React.FC<AppProviderProps> = ({
-  initialConfig,
-  conversationStore,
-  children,
-}) => {
+/** Keep UI preferences and navigation local; the session owns conversation state. */
+export const AppProvider: React.FC<AppProviderProps> = ({ initialConfig, conversationStore, children }) => {
   const { write: writeToStdout } = useStdout();
-  const runtimeView = useSyncExternalStore(conversationStore?.subscribe ?? emptySubscribe, conversationStore?.getSnapshot ?? emptySnapshot);
-  // State
-  const [conversationView, setConversationView] = useState<{
-    messages: Message[];
-    activeToolCalls: ToolCallState[];
-  }>({ messages: [], activeToolCalls: [] });
-  const { messages, activeToolCalls } = conversationView;
-  const [config, setConfig] = useState<Config>(initialConfig);
-  const [contextUsage, setContextUsage] = useState<number>(0);
-  const [isThinking, setIsThinking] = useState<boolean>(false);
-  const [streamingContent, setStreamingContent] = useState<string | undefined>(undefined);
-  const [isCompacting, setIsCompacting] = useState<boolean>(false);
-  const [compactionNotices, setCompactionNotices] = useState<CompactionNotice[]>([]);
+  const runtimeView = useSyncExternalStore(conversationStore.subscribe, conversationStore.getSnapshot);
+  const [config, setConfig] = useState(initialConfig);
   const [rewindNotices, setRewindNotices] = useState<RewindNotice[]>([]);
-  const [statusMessages, setStatusMessages] = useState<StatusMessage[]>([]);
-  const [staticRemountKey, setStaticRemountKey] = useState<number>(0);
-  const [currentAgent, setCurrentAgentState] = useState<string>(initialConfig.default_agent || 'ally');
-  // Only set when on a custom agent with its own model; empty = use config.model
-  const [currentAgentModel, setCurrentAgentModel] = useState<string>('');
+  const [staticRemountKey, setStaticRemountKey] = useState(0);
+  const [currentAgent, setCurrentAgentState] = useState(initialConfig.default_agent || 'ally');
+  const [currentAgentModel, setCurrentAgentModel] = useState('');
   const [activeSubAgents, setActiveSubAgents] = useState<string[]>([]);
-  const [activeAgentId, setActiveAgentId] = useState<string>('main');
-
-  // Batching mechanism for tool call updates
-  const pendingUpdatesRef = useRef<Map<string, Partial<ToolCallState>>>(new Map());
-  const updateTimeoutRef = useRef<NodeJS.Timeout | null>(null);
-  const maxBatchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
-
-  // Actions
-  const addMessage = useCallback((message: Message) => {
-    if (conversationStore) {
-      conversationStore.addDisplayMessage(message);
-      return;
-    }
-    // Add ID and timestamp if not present
-    const messageWithMetadata = {
-      ...message,
-      id: message.id || generateMessageId(),
-      timestamp: message.timestamp || Date.now(),
-    };
-
-    setConversationView((prev) => {
-      // Check for duplicate by ID
-      if (prev.messages.some(m => m.id === messageWithMetadata.id)) {
-        return prev;
-      }
-      return {
-        ...prev,
-        messages: boundVisibleMessages([...prev.messages, messageWithMetadata]),
-      };
-    });
-  }, [conversationStore]);
-
-  const setMessagesWithTimestamps = useCallback((newMessages: Message[]) => {
-    // Add IDs and timestamps to messages that don't have them
-    const messagesWithMetadata = newMessages.map((msg, idx) => ({
-      ...msg,
-      id: msg.id || generateMessageId(),
-      timestamp: msg.timestamp || Date.now() + idx, // Add small offset for ordering
-    }));
-
-    // Deduplicate by ID - keep first occurrence of each unique ID
-    const seen = new Set<string>();
-    const deduplicated = messagesWithMetadata.filter(msg => {
-      if (!msg.id || seen.has(msg.id)) {
-        return false;
-      }
-      seen.add(msg.id);
-      return true;
-    });
-
-    setConversationView((prev) => ({
-      ...prev,
-      messages: boundVisibleMessages(deduplicated),
-    }));
-  }, []);
+  const [activeAgentId, setActiveAgentId] = useState('main');
 
   const updateConfig = useCallback((updates: Partial<Config>) => {
-    setCurrentAgentModel((current) =>
-      reconcileCurrentAgentModelAfterConfigUpdate(current, config, updates)
-    );
-    setConfig((prev) => ({ ...prev, ...updates }));
+    setCurrentAgentModel(current => reconcileCurrentAgentModelAfterConfigUpdate(current, config, updates));
+    setConfig(previous => ({ ...previous, ...updates }));
   }, [config]);
-
-  const addToolCall = useCallback((toolCall: ToolCallState) => {
-    // Enforce structure: tool calls MUST have IDs
-    if (!toolCall.id) {
-      throw new Error(`Cannot add tool call without ID. Tool: ${toolCall.toolName}`);
-    }
-
-    setConversationView((prev) => {
-      // Check if tool call already exists by ID (prevent duplicates)
-      const exists = prev.activeToolCalls.some(tc => tc.id === toolCall.id);
-      if (exists) {
-        throw new Error(`Duplicate tool call detected. ID ${toolCall.id} already exists. Tool: ${toolCall.toolName}`);
-      }
-
-      return {
-        ...prev,
-        activeToolCalls: boundToolCalls([...prev.activeToolCalls, toolCall]),
-      };
-    });
-  }, []);
-
-  // Flush pending updates
-  const flushPendingUpdates = useCallback(() => {
-    if (pendingUpdatesRef.current.size === 0) return;
-
-    const updates = new Map(pendingUpdatesRef.current);
-    pendingUpdatesRef.current.clear();
-
-    setConversationView((prev) => {
-      const activeToolCalls = applyToolCallUpdates(prev.activeToolCalls, updates);
-      return activeToolCalls === prev.activeToolCalls ? prev : { ...prev, activeToolCalls };
-    });
-  }, []);
-
-  const updateToolCall = useCallback((id: string, updates: Partial<ToolCallState>) => {
-    // Enforce structure: ID must exist
-    if (!id) {
-      throw new Error(`Cannot update tool call without ID`);
-    }
-
-    // Merge with any pending updates for this ID
-    const existing = pendingUpdatesRef.current.get(id) || {};
-    const mergedUpdates = { ...existing, ...updates };
-
-    // A terminal tool transition is a timeline ordering boundary. Apply it
-    // immediately, together with any buffered chunks for the same call, so a
-    // later assistant message cannot be committed to Ink's append-only Static
-    // output ahead of the completed tool row.
-    if (updates.status && ['success', 'error', 'cancelled'].includes(updates.status)) {
-      pendingUpdatesRef.current.delete(id);
-      const terminalUpdates = new Map([[id, mergedUpdates]]);
-      setConversationView((prev) => {
-        const activeToolCalls = applyToolCallUpdates(prev.activeToolCalls, terminalUpdates);
-        return activeToolCalls === prev.activeToolCalls ? prev : { ...prev, activeToolCalls };
-      });
-      return;
-    }
-
-    pendingUpdatesRef.current.set(id, mergedUpdates);
-
-    // Set max batch timeout on first update (prevents indefinite batching under load)
-    if (!maxBatchTimeoutRef.current) {
-      maxBatchTimeoutRef.current = setTimeout(() => {
-        flushPendingUpdates();
-        maxBatchTimeoutRef.current = null;
-        if (updateTimeoutRef.current) {
-          clearTimeout(updateTimeoutRef.current);
-          updateTimeoutRef.current = null;
-        }
-      }, UI_DELAYS.STREAMING_CONTENT_BATCH_FLUSH); // Max 100ms wait
-    }
-
-    // Reset debounce timer on each update
-    if (updateTimeoutRef.current) {
-      clearTimeout(updateTimeoutRef.current);
-    }
-    updateTimeoutRef.current = setTimeout(() => {
-      flushPendingUpdates();
-      updateTimeoutRef.current = null;
-      if (maxBatchTimeoutRef.current) {
-        clearTimeout(maxBatchTimeoutRef.current);
-        maxBatchTimeoutRef.current = null;
-      }
-    }, UI_DELAYS.TOOL_CALL_BATCH_FLUSH);
-  }, [flushPendingUpdates]);
-
-  // Cleanup timeouts on unmount
-  useEffect(() => {
-    return () => {
-      if (updateTimeoutRef.current) {
-        clearTimeout(updateTimeoutRef.current);
-      }
-      if (maxBatchTimeoutRef.current) {
-        clearTimeout(maxBatchTimeoutRef.current);
-      }
-      flushPendingUpdates();
-    };
-  }, [flushPendingUpdates]);
-
-  const removeToolCall = useCallback((id: string) => {
-    setConversationView((prev) => ({
-      ...prev,
-      activeToolCalls: prev.activeToolCalls.filter((call) => call.id !== id),
-    }));
-  }, []);
-
-  const clearToolCalls = useCallback(() => {
-    setConversationView((prev) => (
-      prev.activeToolCalls.length > 0 ? { ...prev, activeToolCalls: [] } : prev
-    ));
-  }, []);
-
-  // Presentation changes apply at once: they answer a keypress or a click.
-  const toggleToolCallExpanded = useCallback((id: string) => {
-    setConversationView((prev) => {
-      const call = prev.activeToolCalls.find((candidate) => candidate.id === id);
-      if (!call) return prev;
-      const updates = new Map([[id, { expanded: !isToolCallExpanded(call) }]]);
-      return { ...prev, activeToolCalls: applyToolCallUpdates(prev.activeToolCalls, updates) };
-    });
-  }, []);
-
-  const setToolCallsExpanded = useCallback((expanded: boolean) => {
-    setConversationView((prev) => {
-      const updates = new Map(prev.activeToolCalls.map((call) => [call.id, { expanded }]));
-      const activeToolCalls = applyToolCallUpdates(prev.activeToolCalls, updates);
-      return activeToolCalls === prev.activeToolCalls ? prev : { ...prev, activeToolCalls };
-    });
-  }, []);
-
-  const addCompactionNotice = useCallback((notice: CompactionNotice) => {
-    setCompactionNotices((prev) => [...prev, notice].slice(-NOTICE_LIMIT));
-  }, []);
-
-  const clearCompactionNotices = useCallback(() => {
-    setCompactionNotices([]);
-  }, []);
-
   const addRewindNotice = useCallback((notice: RewindNotice) => {
-    setRewindNotices((prev) => [...prev, notice].slice(-NOTICE_LIMIT));
+    setRewindNotices(previous => [...previous, notice].slice(-100));
   }, []);
-
-  const clearRewindNotices = useCallback(() => {
-    setRewindNotices([]);
-  }, []);
-
-  const addStatusMessage = useCallback((message: StatusMessage) => {
-    setStatusMessages((prev) => {
-      const existing = prev.findIndex(item => item.id === message.id);
-      const next = existing >= 0
-        ? prev.map((item, index) => index === existing ? message : item)
-        : [...prev, message];
-      return next.slice(-STATUS_LIMIT);
-    });
-  }, []);
-
-  const clearStatusMessages = useCallback(() => {
-    setStatusMessages([]);
-  }, []);
-
-  const forceStaticRemount = useCallback(() => {
-    setStaticRemountKey((prev) => prev + 1);
-  }, []);
-
+  const clearRewindNotices = useCallback(() => setRewindNotices([]), []);
+  const forceStaticRemount = useCallback(() => setStaticRemountKey(previous => previous + 1), []);
   const repaintConversationSurface = useCallback(() => {
-    // Unlike a transcript reset, the selected projection is already available.
-    // Clear the old projection first, then remount Static so the new projection
-    // is what gets committed to scrollback. Clearing on a deferred callback
-    // would erase the newly committed child transcript.
+    // Clear before remounting Static so the replacement projection is not erased.
     clearTerminalPreservingInk(writeToStdout);
-    setStaticRemountKey((prev) => prev + 1);
+    setStaticRemountKey(previous => previous + 1);
   }, [writeToStdout]);
-
-  const resetConversationView = useCallback((newMessages: Message[]) => {
-    // Add metadata and deduplicate messages
-    const messagesWithMetadata = newMessages.map((msg, idx) => ({
-      ...msg,
-      id: msg.id || generateMessageId(),
-      timestamp: msg.timestamp || Date.now() + idx,
-    }));
-
-    const seen = new Set<string>();
-    const deduplicated = messagesWithMetadata.filter(msg => {
-      if (!msg.id || seen.has(msg.id)) {
-        return false;
-      }
-      seen.add(msg.id);
-      return true;
-    });
-
-    // CRITICAL: Clear messages and remount key FIRST, then clear terminal, then set new messages
-    // This ensures the old Static component unmounts cleanly before terminal clear
-    setConversationView((prev) => ({ ...prev, messages: [] }));
-    setStaticRemountKey((prev) => prev + 1);
-
-    // Use setImmediate to ensure React has processed the empty state before we clear and set new content
-    setImmediate(() => {
-      // Clear terminal AFTER old Static has unmounted
-      // \x1B[2J = Clear entire screen
-      // \x1B[3J = Clear scrollback buffer
-      // \x1B[H = Move cursor to home (0,0)
-      clearTerminalPreservingInk(writeToStdout);
-
-      // Now set the new messages
-      setConversationView((prev) => ({
-        ...prev,
-        messages: boundVisibleMessages(deduplicated),
-      }));
-    });
-  }, [writeToStdout]);
-
-  /**
-   * Atomically reset the conversation view to a full transcript — messages AND
-   * their (already-reconstructed) completed tool calls — together. Used when
-   * entering/exiting an agent so the chronologically-sorted timeline rebuilds in
-   * a SINGLE post-clear commit. Setting tool calls separately from messages
-   * would let the append-only <Static> accumulator advance past them and skip
-   * the leading messages (e.g. an agent's initial prompt).
-   */
-  const resetConversationViewWithTools = useCallback((newMessages: Message[], toolCalls: ToolCallState[]) => {
-    const messagesWithMetadata = newMessages.map((msg, idx) => ({
-      ...msg,
-      id: msg.id || generateMessageId(),
-      timestamp: msg.timestamp || Date.now() + idx,
-    }));
-    const seen = new Set<string>();
-    const deduplicated = messagesWithMetadata.filter(msg => {
-      if (!msg.id || seen.has(msg.id)) return false;
-      seen.add(msg.id);
-      return true;
-    });
-
-    // Clear + remount FIRST, then (after the old Static unmounts) clear the
-    // terminal and set messages + tool calls in ONE commit so the rebuilt
-    // timeline is complete and correctly ordered.
-    setConversationView({ messages: [], activeToolCalls: [] });
-    setStaticRemountKey((prev) => prev + 1);
-    setImmediate(() => {
-      clearTerminalPreservingInk(writeToStdout);
-      setConversationView({
-        messages: boundVisibleMessages(deduplicated),
-        activeToolCalls: boundToolCalls(toolCalls),
-      });
-    });
-  }, [writeToStdout]);
-
   const setCurrentAgent = useCallback((agent: string, model?: string) => {
     setCurrentAgentState(agent);
     setCurrentAgentModel(resolveCurrentAgentModelOverride(model, config.model));
   }, [config.model]);
-
-  const addSubAgent = useCallback((agentName: string) => {
-    setActiveSubAgents((prev) => {
-      // Avoid duplicates
-      if (prev.includes(agentName)) {
-        return prev;
-      }
-      return [...prev, agentName];
-    });
+  const addSubAgent = useCallback((name: string) => {
+    setActiveSubAgents(previous => previous.includes(name) ? previous : [...previous, name]);
+  }, []);
+  const removeSubAgent = useCallback((name: string) => {
+    setActiveSubAgents(previous => previous.filter(candidate => candidate !== name));
   }, []);
 
-  const removeSubAgent = useCallback((agentName: string) => {
-    setActiveSubAgents((prev) => prev.filter((name) => name !== agentName));
-  }, []);
-
-  // Memoize state object to prevent unnecessary context updates
-  const state = React.useMemo(() => ({
-    messages,
-    config,
-    contextUsage,
-    activeToolCallsCount: (runtimeView?.activeToolCalls ?? activeToolCalls).length,
-    activeToolCalls,
-    isThinking,
-    streamingContent,
-    isCompacting,
-    compactionNotices,
-    rewindNotices,
-    statusMessages,
-    staticRemountKey,
-    currentAgent,
-    currentAgentModel,
-    activeSubAgents,
-    activeAgentId,
-    ...runtimeView,
-  }), [runtimeView, messages, config, contextUsage, activeToolCalls, isThinking, streamingContent, isCompacting, compactionNotices, rewindNotices, statusMessages, staticRemountKey, currentAgent, currentAgentModel, activeSubAgents, activeAgentId]);
-
-  // Memoize actions object to prevent unnecessary context updates
-  const actions = React.useMemo(() => ({
-    addMessage,
-    setMessages: setMessagesWithTimestamps,
-    updateConfig,
-    setContextUsage,
-    addToolCall,
-    updateToolCall,
-    removeToolCall,
-    clearToolCalls,
-    toggleToolCallExpanded,
-    setToolCallsExpanded,
-    setIsThinking,
-    setStreamingContent,
-    setIsCompacting,
-    addCompactionNotice,
-    clearCompactionNotices,
-    addRewindNotice,
-    clearRewindNotices,
-    addStatusMessage,
-    clearStatusMessages,
-    forceStaticRemount,
-    repaintConversationSurface,
-    resetConversationView,
-    resetConversationViewWithTools,
-    setCurrentAgent,
-    addSubAgent,
-    removeSubAgent,
-    setActiveAgentId,
-  }), [addMessage, setMessagesWithTimestamps, updateConfig, setContextUsage, addToolCall, updateToolCall, removeToolCall, clearToolCalls, toggleToolCallExpanded, setToolCallsExpanded, setIsThinking, setStreamingContent, setIsCompacting, addCompactionNotice, clearCompactionNotices, addRewindNotice, clearRewindNotices, addStatusMessage, clearStatusMessages, forceStaticRemount, repaintConversationSurface, resetConversationView, resetConversationViewWithTools, setCurrentAgent, addSubAgent, removeSubAgent, setActiveAgentId]);
-
-  // Memoize context value to prevent unnecessary re-renders of consumers
-  const value: AppContextValue = React.useMemo(() => ({
-    state,
-    actions,
-  }), [state, actions]);
-
+  const state: AppState = React.useMemo(() => ({
+    ...runtimeView, config, activeToolCallsCount: runtimeView.activeToolCalls.length,
+    rewindNotices, staticRemountKey, currentAgent, currentAgentModel, activeSubAgents, activeAgentId,
+  }), [runtimeView, config, rewindNotices, staticRemountKey, currentAgent, currentAgentModel, activeSubAgents, activeAgentId]);
+  const actions: AppActions = React.useMemo(() => ({
+    addMessage: conversationStore.addDisplayMessage,
+    setContextUsage: conversationStore.setContextUsage,
+    toggleToolCallExpanded: conversationStore.toggleToolCallExpanded,
+    setToolCallsExpanded: conversationStore.setToolCallsExpanded,
+    updateConfig, addRewindNotice, clearRewindNotices, forceStaticRemount,
+    repaintConversationSurface, setCurrentAgent, addSubAgent, removeSubAgent, setActiveAgentId,
+  }), [conversationStore, updateConfig, addRewindNotice, clearRewindNotices, forceStaticRemount,
+    repaintConversationSurface, setCurrentAgent, addSubAgent, removeSubAgent]);
+  const value = React.useMemo(() => ({ state, actions }), [state, actions]);
   return <AppContext.Provider value={value}>{children}</AppContext.Provider>;
 };
 
-/**
- * Hook to access app state and actions
- *
- * @throws Error if used outside AppProvider
- * @returns App state and actions
- *
- * @example
- * ```tsx
- * const { state, actions } = useAppContext();
- *
- * // Access state
- * console.log('Messages:', state.messages);
- * console.log('Context usage:', state.contextUsage);
- *
- * // Update state
- * actions.addMessage({ role: 'user', content: 'Hello!' });
- * actions.setContextUsage(75);
- * ```
- */
-export const useAppContext = (): AppContextValue => {
+export function useAppContext(): AppContextValue {
   const context = useContext(AppContext);
-  if (!context) {
-    throw new Error('useAppContext must be used within AppProvider');
-  }
+  if (!context) throw new Error('useAppContext must be used within AppProvider');
   return context;
-};
+}

@@ -1,122 +1,65 @@
-/**
- * AgentLifecycleHandler - Handles peripheral lifecycle events for Agent
- *
- * Extracts cross-cutting concerns from Agent.ts:
- * - Idle coordinator notifications
- * - Auto tool cleanup processing
- * - Post-response housekeeping
- */
-
+/** Owns idle-model admission and post-response cleanup for one agent turn. */
 import { ServiceRegistry } from '../services/ServiceRegistry.js';
+import type { IdleTaskCoordinator } from '../services/IdleTaskCoordinator.js';
 import { logger } from '../services/Logger.js';
 import type { Message } from '../types/index.js';
 
-export interface PluginActivationResult {
-  systemMessage?: Message;
-}
-
 export class AgentLifecycleHandler {
-  private instanceId: string;
+  private coordinator?: IdleTaskCoordinator;
+  private completedMessages?: readonly Message[];
 
-  constructor(instanceId: string) {
-    this.instanceId = instanceId;
-  }
+  constructor(private readonly instanceId: string) {}
 
-  /**
-   * Parse and activate plugins from user message (deprecated - marketplace system handles this now)
-   */
-  parsePluginActivations(_message: string): PluginActivationResult {
-    return {};
-  }
-
-  /**
-   * Notify services that a user message was received
-   */
   notifyUserMessageStart(): void {
-    const registry = ServiceRegistry.getInstance();
-    const coordinator = registry.get('idle_task_coordinator');
-    if (coordinator) {
-      (coordinator as any).notifyUserMessage();
-      (coordinator as any).setOllamaActive(true);
-      logger.debug('[AGENT_IDLE_COORD]', this.instanceId, 'Notified idle coordinator: user message, Ollama active');
-    }
+    if (this.coordinator) return;
+    const coordinator = ServiceRegistry.getInstance().get('idle_task_coordinator');
+    if (!coordinator) return;
+    this.coordinator = coordinator;
+    coordinator.cancel();
+    coordinator.notifyUserMessage();
+    coordinator.setOllamaActive(true);
   }
 
-  /**
-   * Handle post-response lifecycle tasks
-   */
   async handlePostResponse(
     messages: readonly Message[],
-    queueCleanup: (ids: string[]) => void
+    queueCleanup: (ids: string[]) => void,
   ): Promise<void> {
+    // Finalization can re-enter generation on steering. Keep the model lease
+    // until the whole admitted turn settles, including its final hooks.
+    this.completedMessages = messages;
     const registry = ServiceRegistry.getInstance();
-    const coordinator = registry.get('idle_task_coordinator');
-
-    // Notify idle coordinator that Ollama is idle
-    if (coordinator) {
-      (coordinator as any).setOllamaActive(false);
-      logger.debug('[AGENT_IDLE_COORD]', this.instanceId, 'Ollama inactive, checking for idle tasks');
-
-      // Trigger idle tasks with context
-      const projectContextDetector = registry.get('project_context_detector');
-      const sessionManager = registry.get('session_manager');
-      const currentSession = sessionManager ? (sessionManager as any).getCurrentSession() : null;
-      const sessionTitle = currentSession?.title;
-      const hasMeaningfulTitle = sessionTitle && !sessionTitle.startsWith('session_');
-
-      (coordinator as any).checkAndRunIdleTasks(messages, {
-        os: process.platform,
-        sessionTitle: hasMeaningfulTitle ? sessionTitle : undefined,
-        cwd: process.cwd(),
-        projectContext: projectContextDetector ? (projectContextDetector as any).getCached() : undefined
-      }).catch((error: Error) => {
-        logger.debug('[AGENT_IDLE_COORD] Error checking idle tasks:', error);
-      });
-    }
-
-    // Process queued tool cleanups from idle analysis
-    await this.processQueuedCleanups(queueCleanup);
-  }
-
-  /**
-   * Process any queued tool cleanups from idle analysis
-   */
-  private async processQueuedCleanups(queueCleanup: (ids: string[]) => void): Promise<void> {
-    const registry = ServiceRegistry.getInstance();
-    const autoToolCleanup = registry.get('auto_tool_cleanup');
-    if (!autoToolCleanup) return;
-
+    if (!registry.get('auto_tool_cleanup')) return;
+    const sessionManager = registry.get('session_manager');
+    const sessionName = sessionManager?.getCurrentSession();
+    if (!sessionManager || !sessionName) return;
     try {
-      const sessionManager = registry.get('session_manager');
-      const currentSession = sessionManager ? (sessionManager as any).getCurrentSession() : null;
-      if (!currentSession) return;
-
-      const session = await (sessionManager as any).loadSession(currentSession);
-      const pendingCleanups = session?.metadata?.pendingToolCleanups;
-
-      if (pendingCleanups && Array.isArray(pendingCleanups) && pendingCleanups.length > 0) {
-        logger.debug('[AGENT]', `Executing ${pendingCleanups.length} queued tool cleanups:`, pendingCleanups.join(', '));
-        queueCleanup(pendingCleanups);
-
-        await (sessionManager as any).updateMetadata(currentSession, {
-          pendingToolCleanups: [],
-        });
-        logger.debug('[AGENT]', 'Queued cleanups cleared from session metadata');
+      const session = await sessionManager.loadSession(sessionName);
+      const pending = session?.metadata?.pendingToolCleanups;
+      if (pending?.length) {
+        queueCleanup(pending);
+        await sessionManager.updateMetadata(sessionName, { pendingToolCleanups: [] });
       }
     } catch (error) {
-      logger.debug('[AGENT]', 'Error checking for pending tool cleanups:', error);
+      logger.debug('[AGENT]', 'Error checking pending tool cleanups:', error);
     }
   }
 
-  /**
-   * Notify services that Ollama is inactive (for cleanup paths)
-   */
+  /** Release exactly the owner acquired at start, even on repeated cleanup. */
   notifyOllamaInactive(): void {
-    const registry = ServiceRegistry.getInstance();
-    const coordinator = registry.get('idle_task_coordinator');
-    if (coordinator) {
-      (coordinator as any).setOllamaActive(false);
-      logger.debug('[AGENT_IDLE_COORD]', this.instanceId, 'Ollama inactive (cleanup)');
-    }
+    const coordinator = this.coordinator;
+    const messages = this.completedMessages;
+    this.coordinator = undefined;
+    this.completedMessages = undefined;
+    if (!coordinator) return;
+    coordinator.setOllamaActive(false);
+    if (!messages) return;
+    const detector = ServiceRegistry.getInstance().get('project_context_detector');
+    void coordinator.checkAndRunIdleTasks([...messages], {
+      os: process.platform,
+      cwd: process.cwd(),
+      projectContext: detector?.getCached() ?? undefined,
+    }).catch(error => {
+      logger.debug('[AGENT_IDLE_COORD]', this.instanceId, 'Error checking idle tasks:', error);
+    });
   }
 }

@@ -11,7 +11,6 @@ import { ActivityStream } from '@services/ActivityStream.js';
 import { ServiceRegistry } from '@services/ServiceRegistry.js';
 import { AppActions } from '../contexts/AppContext.js';
 import { Message } from '@shared/index.js';
-import { reconstructToolCallsFromMessages } from '@services/conversationTools.js';
 export { reconstructToolCallsFromMessages } from '@services/conversationTools.js';
 import { SessionSelectRequest } from './useModalState.js';
 import { setTerminalTitle } from '../../utils/terminal.js';
@@ -125,14 +124,8 @@ export async function loadSessionData(
   // Clean up stale persistent reminders (defensive - removes persistent reminders older than 30 minutes)
   agent.cleanupStaleReminders();
 
-  // Reconstruct tool calls from message history
-  // This populates activeToolCalls with completed tool calls so they appear in the timeline
-  const reconstructedToolCalls = reconstructToolCallsFromMessages(transcriptMessages, serviceRegistry);
-
-  // Restore the complete visible timeline in one state transaction. Enqueuing
-  // one React update per historical tool call scales quadratically and can make
-  // Ink repeatedly lay out a partially-restored conversation.
-  actions.resetConversationViewWithTools(transcriptMessages, reconstructedToolCalls);
+  // Resume already replaced the owner projection, including reconstructed tools.
+  actions.repaintConversationSurface();
 
   // Reconstruct interjection events from message history
   reconstructInterjectionsFromMessages(transcriptMessages, activityStream);

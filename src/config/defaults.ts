@@ -30,7 +30,7 @@ export const DEFAULT_CONFIG: Config = {
   provider: 'ollama', // LLM backend: Ollama, OpenAI-compatible chat, or OpenAI Responses
   endpoint: 'http://localhost:11434', // Ollama API endpoint
   api_key: null, // Bearer token for authenticated endpoints (encrypted at rest)
-  context_size: 16384, // Context window size in tokens
+  context_size: 32768, // Normal minimum target; smaller windows remain available for stress tests
   // Leave temperature unset so the backend can use the model author's tuned
   // default. Users can still configure a numeric override.
   temperature: undefined,
@@ -67,7 +67,7 @@ export const DEFAULT_CONFIG: Config = {
   show_system_prompt_in_chat: false, // Show system prompts when agents are created
   show_full_tool_output: false, // Show full tool output without truncation in UI
   show_tool_parameters_in_chat: false, // Show tool parameter lists in parentheses after tool names
-  enable_idle_messages: true, // Enable auto-generated idle status messages
+  enable_idle_messages: false, // Opt in to model-generated idle status messages; reserve local inference for work
   enable_session_title_generation: true, // Enable auto-generated session titles
   enable_terminal_hyperlinks: true, // Make file names and links clickable in terminals that support OSC 8
   mouse_support: 'dialogs', // off | dialogs | always — when clicks are sent to the app instead of the terminal

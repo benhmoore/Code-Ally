@@ -204,6 +204,39 @@ describe('Agent - Interruption Handling', () => {
     } finally { registry.registerInstance('hook_runner', previous as any); }
   });
 
+  it('preserves cancellation while a submit hook is pending', async () => {
+    const registry = ServiceRegistry.getInstance();
+    const previous = registry.get('hook_runner');
+    let release!: () => void;
+    registry.registerInstance('hook_runner', {
+      hasHooks: () => true,
+      run: () => new Promise(resolve => {
+        release = () => resolve({ kind: 'continue', additionalContext: [] });
+      }),
+    } as any);
+    try {
+      const turn = agent.sendMessage('Do not start after cancellation');
+      agent.interrupt();
+      release();
+      await turn;
+      expect(mockModelClient.send).not.toHaveBeenCalled();
+      expect(agent.isProcessing()).toBe(false);
+    } finally { registry.registerInstance('hook_runner', previous as any); }
+  });
+
+  it('releases parent monitoring and idle admission when turn-start persistence fails', async () => {
+    const parent = { pauseActivityMonitoring: vi.fn(), resumeActivityMonitoring: vi.fn() };
+    (agent as any).parentAgent = parent;
+    vi.spyOn((agent as any).sessionPersistence, 'commitTurnStart').mockRejectedValue(new Error('disk full'));
+    const inactive = vi.spyOn((agent as any).lifecycleHandler, 'notifyOllamaInactive');
+    await expect(agent.sendMessage('Persist before execution')).rejects.toThrow('disk full');
+    expect(parent.pauseActivityMonitoring).toHaveBeenCalledOnce();
+    expect(parent.resumeActivityMonitoring).toHaveBeenCalledExactlyOnceWith(false);
+    expect(inactive).toHaveBeenCalledOnce();
+    expect(mockModelClient.send).not.toHaveBeenCalled();
+    expect(agent.isProcessing()).toBe(false);
+  });
+
   describe('System Reminder Injection', () => {
     it.each([
       { content: 'The answer.', rejectFirst: false },

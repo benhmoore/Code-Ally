@@ -1,4 +1,4 @@
-import { describe, expect, it, beforeEach, afterEach } from 'vitest';
+import { describe, expect, it, beforeEach, afterEach, vi } from 'vitest';
 import { ToolSearchTool } from '@tools/ToolSearchTool.js';
 import { ActivityStream } from '@services/ActivityStream.js';
 import { ServiceRegistry } from '@services/ServiceRegistry.js';
@@ -52,6 +52,13 @@ describe('ToolSearchTool', () => {
     expect(result.content).not.toContain('"parameters"');
     expect(activations.get('agent-a')).toContain('chrome_take_screenshot');
     expect(activations.getRequested('agent-a')).toEqual(['chrome_take_screenshot']);
+  });
+
+  it('searches definitions with the current agent visibility', async () => {
+    const manager = registry.get('tool_manager')!;
+    const definitions = vi.spyOn(manager, 'getFunctionDefinitions');
+    await tool.execute({ query: 'select:web-fetch' }, 'call-1', undefined, false, false, { agentId: 'agent-a', agentName: 'researcher' });
+    expect(definitions).toHaveBeenCalledWith(undefined, 'researcher', undefined);
   });
 
   it('finds tools by keyword when the exact name is unknown', async () => {

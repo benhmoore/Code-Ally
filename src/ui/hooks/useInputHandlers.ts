@@ -272,9 +272,6 @@ export const useInputHandlers = (
 
       if (signal?.aborted) return;
 
-      // Set thinking state
-      if (route.kind === 'primary') actions.setIsThinking(true);
-
       // Cancel any ongoing background LLM tasks (idle messages, title generation)
       // This must be done BEFORE calling agent.sendMessage() to avoid resource competition
       //
@@ -368,9 +365,6 @@ export const useInputHandlers = (
 
         // Send terminal bell/badge notification
         sendTerminalNotification();
-      } finally {
-        // Clear thinking state
-        if (route.kind === 'primary') actions.setIsThinking(false);
       }
     }
   }, [addDisplayMessage, commandHandler, ensureRouteAvailable, route, actions]);

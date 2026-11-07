@@ -15,6 +15,7 @@ interface ThoroughnessConfig {
   toolCalls: string;
   delegation: string;
   extras?: string[];
+  delegationExtras?: string[];
 }
 
 const EXPLORE_CONFIGS: Record<string, ThoroughnessConfig> = {
@@ -29,28 +30,28 @@ const EXPLORE_CONFIGS: Record<string, ThoroughnessConfig> = {
   },
   medium: {
     label: 'MEDIUM',
-    toolCalls: '3-6 (if not delegating)',
+    toolCalls: '3-6',
     delegation: 'Strongly consider delegation for multi-area explorations',
     extras: [
-      'If exploring 2+ distinct areas, prefer parallel explore() calls',
       'Highlight key files, patterns, and architectural decisions',
     ],
+    delegationExtras: ['If exploring 2+ distinct areas, prefer parallel explore() calls'],
   },
   'very thorough': {
     label: 'VERY THOROUGH',
-    toolCalls: '6-12 (if not delegating)',
+    toolCalls: '6-12',
     delegation: 'DEFAULT to delegation for complex explorations with multiple components',
     extras: [
-      'Use "overview then deep dive" pattern: map the landscape, then delegate details',
       'Cross-reference findings across multiple files',
       'Preserve compact cross-cutting conclusions before earlier evidence is evicted',
     ],
+    delegationExtras: ['Use "overview then deep dive" pattern: map the landscape, then delegate details'],
   },
   uncapped: {
     label: 'UNCAPPED',
     toolCalls: 'as needed',
     delegation: 'PREFER delegation for any multi-part exploration',
-    extras: [
+    delegationExtras: [
       'Consider "divide and conquer" pattern: split by architectural boundaries',
       'Complex codebase explorations should almost always use delegation strategy',
     ],
@@ -93,12 +94,12 @@ const PLAN_CONFIGS: Record<string, ThoroughnessConfig> = {
   },
 };
 
-function buildGuidelines(config: ThoroughnessConfig, agentType: string): string {
+function buildGuidelines(config: ThoroughnessConfig, agentType: string, allowDelegation: boolean): string {
   const lines = [
     `**Thoroughness: ${config.label}**`,
     `- **Tool calls**: Aim for ${config.toolCalls}`,
-    `- **Delegation**: ${config.delegation}`,
   ];
+  if (allowDelegation) lines.push(`- **Delegation**: ${config.delegation}`);
 
   if (agentType === 'plan') {
     lines.push(
@@ -113,19 +114,22 @@ function buildGuidelines(config: ThoroughnessConfig, agentType: string): string 
     }
   }
 
+  if (allowDelegation && config.delegationExtras) {
+    for (const extra of config.delegationExtras) lines.push(`- ${extra}`);
+  }
   return lines.join('\n');
 }
 
 /**
  * Get thoroughness-specific guidelines for an agent type
  */
-export function getThoroughnessGuidelines(agentType: string, thoroughness: string): string | null {
+export function getThoroughnessGuidelines(agentType: string, thoroughness: string, allowDelegation = true): string | null {
   if (agentType === 'explore') {
     const config = EXPLORE_CONFIGS[thoroughness] ?? EXPLORE_CONFIGS['uncapped']!;
-    return buildGuidelines(config!, agentType);
+    return buildGuidelines(config!, agentType, allowDelegation);
   } else if (agentType === 'plan') {
     const config = PLAN_CONFIGS[thoroughness] ?? PLAN_CONFIGS['uncapped']!;
-    return buildGuidelines(config!, agentType);
+    return buildGuidelines(config!, agentType, allowDelegation);
   }
 
   return null;

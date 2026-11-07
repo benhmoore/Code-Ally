@@ -16,6 +16,10 @@ import os from 'node:os';
 import { ActivityStream } from '@services/ActivityStream.js';
 import type { CommandExecutionContext } from '../commands/types.js';
 
+vi.mock('../../llm/ModelValidation.js', () => ({
+  testModelCapabilities: vi.fn(async () => ({ supportsTools: true, supportsImages: true, fromCache: false })),
+}));
+
 class TestCommandHandler extends CommandHandler {
   constructor(agent: any, registry: ServiceRegistry, private readonly context: CommandExecutionContext) {
     super(agent, registry);
@@ -34,6 +38,8 @@ describe('CommandHandler', () => {
   let tempDir: string;
 
   beforeEach(async () => {
+    // Commands use deterministic offline model discovery and never the user's cache.
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('Offline test endpoint')));
     // Create service registry
     serviceRegistry = new ServiceRegistry();
 
@@ -65,6 +71,7 @@ describe('CommandHandler', () => {
   });
 
   afterEach(async () => {
+    vi.unstubAllGlobals();
     await rm(tempDir, { recursive: true, force: true });
   });
 

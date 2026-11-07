@@ -147,7 +147,7 @@ export class ApplyPatchTool extends BaseTool {
           updated_content: prepared.modifiedContent,
           system_reminder: 'Returned source is a snapshot; re-read if the file changed.',
         };
-        const contextSize = registry.get('token_manager')?.getContextSize() ?? CONTEXT_SIZES.SMALL;
+        const contextSize = registry.get('token_manager')?.getContextSize() ?? CONTEXT_SIZES.MEDIUM;
         const allowance = this.getOutputTokenAllowance(
           Math.floor(contextSize * TOKEN_MANAGEMENT.READ_CONTEXT_MAX_PERCENT), executionContext
         );

@@ -9,21 +9,9 @@
  * measurement if the context is unavailable.
  */
 
-import { useWindowSize } from 'ink';
-import { TEXT_LIMITS } from '@config/constants.js';
-import { useTerminalContext } from '../contexts/TerminalContext.js';
+import { useTerminalDimensions } from '../contexts/TerminalContext.js';
 
-/**
- * Get the raw terminal width without any padding adjustment.
- *
- * @returns Raw terminal width in columns.
- */
+/** Return the shared terminal width measurement. */
 export function useTerminalWidth(): number {
-  const { columns } = useWindowSize();
-  try {
-    return useTerminalContext().width;
-  } catch {
-    // Fallback to direct measurement if used outside the provider.
-    return columns || TEXT_LIMITS.TERMINAL_WIDTH_FALLBACK;
-  }
+  return useTerminalDimensions().width;
 }

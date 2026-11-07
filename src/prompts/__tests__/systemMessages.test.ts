@@ -3,6 +3,21 @@ import { getAgentSystemPrompt, getDynamicContextBlock, getMainSystemPrompt } fro
 import { ServiceRegistry } from '../../services/ServiceRegistry.js';
 
 describe('systemMessages', () => {
+  it.each(['quick', 'medium', 'very thorough', 'uncapped'])('keeps leaf exploration guidance executable at %s thoroughness', async (thoroughness) => {
+    const prompt = await getAgentSystemPrompt({
+      agentSystemPrompt: 'Explore the requested code.',
+      taskPrompt: 'Locate the request handler.',
+      agentType: 'explore',
+      thoroughness,
+      agentDepth: 1,
+    });
+    expect(prompt).toContain('do not delegate');
+    expect(prompt).not.toContain('**Delegation**');
+    expect(prompt).not.toContain('explore()');
+    expect(prompt).not.toContain('delegate details');
+    expect(prompt).toContain('**Tool calls**');
+  });
+
   it('keeps interactive and unattended guidance distinct through named options', async () => {
     const interactive = await getMainSystemPrompt();
     const unattended = await getMainSystemPrompt({ isOnceMode: true, reasoningEffort: 'high' });

@@ -1,5 +1,7 @@
 /** Controlled ablations for Code Ally prompt, tool, and reasoning decisions. */
 
+import { DEFAULT_CONFIG } from '../config/defaults.js';
+import { evaluateToolDiscovery } from './toolDiscovery.js';
 import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
@@ -18,7 +20,7 @@ import {
   normalizeProviderToolDefinitions,
 } from './runtimeToolProfiles.js';
 
-const SUITE = { id: 'code-ally-harness-ablation', version: 12 } as const;
+const SUITE = { id: 'code-ally-harness-ablation', version: 13 } as const;
 const FIXTURE_NOW = new Date('2026-08-17T14:08:36.000Z');
 const FIXTURE_TIME_ZONE = 'America/Chicago';
 
@@ -38,7 +40,7 @@ interface Options {
 }
 
 interface EvalRecord {
-  section: 'batch' | 'prompt_tooling' | 'behavior' | 'schema_reliability' | 'reasoning' | 'late_reminder' | 'structured_output';
+  section: 'discovery' | 'batch' | 'prompt_tooling' | 'behavior' | 'schema_reliability' | 'reasoning' | 'late_reminder' | 'structured_output';
   model: string;
   repetition: number;
   variant: string;
@@ -204,12 +206,12 @@ function parseArgs(argv: string[]): Options {
     promptVariants: values.has('--prompt-variants')
       ? values.get('--prompt-variants')!.split(',').map(value => value.trim()).filter(Boolean)
       : undefined,
-    sections: (values.get('--sections') ?? 'batch,prompt_tooling,behavior,schema_reliability,reasoning,late_reminder,structured_output')
+    sections: (values.get('--sections') ?? 'batch,prompt_tooling,behavior,schema_reliability,reasoning,late_reminder,structured_output,discovery')
       .split(',') as EvalRecord['section'][],
   };
   if (options.runs < 1) throw new Error('--runs must be at least 1');
   const validSections = new Set<EvalRecord['section']>([
-    'batch', 'prompt_tooling', 'behavior', 'schema_reliability', 'reasoning', 'late_reminder', 'structured_output',
+    'discovery', 'batch', 'prompt_tooling', 'behavior', 'schema_reliability', 'reasoning', 'late_reminder', 'structured_output',
   ]);
   if (options.sections.some(section => !validSections.has(section))) throw new Error('--sections contains an unknown section');
   return options;
@@ -643,11 +645,15 @@ async function schemaReliabilityCase(
     write_new_file: 'Create a new file src/banner.ts exporting the string "Code Ally" as BANNER.',
     batched_glob: 'Find Dockerfiles and YAML files in one glob call using these patterns: **/Dockerfile*, **/*.yml, **/*.yaml.',
   } as const;
-  const functions = scenario === 'relative_schedule'
+  // Argument-shape probes start after discovery for optional capabilities.
+  // Default profiles still measure the same compact surface as the live agent.
+  const requested = scenario === 'relative_schedule' ? ['scheduled-tasks']
+    : scenario === 'memory_save' ? ['memory'] : [];
+  const functions = requested.length > 0
     ? createRuntimeCoreToolDefinitionsForContext({
       planModeActive: false,
       latestUserText: prompts[scenario],
-    })
+    }, undefined, requested)
     : RUNTIME_CORE_TOOLS;
   const result = await send(client, [
     { role: 'system', content: system },
@@ -1020,7 +1026,8 @@ function expectedCasesPerModelRepetition(
     + Number(sections.includes('schema_reliability')) * (promptVariantCount * SCHEMA_SCENARIOS.length)
     + Number(sections.includes('reasoning')) * 9
     + Number(sections.includes('late_reminder')) * 2
-    + Number(sections.includes('structured_output')) * 4;
+    + Number(sections.includes('structured_output')) * 4
+    + Number(sections.includes('discovery')) * promptVariantCount;
 }
 
 function aggregate(records: EvalRecord[], keys: Array<keyof EvalRecord>): unknown[] {
@@ -1252,6 +1259,22 @@ async function main(): Promise<void> {
             }
           }
         }
+        if (options.sections.includes('discovery')) {
+          for (const [variant, system] of Object.entries(prompts)) {
+            if (!isCompleted(records, { section: 'discovery', model, repetition, variant })) {
+              const started = performance.now();
+              const result = await evaluateToolDiscovery(
+                async (messages, functions) => (await send(client, messages, functions, options)).response,
+                system,
+                { ...DEFAULT_CONFIG, context_size: options.contextSize, max_tokens: options.maxTokens },
+              );
+              await add(Promise.resolve(record({ section: 'discovery', model, repetition, variant, scenario: 'memory_discovery' }, {
+                ...result,
+                elapsedMs: Math.round(performance.now() - started),
+              })));
+            }
+          }
+        }
         if (options.sections.includes('reasoning')) {
           for (const effort of ['low', 'medium', 'high']) {
             for (const task of REASONING_TASKS) {
@@ -1309,6 +1332,7 @@ async function main(): Promise<void> {
       schemaReliability: aggregate(records.filter(item => item.section === 'schema_reliability'), ['model', 'variant']),
       reasoning: aggregate(records.filter(item => item.section === 'reasoning'), ['model', 'effort']),
       lateReminder: aggregate(records.filter(item => item.section === 'late_reminder'), ['model', 'variant']),
+      discovery: aggregate(records.filter(item => item.section === 'discovery'), ['model', 'variant']),
       structuredOutput: aggregate(records.filter(item => item.section === 'structured_output'), ['model', 'variant']),
     },
     records,

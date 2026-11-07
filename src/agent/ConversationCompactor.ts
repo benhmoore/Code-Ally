@@ -989,6 +989,7 @@ export class ConversationCompactor {
     };
     if (state.objective) add([state.objective]);
     if (state.currentRequest) add([state.currentRequest]);
+    add(state.userDirections ?? []);
     add(state.userConstraints);
     add(state.decisions);
     add(state.completedWork);

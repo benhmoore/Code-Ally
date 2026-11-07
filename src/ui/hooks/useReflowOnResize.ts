@@ -5,7 +5,7 @@
  * it, so on resize the already-committed lines keep the width they were drawn
  * at. Repainting them at the new width means clearing the screen + scrollback
  * and re-emitting everything (the atomic clear + Static-remount path that
- * compaction and rewind already use via `resetConversationView`).
+ * history navigation uses via `repaintConversationSurface`).
  *
  * That repaint is only safe when the whole transcript fits the viewport. If the
  * re-emitted history is taller than the screen, the overflow scrolls past the
@@ -26,7 +26,7 @@
 
 import { useEffect, useRef } from 'react';
 import type { Message } from '@shared/index.js';
-import { LAYOUT, TEXT_LIMITS } from '@config/constants.js';
+import { LAYOUT } from '@config/constants.js';
 import { wrapAnsiText } from '@utils/terminalText.js';
 import { useTerminalContext } from '../contexts/TerminalContext.js';
 import { useAppContext } from '../contexts/AppContext.js';
@@ -79,16 +79,17 @@ function transcriptFits(messages: Message[], contentWidth: number, budget: numbe
 }
 
 export function useReflowOnResize(): void {
-  const { contentWidth } = useTerminalContext();
+  const { contentWidth, rows } = useTerminalContext();
   const { state, actions } = useAppContext();
   const { messages } = state;
-  const { resetConversationView } = actions;
+  const { repaintConversationSurface } = actions;
 
   // Latest values read at debounce-fire time, kept in refs so they don't
   // re-arm the timer on every message append.
   const widthRef = useRef(contentWidth);
   const messagesRef = useRef(messages);
-  const resetRef = useRef(resetConversationView);
+  const rowsRef = useRef(rows);
+  const resetRef = useRef(repaintConversationSurface);
 
   // Width the committed transcript was last drawn at; used to skip a repaint
   // when a resize wiggle ends back at the current width.
@@ -97,7 +98,8 @@ export function useReflowOnResize(): void {
 
   widthRef.current = contentWidth;
   messagesRef.current = messages;
-  resetRef.current = resetConversationView;
+  rowsRef.current = rows;
+  resetRef.current = repaintConversationSurface;
 
   useEffect(() => {
     // Re-arm a single debounce timer on every width change. The decision is made
@@ -124,14 +126,14 @@ export function useReflowOnResize(): void {
 
       // Only reflow when the repaint is lossless. Otherwise leave the committed
       // history in native scrollback rather than clipping it out of reach.
-      const terminalRows = process.stdout.rows || TEXT_LIMITS.TERMINAL_HEIGHT_FALLBACK;
+      const terminalRows = rowsRef.current;
       const budget = terminalRows - DYNAMIC_REGION_RESERVE;
       if (!transcriptFits(msgs, width, budget)) {
         return;
       }
 
       lastReflowedWidthRef.current = width;
-      resetRef.current(msgs);
+      resetRef.current();
     }, REFLOW_DEBOUNCE_MS);
 
     return () => {

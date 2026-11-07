@@ -415,6 +415,7 @@ export class TokenManager {
     this.seenFiles.clear();
     this.toolResultHashes.clear();
     this.messageTokenCache.clear();
+    this.contextInjectionLatch = undefined;
   }
 
   /** Reset state whose references are valid only inside the active model window. */
@@ -495,6 +496,7 @@ export class TokenManager {
    * @returns Truncated content that fits within the token limit
    */
   truncateContentToTokens(content: string, maxTokens: number): string {
+    if (maxTokens <= 0) return '';
     if (!content || content.length === 0) {
       return content;
     }
@@ -508,11 +510,13 @@ export class TokenManager {
     // Binary search for the right truncation point
     let low = 0;
     let high = content.length;
+    // The marker itself must fit; tiny budgets should never grow the result.
+    const marker = this.estimateTokens('...') <= maxTokens ? '...' : '';
     let bestLength = 0;
 
     while (low <= high) {
       const mid = Math.floor((low + high) / 2);
-      const truncated = content.slice(0, mid) + '...';
+      const truncated = content.slice(0, mid) + marker;
       const tokens = this.estimateTokens(truncated);
 
       if (tokens <= maxTokens) {
@@ -523,7 +527,7 @@ export class TokenManager {
       }
     }
 
-    return content.slice(0, bestLength) + '...';
+    return content.slice(0, bestLength) + marker;
   }
 
   /**

@@ -62,6 +62,10 @@ export class SessionRuntime {
   };
   addDisplayMessage = (message: Message): void => { if (!this.closed) this.deps.view.addDisplayMessage(message); };
 
+  setContextUsage = (percentage: number): void => { if (!this.closed) this.deps.view.setContextUsage(percentage); };
+  toggleToolCallExpanded = (id: string): void => { if (!this.closed) this.deps.view.toggleToolCallExpanded(id); };
+  setToolCallsExpanded = (expanded: boolean): void => { if (!this.closed) this.deps.view.setToolCallsExpanded(expanded); };
+
   /** A frontend may include preparation and result publication in the owned turn. */
   async submit<T = string>(text: string, options: {
     mode?: 'auto' | 'follow_up';
@@ -70,13 +74,17 @@ export class SessionRuntime {
   } = {}): Promise<SubmissionResult<T>> {
     if (this.closed) throw new Error('Session is closed');
     if (!text.trim()) return { kind: 'not_sent' };
-    if (options.mode !== 'follow_up' && this.deps.steer(text)) return { kind: 'steered' };
+    // Steering currently accepts text only. Attachments must remain an owned
+    // follow-up so active-turn admission cannot silently discard them.
+    const images = options.images?.slice();
+    const execute = options.execute;
+    if (options.mode !== 'follow_up' && !images?.length && this.deps.steer(text)) return { kind: 'steered' };
     let result: SubmissionResult<T> = { kind: 'not_sent' };
     await this.deps.input.enqueue(text, async (input, signal) => {
       if (signal.aborted) return;
-      const value = options.execute
-        ? await options.execute(input, signal)
-        : await this.deps.execute(input, options.images) as T;
+      const value = execute
+        ? await execute(input, signal)
+        : await this.deps.execute(input, images) as T;
       result = { kind: 'completed', value };
     });
     return result;

@@ -45,20 +45,14 @@ export class ToolValidator {
     const params = functionDef.function.parameters;
     const required = params.required || [];
 
-    // Apply tool-specific validation rules FIRST (they may catch semantic issues)
-    const toolValidation = tool.validateArgs(args);
-    if (toolValidation && !toolValidation.valid) {
-      return {
-        valid: false,
-        error: toolValidation.error,
-        error_type: (toolValidation.error_type as ErrorType) || 'validation_error',
-        suggestion: toolValidation.suggestion,
-      };
+    // Model arguments are untrusted even when a provider labels them an object.
+    if (args === null || typeof args !== 'object' || Array.isArray(args)) {
+      return { valid: false, error: 'Tool arguments must be an object', error_type: 'validation_error' };
     }
 
     // Check for required parameters
     for (const requiredParam of required) {
-      if (!(requiredParam in args) || args[requiredParam] === undefined) {
+      if (!Object.hasOwn(args, requiredParam) || args[requiredParam] === undefined) {
         const example = this.generateExample(tool.name, params.properties, required);
         return {
           valid: false,
@@ -71,9 +65,11 @@ export class ToolValidator {
 
     // Type validation for provided parameters
     for (const [paramName, paramValue] of Object.entries(args)) {
-      const paramSchema = params.properties[paramName];
+      const paramSchema = Object.hasOwn(params.properties, paramName) ? params.properties[paramName] : undefined;
       if (!paramSchema) {
-        // Unknown parameter - warn but allow
+        if (params.additionalProperties === false) {
+          return { valid: false, error: `${paramName}: property is not allowed by the schema`, error_type: 'validation_error' };
+        }
         continue;
       }
 
@@ -86,6 +82,17 @@ export class ToolValidator {
           suggestion: `Expected ${paramSchema.type}, got ${typeof paramValue}`,
         };
       }
+    }
+
+    // Apply tool-specific validation rules after the schema has established argument types
+    const toolValidation = tool.validateArgs(args);
+    if (toolValidation && !toolValidation.valid) {
+      return {
+        valid: false,
+        error: toolValidation.error,
+        error_type: (toolValidation.error_type as ErrorType) || 'validation_error',
+        suggestion: toolValidation.suggestion,
+      };
     }
 
     return { valid: true };
@@ -124,7 +131,7 @@ export class ToolValidator {
 
       case 'number':
       case 'integer':
-        if (typeof value !== 'number' || Number.isNaN(value)) {
+        if (typeof value !== 'number' || !Number.isFinite(value)) {
           return fail(path, `expected ${schema.type}, got ${describe(value)}`);
         }
         if (schema.type === 'integer' && !Number.isInteger(value)) {
@@ -177,7 +184,7 @@ export class ToolValidator {
     const record = value as Record<string, unknown>;
 
     for (const name of schema.required ?? []) {
-      if (!(name in record)) {
+      if (!Object.hasOwn(record, name) || record[name] === undefined) {
         return fail(`${path}.${name}`, 'required property is missing');
       }
     }
@@ -185,14 +192,14 @@ export class ToolValidator {
     if (schema.additionalProperties === false) {
       const declared = schema.properties ?? {};
       for (const name of Object.keys(record)) {
-        if (!(name in declared)) {
+        if (!Object.hasOwn(declared, name)) {
           return fail(`${path}.${name}`, 'property is not allowed by the schema');
         }
       }
     }
 
     for (const [name, propertySchema] of Object.entries(schema.properties ?? {})) {
-      if (!(name in record)) continue;
+      if (!Object.hasOwn(record, name)) continue;
       const property = this.validateValue(record[name], propertySchema, `${path}.${name}`);
       if (!property.valid) return property;
     }

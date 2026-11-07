@@ -268,7 +268,7 @@ the primary model. Secrets are hidden in configuration output and completion.
 | `provider` | `ollama` | `ollama`, `rapid-mlx`, `openai-compat`, or `openai-responses` |
 | `endpoint` | `http://localhost:11434` | Provider base URL |
 | `api_key` | (none) | Bearer token for authenticated endpoints |
-| `context_size` | `16384` | Context window tokens |
+| `context_size` | `32768` | Context window tokens; normal minimum target |
 | `temperature` | (model default) | Optional generation temperature override |
 | `max_tokens` | `16384` | Max tokens per response |
 | `reasoning_effort` | `low` | Reasoning level (low/medium/high) |
@@ -292,7 +292,7 @@ the primary model. Secrets are hidden in configuration output and completion.
 |--------|---------|-------------|
 | `theme` | `default` | UI theme |
 | `show_thinking_in_chat` | `false` | Show full model reasoning text instead of only a thought indicator |
-| `enable_idle_messages` | `true` | Auto idle status messages |
+| `enable_idle_messages` | `false` | Opt in to model-generated idle status messages |
 
 ### Tool Behavior
 
@@ -413,7 +413,9 @@ See [docs/plugins.md](docs/plugins.md) for the full development guide.
 Event-driven layered architecture:
 
 ```
-CLI → Ink UI → ActivityStream (event bus) → Agent → LLM/Tools
+CLI → Ink UI / Headless → SessionRuntime → Agent → LLM/Tools
+                                       ↕
+                         ConversationViewStore / ActivityStream
 ```
 
 **Core components:**
@@ -428,6 +430,8 @@ CLI → Ink UI → ActivityStream (event bus) → Agent → LLM/Tools
 - Event bus for UI/agent communication
 - Tool orchestration with permission gating
 - Agent pooling for performance
+
+See [the local-model architecture review](docs/architecture-review.md) for ownership boundaries, compact tool discovery, context preservation, the Pi comparison, and validation.
 
 ## Development
 
@@ -450,7 +454,7 @@ src/
 └── cli.ts      # Entry point
 ```
 
-**Stack:** TypeScript 5.3+, React 18, Ink 4, Vitest, Zod
+**Stack:** TypeScript, React 19, Ink, Vitest, JSON Schema tool validation
 
 ## Requirements
 

@@ -144,7 +144,6 @@ export class SetupWizard {
    */
   getContextSizeOptions(): Array<{ value: number; label: string }> {
     return [
-      { value: CONTEXT_SIZES.SMALL, label: '16K (16,384 tokens)' },
       { value: CONTEXT_SIZES.MEDIUM, label: '32K (32,768 tokens) [Recommended]' },
       { value: CONTEXT_SIZES.LARGE, label: '64K (65,536 tokens)' },
       { value: CONTEXT_SIZES.XLARGE, label: '128K (131,072 tokens)' },

@@ -51,17 +51,17 @@ export class ToolManager {
     this.delegationContextManager = new DelegationContextManager();
 
     for (const tool of tools) {
-      // Validate tool name format (kebab-case)
-      const validation = validateToolName(tool.name);
-      if (!validation.valid) {
-        throw new Error(`Failed to initialize tool: ${validation.error}`);
-      }
-      // Validate tool configuration (e.g., mutually exclusive flags)
-      if (typeof tool.validateConfiguration === 'function') {
-        tool.validateConfiguration();
-      }
+      this.validateRegistration(tool);
       this.tools.set(tool.name, tool);
     }
+  }
+
+  private validateRegistration(tool: BaseTool): void {
+    const validation = validateToolName(tool.name);
+    if (!validation.valid) {
+      throw new Error(`Failed to register tool: ${validation.error}`);
+    }
+    if (typeof tool.validateConfiguration === 'function') tool.validateConfiguration();
   }
 
   /**
@@ -101,6 +101,8 @@ export class ToolManager {
    * @param tools - Array of tools to register
    */
   registerTools(tools: BaseTool[]): void {
+    // Validate the entire batch before publishing any replacement.
+    for (const tool of tools) this.validateRegistration(tool);
     for (const tool of tools) {
       this.tools.set(tool.name, tool);
     }
@@ -119,11 +121,7 @@ export class ToolManager {
    * @throws Error if tool name is invalid
    */
   registerTool(tool: BaseTool): void {
-    // Validate tool name format (kebab-case)
-    const validation = validateToolName(tool.name);
-    if (!validation.valid) {
-      throw new Error(`Failed to register tool: ${validation.error}`);
-    }
+    this.validateRegistration(tool);
 
     if (this.tools.has(tool.name)) {
       logger.debug(`[TOOL_MANAGER] Tool '${tool.name}' already registered, skipping duplicate`);
@@ -288,44 +286,16 @@ export class ToolManager {
    * @returns Cache key string
    */
   private generateCacheKey(enabledPlugins: Set<string> | null, excludeTools?: string[], currentAgentName?: string, allowedTools?: string[]): string {
-    const parts: string[] = [];
-
-    // Include enabled plugins in key (sorted for consistency)
-    if (enabledPlugins === null) {
-      parts.push('no-plugin-manager');
-    } else if (enabledPlugins.size === 0) {
-      parts.push('no-active-plugins');
-    } else {
-      parts.push(`plugins:${Array.from(enabledPlugins).sort().join(',')}`);
-    }
-
-    // Include exclusions in key if present
-    if (excludeTools && excludeTools.length > 0) {
-      parts.push(`exclude:${excludeTools.sort().join(',')}`);
-    }
-
-    // Include allowed tools in key if present
-    if (allowedTools && allowedTools.length > 0) {
-      parts.push(`allowed:${allowedTools.sort().join(',')}`);
-    }
-
-    // Include agent name in key if present
-    if (currentAgentName) {
-      parts.push(`agent:${currentAgentName}`);
-    }
-
-    // Include plan mode state in key
-    try {
-      const registry = ServiceRegistry.getInstance();
-      const planModeManager = registry.get('plan_mode_manager');
-      if (planModeManager?.isActive()) {
-        parts.push('plan-mode:active');
-      }
-    } catch {
-      // PlanModeManager not registered yet - skip
-    }
-
-    return parts.join('|');
+    const planModeManager = ServiceRegistry.getInstance().get('plan_mode_manager');
+    // Preserve the difference between an absent allow-list and an empty one.
+    // Structured fields also prevent names containing separators from colliding.
+    return JSON.stringify({
+      plugins: enabledPlugins === null ? null : [...enabledPlugins].sort(),
+      excluded: [...new Set(excludeTools ?? [])].sort(),
+      allowed: allowedTools === undefined ? null : [...new Set(allowedTools)].sort(),
+      agent: currentAgentName ?? null,
+      planMode: planModeManager?.isActive() ?? false,
+    });
   }
 
   /**

@@ -9,8 +9,8 @@
  * Follows PermissionPrompt patterns (keyboard nav, SelectionIndicator, KeyboardHintFooter).
  */
 
-import React, { useEffect, useState } from 'react';
-import { Box, Text, useInput, useStdout } from 'ink';
+import React, { useEffect, useMemo, useState } from 'react';
+import { Box, Text, useInput } from 'ink';
 import { SelectionIndicator } from './SelectionIndicator.js';
 import { Clickable } from './Clickable.js';
 import { KeyboardHintFooter } from './KeyboardHintFooter.js';
@@ -19,6 +19,7 @@ import { UI_COLORS } from '../constants/colors.js';
 import { UI_SYMBOLS } from '@config/uiSymbols.js';
 import { TextInput } from './TextInput.js';
 import { InteractiveSurface } from './InteractiveSurface.js';
+import { useContentWidth } from '../hooks/useContentWidth.js';
 import { useTerminalRows } from '../hooks/useTerminalRows.js';
 
 /**
@@ -67,10 +68,12 @@ export const PlanApprovalPrompt: React.FC<PlanApprovalPromptProps> = ({
 }) => {
   const terminalRows = useTerminalRows();
 
-  const { stdout } = useStdout();
+  const contentWidth = useContentWidth();
   const [offset, setOffset] = useState(0);
-  const width = Math.max(10, (stdout.columns || 80) - 8);
-  const planLines = request.planContent.split('\n').flatMap(line => wrapAnsiText(line, width, { preserveWhitespace: true }));
+  const width = Math.max(1, contentWidth - 2);
+  // Feedback keystrokes and scrolling must not rewrap the entire plan.
+  const planLines = useMemo(() => request.planContent.split('\n')
+    .flatMap(line => wrapAnsiText(line, width, { preserveWhitespace: true })), [request.planContent, width]);
   const previewLines = Math.max(1, terminalRows - 14);
   const maximum = Math.max(0, planLines.length - previewLines);
   const start = Math.min(offset, maximum);

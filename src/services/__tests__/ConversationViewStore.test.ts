@@ -59,6 +59,40 @@ describe.each([undefined, 'child'])('conversation projection (%s)', parent => {
     expect(store.getSnapshot().messages.map(message => message.content)).toEqual(['hello']);
   });
 
+  it('keeps user expansion choices through streamed and reconstructed tool updates', () => {
+    const { store, messages, emit } = setup(parent);
+    emit(E.TOOL_CALL_START, { toolName: 'read', arguments: {}, collapsed: true }, 'tool');
+    store.toggleToolCallExpanded('tool');
+    emit(E.TOOL_OUTPUT_CHUNK, { chunk: 'live output' }, 'tool');
+    expect(store.getSnapshot().activeToolCalls[0]?.expanded).toBe(true);
+    messages.push({ role: 'assistant', content: '', tool_calls: [{ id: 'tool', type: 'function', function: { name: 'read', arguments: '{}' } }] });
+    messages.push({ role: 'tool', tool_call_id: 'tool', content: 'finished' });
+    store.refresh();
+    expect(store.getSnapshot().activeToolCalls[0]?.expanded).toBe(true);
+    store.setToolCallsExpanded(false);
+    expect(store.getSnapshot().activeToolCalls[0]?.expanded).toBe(false);
+    store.toggleToolCallExpanded('missing');
+    expect(store.getSnapshot().activeToolCalls).toHaveLength(1);
+  });
+
+  it('owns status, token usage, and compaction transitions without a frontend reducer', () => {
+    const { store, emit } = setup(parent);
+    store.setContextUsage(42);
+    emit(E.STATUS_MESSAGE, { message: 'retry one' }, 'retry');
+    emit(E.STATUS_MESSAGE, { message: 'retry two' }, 'retry');
+    emit(E.COMPACTION_START);
+    expect(store.getSnapshot()).toMatchObject({ contextUsage: 42, isCompacting: true });
+    emit(E.COMPACTION_COMPLETE, { oldContextUsage: 42, newContextUsage: 10, threshold: 80 });
+    expect(store.getSnapshot()).toMatchObject({ contextUsage: 10, isCompacting: false,
+      statusMessages: [{ id: 'retry', message: 'retry two' }],
+      compactionNotices: [{ oldContextUsage: 42, threshold: 80 }],
+    });
+    emit(E.COMPACTION_START);
+    emit(E.COMPACTION_COMPLETE, { error: true });
+    expect(store.getSnapshot().isCompacting).toBe(false);
+    expect(store.getSnapshot().compactionNotices).toHaveLength(1);
+  });
+
   it('never declares a call successful without a result and settles missing outcomes at turn end', () => {
     const { store, messages, emit } = setup(parent);
     messages.push({ role: 'assistant', content: '', tool_calls: [{ id: 'lost', type: 'function', function: { name: 'read', arguments: '{}' } }] });

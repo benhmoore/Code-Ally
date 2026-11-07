@@ -54,7 +54,13 @@ export class ReadCheckpointTool extends BaseTool {
         'Restart at offset 0 to read the current generation.');
     }
     const section = args.section as keyof typeof checkpoint.semanticState;
-    const characters = Array.from(JSON.stringify(checkpoint.semanticState[section], null, 2));
+    // Earlier v1 checkpoints predate the exact direction archive. Expose the
+    // authoritative input they still retain instead of failing pagination.
+    const value = section === 'userDirections'
+      ? checkpoint.semanticState.userDirections
+        ?? [checkpoint.semanticState.objective, checkpoint.semanticState.currentRequest].filter(Boolean)
+      : checkpoint.semanticState[section];
+    const characters = Array.from(JSON.stringify(value, null, 2));
     if (offset > characters.length) return this.formatErrorResponse('Offset exceeds the section length.', 'validation_error');
     const budget = this.getOutputTokenAllowance(1024, executionContext);
     let count = Math.min(limit, characters.length - offset);

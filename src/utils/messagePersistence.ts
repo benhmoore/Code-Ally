@@ -1,5 +1,16 @@
 import type { Message } from '../types/index.js';
 
+/** Distinguish submitted user directions from harness messages using the user role. */
+export function isActualUserMessage(message: Message): boolean {
+  return message.role === 'user'
+    && !message.metadata?.ephemeral
+    && !message.metadata?.isConversationCheckpoint
+    && !message.metadata?.isCommandResponse
+    && !message.metadata?.deferredToolCatalogue
+    && !message.metadata?.todoStateReminder
+    && !message.metadata?.backgroundTaskResult;
+}
+
 /** Conversation lifetime is independent of a message's presentation role. */
 export function isPersistentMessage(message: Message): boolean {
   return !message.metadata?.ephemeral

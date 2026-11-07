@@ -33,6 +33,8 @@ export async function testModelToolCalling(
   endpoint: string,
   modelName: string
 ): Promise<ToolCallingSupportResult> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), API_TIMEOUTS.OLLAMA_VALIDATION_CHAT_TIMEOUT);
   try {
     // Minimal test payload with a dummy function
     const testPayload = {
@@ -59,17 +61,12 @@ export async function testModelToolCalling(
       ],
     };
 
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), API_TIMEOUTS.OLLAMA_VALIDATION_CHAT_TIMEOUT);
-
     const response = await fetch(`${endpoint}/api/chat`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(testPayload),
       signal: controller.signal,
     });
-
-    clearTimeout(timeout);
 
     if (!response.ok) {
       const errorData = (await response.json().catch(() => ({
@@ -98,6 +95,8 @@ export async function testModelToolCalling(
       supportsTools: true,
       error: errorMsg,
     };
+  } finally {
+    clearTimeout(timeout);
   }
 }
 
@@ -116,6 +115,8 @@ export async function testModelImageSupport(
   endpoint: string,
   modelName: string
 ): Promise<ImageSupportResult> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), API_TIMEOUTS.OLLAMA_VALIDATION_CHAT_TIMEOUT);
   try {
     // Valid 10x10 red PNG in base64 (generated with sharp)
     const base64Image =
@@ -134,17 +135,12 @@ export async function testModelImageSupport(
       stream: false,
     };
 
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), API_TIMEOUTS.OLLAMA_VALIDATION_CHAT_TIMEOUT);
-
     const response = await fetch(`${endpoint}/api/chat`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(testPayload),
       signal: controller.signal,
     });
-
-    clearTimeout(timeout);
 
     if (!response.ok) {
       const errorData = (await response.json().catch(() => ({
@@ -186,6 +182,8 @@ export async function testModelImageSupport(
       supportsImages: true,
       error: errorMsg,
     };
+  } finally {
+    clearTimeout(timeout);
   }
 }
 
@@ -236,11 +234,16 @@ export async function testModelCapabilities(
     testModelImageSupport(endpoint, modelName),
   ]);
 
-  // Store in cache
-  capabilitiesIndex.setCapabilities(modelName, endpoint, {
-    supportsTools: toolResult.supportsTools,
-    supportsImages: imageResult.supportsImages,
-  });
+  // Cache persistence is optional; a read-only home must not invalidate a
+  // successful capability probe or leave an unhandled background rejection.
+  try {
+    await capabilitiesIndex.setCapabilities(modelName, endpoint, {
+      supportsTools: toolResult.supportsTools,
+      supportsImages: imageResult.supportsImages,
+    });
+  } catch (error) {
+    logger.warn(`[ModelCapabilities] Could not persist capabilities for ${modelName}:`, error);
+  }
 
   // Combine errors if any
   const errors = [toolResult.error, imageResult.error].filter(Boolean);

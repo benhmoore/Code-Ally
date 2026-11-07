@@ -10,21 +10,9 @@
  * measurement (using the same derivation) if the context is unavailable.
  */
 
-import { useWindowSize } from 'ink';
-import { TEXT_LIMITS } from '@config/constants.js';
-import { deriveWidths, useTerminalContext } from '../contexts/TerminalContext.js';
+import { useTerminalDimensions } from '../contexts/TerminalContext.js';
 
-/**
- * Get the printable width inside the root padding (uncapped).
- *
- * @returns Printable width in columns.
- */
+/** Return the shared terminal innerWidth measurement. */
 export function useInnerWidth(): number {
-  const { columns } = useWindowSize();
-  try {
-    return useTerminalContext().innerWidth;
-  } catch {
-    // Fallback to direct measurement if used outside the provider.
-    return deriveWidths(columns || TEXT_LIMITS.TERMINAL_WIDTH_FALLBACK).innerWidth;
-  }
+  return useTerminalDimensions().innerWidth;
 }

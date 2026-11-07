@@ -34,6 +34,8 @@ export interface SemanticCheckpointStateV1 {
   schemaVersion: 1;
   objective: SemanticFact | null;
   currentRequest: SemanticFact | null;
+  /** Exact user directions in chronological order. Absent in older v1 checkpoints. */
+  userDirections?: SemanticFact[];
   userConstraints: SemanticFact[];
   decisions: SemanticDecision[];
   completedWork: SemanticFact[];
@@ -103,6 +105,7 @@ export function emptySemanticCheckpoint(): SemanticCheckpointStateV1 {
     schemaVersion: 1,
     objective: null,
     currentRequest: null,
+    userDirections: [],
     userConstraints: [],
     decisions: [],
     completedWork: [],

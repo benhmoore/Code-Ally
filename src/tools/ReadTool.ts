@@ -116,7 +116,7 @@ For multi-file exploration, prefer explore() to preserve context. Parallelize on
   } {
     const registry = this.getExecutionRegistry(executionContext);
     const tokenManager = registry.get('token_manager');
-    const contextSize = tokenManager?.getContextSize() ?? CONTEXT_SIZES.SMALL;
+    const contextSize = tokenManager?.getContextSize() ?? CONTEXT_SIZES.MEDIUM;
     const published = registry.get('context_budget')?.get(this.getReadScopeId(executionContext));
     if (published && published.usableBudget > 0) {
       return { usable: published.usableBudget, maxToolResult: published.maxToolResultTokens };

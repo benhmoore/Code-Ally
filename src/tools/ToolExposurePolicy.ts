@@ -1,5 +1,5 @@
 import type { FunctionDefinition } from '../types/index.js';
-import { matchesAnyToolGlob } from './toolNameAliases.js';
+import { matchesAnyToolGlob, normalizeToolName } from './toolNameAliases.js';
 
 /**
  * Decides which tool schemas are sent with a request.
@@ -15,8 +15,9 @@ import { matchesAnyToolGlob } from './toolNameAliases.js';
  * tools remain fully registered and executable — deferral only affects which
  * schemas are transmitted.
  *
- * When the complete surface already fits the budget (any roomy context window)
- * nothing is deferred and behaviour is identical to sending every tool.
+ * Keep the ordinary coding loop stable even on a roomy context window: extra
+ * choices still cost attention for smaller models. Explicit searches and run
+ * requirements load additional tools without removing capability.
  */
 
 /** The tools the ordinary patch/inspect/run loop cannot proceed without. */
@@ -25,10 +26,8 @@ export const CORE_TOOL_NAMES: readonly string[] = [
   'read',
   'write',
   'apply-patch',
-  'ls',
   'grep',
   'glob',
-  'tree',
   'todo-write',
   // Sub-agent protocol tools: excluded at runtime for root agents, but never
   // deferred when present, since a delegated agent must be able to report.
@@ -101,11 +100,11 @@ export function selectExposedTools(input: ToolExposureInput): ToolExposureResult
   const byName = new Map(definitions.map(definition => [definition.function.name, definition]));
   const searchTool = byName.get(TOOL_SEARCH_TOOL_NAME);
 
-  // Without deferral the search tool is dead weight, so price the surface
-  // without it when deciding whether deferral is needed at all.
+  // Deferral requires a usable discovery tool. Without it, sending every
+  // permitted schema is the only way to preserve access to the capabilities.
   const candidates = definitions.filter(d => d.function.name !== TOOL_SEARCH_TOOL_NAME);
-  const totalTokens = candidates.reduce((sum, d) => sum + definitionTokens(d, estimateTokens), 0);
-  if (totalTokens <= schemaBudget) {
+  if (!searchTool) {
+    const totalTokens = candidates.reduce((sum, d) => sum + definitionTokens(d, estimateTokens), 0);
     return { exposed: [...candidates], deferred: [], exposedTokens: totalTokens };
   }
 
@@ -123,10 +122,10 @@ export function selectExposedTools(input: ToolExposureInput): ToolExposureResult
   // configuration problem, and silently dropping `read` would be worse than
   // overrunning the schema share.
   for (const name of [...CORE_TOOL_NAMES, ...(input.pinned ?? [])]) {
-    const definition = byName.get(name);
+    const definition = byName.get(normalizeToolName(name));
     if (definition) include(definition);
   }
-  if (searchTool) include(searchTool);
+  include(searchTool);
 
   // An explicit tool-search is a capability request, not a preference. Keep
   // that entire batch exposed until another search replaces it, even when the
@@ -151,6 +150,13 @@ export function selectExposedTools(input: ToolExposureInput): ToolExposureResult
     .filter(definition => !exposedNames.has(definition.function.name))
     .map(definition => ({ name: definition.function.name, summary: summarize(definition) }));
 
+  if (deferred.length === 0) {
+    return {
+      exposed: exposed.filter(definition => definition.function.name !== TOOL_SEARCH_TOOL_NAME),
+      deferred,
+      exposedTokens: used - definitionTokens(searchTool, estimateTokens),
+    };
+  }
   return { exposed, deferred, exposedTokens: used };
 }
 

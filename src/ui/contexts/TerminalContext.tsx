@@ -6,7 +6,8 @@
  * This eliminates redundant measurements and improves performance.
  */
 
-import React, { createContext, useContext, useState, useEffect, useCallback, useMemo } from 'react';
+import React, { createContext, useContext, useSyncExternalStore } from 'react';
+import { useStdout } from 'ink';
 import { LAYOUT, TEXT_LIMITS } from '@config/constants.js';
 
 /**
@@ -76,42 +77,9 @@ export interface TerminalProviderProps {
  * ```
  */
 export const TerminalProvider: React.FC<TerminalProviderProps> = ({ children }) => {
-  // Initialize with current terminal width
-  const getTerminalSize = useCallback((): { width: number; rows: number } => {
-    return {
-      width: process.stdout?.columns || TEXT_LIMITS.TERMINAL_WIDTH_FALLBACK,
-      rows: process.stdout?.rows || TEXT_LIMITS.TERMINAL_HEIGHT_FALLBACK,
-    };
-  }, []);
-
-  const [size, setSize] = useState(getTerminalSize);
-
-  // Listen for terminal resize events
-  useEffect(() => {
-    const handleResize = () => {
-      // Update only when either terminal dimension changes.
-      setSize((prev) => {
-        const next = getTerminalSize();
-        return next.width === prev.width && next.rows === prev.rows ? prev : next;
-      });
-    };
-
-    // Attach resize listener
-    // Resize the React layout before Ink compares its old frame height with the
-    // new terminal height; otherwise a shrink can trigger a full scrollback clear.
-    process.stdout?.prependListener('resize', handleResize);
-
-    // Cleanup on unmount
-    return () => {
-      process.stdout?.off('resize', handleResize);
-    };
-  }, [getTerminalSize]);
-
-  // Memoize context value to prevent unnecessary re-renders
-  const value: TerminalContextValue = useMemo(
-    () => deriveWidths(size.width, size.rows),
-    [size.width, size.rows]
-  );
+  const { stdout } = useStdout();
+  const store = measurementStore(stdout);
+  const value = useSyncExternalStore(store.subscribe, store.getSnapshot);
 
   return <TerminalContext.Provider value={value}>{children}</TerminalContext.Provider>;
 };
@@ -134,3 +102,55 @@ export const useTerminalContext = (): TerminalContextValue => {
   }
   return context;
 };
+
+interface TerminalMeasurementStore {
+  getSnapshot: () => TerminalContextValue;
+  subscribe: (listener: () => void) => () => void;
+}
+
+// Output streams own their measurement stores, so detached renderers are collectible.
+const measurementStores = new WeakMap<NodeJS.WritableStream, TerminalMeasurementStore>();
+const subscribeToNothing = () => () => {};
+
+function measurementStore(stdout: NodeJS.WritableStream): TerminalMeasurementStore {
+  const existing = measurementStores.get(stdout);
+  if (existing) return existing;
+  const measure = () => deriveWidths(
+    (stdout as Partial<NodeJS.WriteStream>).columns || TEXT_LIMITS.TERMINAL_WIDTH_FALLBACK,
+    (stdout as Partial<NodeJS.WriteStream>).rows || TEXT_LIMITS.TERMINAL_HEIGHT_FALLBACK,
+  );
+  let snapshot = measure();
+  const listeners = new Set<() => void>();
+  const resize = () => {
+    const next = measure();
+    if (snapshot.width === next.width && snapshot.rows === next.rows) return;
+    snapshot = next;
+    listeners.forEach(listener => listener());
+  };
+  const store: TerminalMeasurementStore = {
+    getSnapshot: () => snapshot,
+    subscribe: listener => {
+      // Update React before Ink compares the old frame with a resized terminal;
+      // a late layout update on shrink can otherwise clear terminal scrollback.
+      if (listeners.size === 0) stdout.prependListener('resize', resize);
+      listeners.add(listener);
+      // Catch dimensions changed while this stream had no mounted consumers.
+      resize();
+      return () => {
+        listeners.delete(listener);
+        if (listeners.size === 0) stdout.off('resize', resize);
+      };
+    },
+  };
+  measurementStores.set(stdout, store);
+  return store;
+}
+
+/** Use shared measurements with one fallback subscription per Ink output. */
+export function useTerminalDimensions(): TerminalContextValue {
+  const context = useContext(TerminalContext);
+  const { stdout } = useStdout();
+  const store = measurementStore(stdout);
+  const fallback = useSyncExternalStore(context ? subscribeToNothing : store.subscribe, store.getSnapshot);
+  return context ?? fallback;
+}

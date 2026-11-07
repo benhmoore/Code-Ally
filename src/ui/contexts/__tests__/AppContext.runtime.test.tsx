@@ -50,3 +50,37 @@ it('exposes the authoritative runtime to application consumers and keeps notices
     store.close();
   }
 });
+
+it('applies UI tool expansion to the authoritative projection and retains it across frontend mounts', async () => {
+  const stream = new ActivityStream();
+  const store = new ConversationViewStore(stream, () => [], () => []);
+  let context: AppContextValue | undefined;
+  function Harness() {
+    const value = useAppContext();
+    useEffect(() => { context = value; }, [value]);
+    return null;
+  }
+  const mount = () => render(<AppProvider initialConfig={DEFAULT_CONFIG} conversationStore={store}><Harness/></AppProvider>, {
+    stdout: new FakeStdout() as unknown as NodeJS.WriteStream, debug: true, exitOnCtrlC: false, patchConsole: false,
+  });
+  let instance = mount();
+  try {
+    stream.emit({ id: 'tool', type: ActivityEventType.TOOL_CALL_START, timestamp: 1,
+      data: { toolName: 'read', arguments: {}, collapsed: true } });
+    await new Promise(resolve => setTimeout(resolve, 0));
+    context!.actions.toggleToolCallExpanded('tool');
+    await new Promise(resolve => setTimeout(resolve, 0));
+    expect(store.getSnapshot().activeToolCalls[0]?.expanded).toBe(true);
+    expect(context!.state.activeToolCalls[0]?.expanded).toBe(true);
+    instance.unmount();
+    instance = mount();
+    await new Promise(resolve => setTimeout(resolve, 0));
+    expect(context!.state.activeToolCalls[0]?.expanded).toBe(true);
+    context!.actions.setToolCallsExpanded(false);
+    context!.actions.setContextUsage(27);
+    await new Promise(resolve => setTimeout(resolve, 0));
+    expect(context!.state.activeToolCalls[0]?.expanded).toBe(false);
+    expect(store.getSnapshot().contextUsage).toBe(27);
+    expect(context!.state.contextUsage).toBe(27);
+  } finally { instance.unmount(); store.close(); }
+});

@@ -227,6 +227,13 @@ describe('TokenManager', () => {
   });
 
   describe('Reset', () => {
+    it('reconsiders prompt injections after starting a fresh conversation', () => {
+      tokenManager.updateTokenCount([{ role: 'user', content: 'large context '.repeat(20000) }]);
+      expect(tokenManager.allowPromptInjections(50)).toBe(false);
+      tokenManager.reset();
+      expect(tokenManager.allowPromptInjections(50)).toBe(true);
+    });
+
     it('should clear all tracking state', () => {
       const message: Message = {
         id: 'msg-1',
@@ -246,6 +253,20 @@ describe('TokenManager', () => {
       expect(tokenManager.getCurrentTokenCount()).toBe(0);
       expect(tokenManager.isToolResultDuplicate('some content')).toBe(false);
       expect(tokenManager.hasSeenContent('/path/to/file')).toBe(false);
+    });
+  });
+
+  describe('Token-bounded truncation', () => {
+    it('returns no content when no token budget remains', () => {
+      expect(tokenManager.truncateContentToTokens('large tool output', 0)).toBe('');
+      expect(tokenManager.truncateContentToTokens('large tool output', -5)).toBe('');
+    });
+
+    it('includes the truncation marker within the token allowance', () => {
+      for (const limit of [1, 2, 5, 20]) {
+        const result = tokenManager.truncateContentToTokens('large tool output '.repeat(100), limit);
+        expect(tokenManager.estimateTokens(result)).toBeLessThanOrEqual(limit);
+      }
     });
   });
 

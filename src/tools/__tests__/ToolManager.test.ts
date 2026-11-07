@@ -2,7 +2,7 @@
  * Tests for ToolManager
  */
 
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { ToolManager } from '@tools/ToolManager.js';
 import { BaseTool } from '@tools/BaseTool.js';
 import { ToolResult, FunctionDefinition } from '@shared/index.js';
@@ -125,6 +125,22 @@ describe('ToolManager', () => {
     toolManager = new ToolManager([tool, readTool, writeTool]);
   });
 
+  describe('runtime registration', () => {
+    it('validates configuration for contextual registrations', () => {
+      vi.spyOn(tool, 'validateConfiguration').mockImplementation(() => { throw new Error('invalid configuration'); });
+      const empty = new ToolManager([]);
+      expect(() => empty.registerTool(tool)).toThrow('invalid configuration');
+      expect(empty.getAllTools()).toEqual([]);
+    });
+
+    it('rejects an invalid bulk registration without partially publishing the batch', () => {
+      const empty = new ToolManager([]);
+      vi.spyOn(writeTool, 'validateConfiguration').mockImplementation(() => { throw new Error('invalid configuration'); });
+      expect(() => empty.registerTools([readTool, writeTool])).toThrow('invalid configuration');
+      expect(empty.getAllTools()).toEqual([]);
+    });
+  });
+
   describe('getTool', () => {
     it('should retrieve registered tool by name', () => {
       const retrieved = toolManager.getTool('test-tool');
@@ -156,6 +172,26 @@ describe('ToolManager', () => {
       expect(defs[0].function.description).toBe(
         'A test tool\n\nUse this only to echo a required value.'
       );
+    });
+
+    it.each([true, false])('keeps an empty allow-list separate from unrestricted definitions (restricted first: %s)', (restrictedFirst) => {
+      const restricted = () => toolManager.getFunctionDefinitions(undefined, undefined, []);
+      const unrestricted = () => toolManager.getFunctionDefinitions();
+      if (restrictedFirst) {
+        expect(restricted()).toEqual([]);
+        expect(unrestricted()).toHaveLength(3);
+      } else {
+        expect(unrestricted()).toHaveLength(3);
+        expect(restricted()).toEqual([]);
+      }
+    });
+
+    it('does not reorder caller-owned tool filters when caching definitions', () => {
+      const excluded = ['write', 'read'];
+      const allowed = ['write', 'test-tool', 'read'];
+      toolManager.getFunctionDefinitions(excluded, undefined, allowed);
+      expect(excluded).toEqual(['write', 'read']);
+      expect(allowed).toEqual(['write', 'test-tool', 'read']);
     });
 
     it('does not duplicate usage guidance when definitions are regenerated', () => {

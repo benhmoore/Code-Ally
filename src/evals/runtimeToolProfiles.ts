@@ -8,6 +8,8 @@ import {
   DURABLE_OBJECTIVE_TOOLS,
   type RuntimeToolSelectionContext,
 } from '../tools/runtimeToolSelection.js';
+import { selectExposedTools } from '../tools/ToolExposurePolicy.js';
+import { toolSchemaBudget } from '../agent/context/ContextBudget.js';
 import { ToolManager } from '../tools/ToolManager.js';
 import type { Config, FunctionDefinition } from '../types/index.js';
 
@@ -31,6 +33,21 @@ export function createRuntimeCoreToolDefinitions(
 }
 
 export function createRuntimeCoreToolDefinitionsForContext(
+  context: RuntimeToolSelectionContext,
+  config: Readonly<Config> = DEFAULT_CONFIG,
+  requested: readonly string[] = [],
+): FunctionDefinition[] {
+  const definitions = createRuntimeAvailableToolDefinitions(context, config);
+  return selectExposedTools({
+    definitions,
+    schemaBudget: toolSchemaBudget(config.context_size, config.max_tokens),
+    requested,
+    estimateTokens: text => tokenCounter.count(text),
+  }).exposed;
+}
+
+/** The permitted built-in surface before optional schemas are deferred. */
+export function createRuntimeAvailableToolDefinitions(
   context: RuntimeToolSelectionContext,
   config: Readonly<Config> = DEFAULT_CONFIG,
 ): FunctionDefinition[] {

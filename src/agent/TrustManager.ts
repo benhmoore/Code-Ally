@@ -243,7 +243,7 @@ export class TrustManager {
       return false;
     }
 
-    const subject = this.authorizationStrict ? 'Scheduled task' : 'Run policy';
+    const subject = 'Run policy';
     switch (decision.reason) {
       case 'policy.disallowed_tools':
         throw new PolicyDeniedError(
@@ -261,7 +261,7 @@ export class TrustManager {
         throw new PolicyDeniedError(
           `${subject} is not allowed to run shell command: ${command}`,
           decision.reason,
-          ['Use a non-shell tool', 'Choose a command allowed by the scheduled-task preset']
+          ['Use a non-shell tool', 'Choose a command allowed by the run policy']
         );
       case 'policy.allowed_tools':
         throw new PolicyDeniedError(

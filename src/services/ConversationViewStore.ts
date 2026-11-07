@@ -73,6 +73,22 @@ export class ConversationViewStore {
     this.refresh();
   };
 
+  /** Publish token accounting from preparation or restored conversation state. */
+  setContextUsage = (contextUsage: number): void => {
+    if (!this.closed && contextUsage !== this.snapshot.contextUsage) this.publish({ contextUsage });
+  };
+
+  /** Persist the user's expansion choice in the owner projection across mounts. */
+  toggleToolCallExpanded = (id: string): void => {
+    const call = this.snapshot.activeToolCalls.find(candidate => candidate.id === id);
+    if (!this.closed && call) this.updateTool(id, { expanded: !(call.expanded ?? !call.collapsed) });
+  };
+
+  setToolCallsExpanded = (expanded: boolean): void => {
+    if (this.closed) return;
+    this.publish({ activeToolCalls: this.snapshot.activeToolCalls.map(call => ({ ...call, expanded })) });
+  };
+
   /** Replace views only when history changes; compaction retains the visible transcript. */
   refresh = (replace = false): void => {
     if (this.closed) return;

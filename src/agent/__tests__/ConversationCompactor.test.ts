@@ -15,6 +15,47 @@ import { emptySemanticCheckpoint } from '../compaction/types.js';
 
 const signal = new AbortController().signal;
 
+it('commits full intermediate user steering across repeated extractive compactions', async () => {
+  const manager = new ConversationManager({ initialMessages: [
+    { id: 'objective', role: 'user', content: 'Build the service.' },
+  ] });
+  const compactor = new ConversationCompactor(chatClient(), manager, new TokenManager(8192), new ActivityStream());
+  const expected: string[] = [];
+  for (let generation = 0; generation < 4; generation++) {
+    const direction = `Generation ${generation}: ${'details '.repeat(220)} Do not change public API Api_${generation}.`;
+    expected.push(direction);
+    manager.addMessage({ id: `steer-${generation}`, role: 'user', content: direction });
+    manager.addMessage({ id: `assistant-${generation}`, role: 'assistant', content: 'Continue implementation.' });
+    manager.addMessage({ id: `continue-${generation}`, role: 'user', content: 'Continue.' });
+    const result = await compactor.compactAndApply(context(), { forceExtractive: true, forceNoRetainedTail: true });
+    expect(result.checkpoint.generation).toBe(generation + 1);
+    for (const text of expected) expect(result.checkpoint.semanticState.userDirections?.some(item => item.text === text)).toBe(true);
+    expect(result.checkpoint.budget.after).toBeLessThan(result.checkpoint.budget.triggerBudget);
+  }
+});
+
+it('leaves active conversation unchanged when exact user direction retention would overflow', async () => {
+  const semanticState = emptySemanticCheckpoint();
+  semanticState.userDirections = [{ text: 'x'.repeat(1_000_000), sourceMessageIds: ['old'] }];
+  const manager = new ConversationManager({ initialMessages: [
+    { id: 'new', role: 'user', content: 'Retain this new requirement.' },
+    { id: 'assistant', role: 'assistant', content: 'Continue.' },
+  ] });
+  // Install a prior checkpoint carrying an archive already at its bound.
+  const initial = new ConversationCompactor(chatClient(), manager, new TokenManager(8192), new ActivityStream());
+  const first = await initial.compactAndApply(context(), { forceExtractive: true, forceNoRetainedTail: true });
+  manager.setCheckpoint({ ...first.checkpoint, semanticState });
+  manager.addMessage({ id: 'newest', role: 'user', content: 'Keep this too.' });
+  manager.addMessage({ id: 'latest-assistant', role: 'assistant', content: 'Continuing.' });
+  const before = structuredClone(manager.getMessages());
+  const commit = vi.fn().mockResolvedValue(true);
+  const compactor = new ConversationCompactor(chatClient(), manager, new TokenManager(8192), new ActivityStream(), commit);
+  await expect(compactor.compactAndApply(context(), { forceExtractive: true, forceNoRetainedTail: true })).rejects.toThrow('Cannot compact without losing user directions');
+  expect(manager.getMessages()).toEqual(before);
+  expect(manager.getCheckpoint()?.semanticState).toEqual(semanticState);
+  expect(commit).not.toHaveBeenCalled();
+});
+
 it('grounds reducer diagnostics in source evidence across successive reductions', async () => {
   const client = chatClient();
   const compactor = new ConversationCompactor(

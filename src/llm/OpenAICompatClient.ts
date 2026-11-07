@@ -46,6 +46,10 @@ interface OpenAIPayload {
   reasoning_effort?: string;
   tools?: FunctionDefinition[];
   tool_choice?: string;
+  response_format?: {
+    type: 'json_schema';
+    json_schema: { name: string; schema: Record<string, unknown> };
+  };
 }
 
 /** Map an OpenAI `usage` object to our internal usage shape. */
@@ -145,7 +149,7 @@ export class OpenAICompatClient extends ModelClient {
     const eventStream: ActivityStream | undefined = options.activityStream ?? this.activityStream;
 
     const requestId = `req-${Date.now()}-${Math.random().toString(ID_GENERATION.RANDOM_STRING_RADIX).substring(ID_GENERATION.RANDOM_STRING_SUBSTRING_START, ID_GENERATION.RANDOM_STRING_SUBSTRING_START + ID_GENERATION.RANDOM_STRING_LENGTH_LONG)}`;
-    let payload = this.preparePayload(messages, functions, stream, temperature, dynamicMaxTokens);
+    let payload = this.preparePayload(messages, functions, stream, temperature, dynamicMaxTokens, options.responseSchema);
     let requestContainsImages = payload.messages.some(message =>
       Array.isArray(message.content)
       && message.content.some((part: any) => part?.type === 'image_url')
@@ -183,7 +187,7 @@ export class OpenAICompatClient extends ModelClient {
             logger.debug('[OPENAI_COMPAT] Model rejected image input; retrying without attachments');
             this._supportsImages = false;
             usedImageFallback = true;
-            payload = this.preparePayload(messages, functions, stream, temperature, dynamicMaxTokens);
+            payload = this.preparePayload(messages, functions, stream, temperature, dynamicMaxTokens, options.responseSchema);
             requestContainsImages = false;
             return execute();
           }
@@ -205,6 +209,7 @@ export class OpenAICompatClient extends ModelClient {
         stream,
         temperature,
         dynamicMaxTokens,
+        options.responseSchema,
       ) as unknown as Record<string, unknown>,
     };
   }
@@ -215,7 +220,8 @@ export class OpenAICompatClient extends ModelClient {
     functions?: FunctionDefinition[],
     stream: boolean = false,
     temperature?: number,
-    dynamicMaxTokens?: number
+    dynamicMaxTokens?: number,
+    responseSchema?: SendOptions['responseSchema'],
   ): OpenAIPayload {
     const payload: OpenAIPayload = {
       model: this._modelName,
@@ -224,6 +230,9 @@ export class OpenAICompatClient extends ModelClient {
       max_tokens: dynamicMaxTokens ?? this._maxTokens,
     };
     const effectiveTemperature = temperature ?? this._temperature;
+    if (responseSchema) {
+      payload.response_format = { type: 'json_schema', json_schema: responseSchema };
+    }
     if (effectiveTemperature !== undefined) {
       payload.temperature = effectiveTemperature;
     }
@@ -416,7 +425,7 @@ export class OpenAICompatClient extends ModelClient {
     };
 
     try {
-      while (true) {
+      streamLoop: while (true) {
         if (callerSignal.aborted) {
           return interruptedResponse();
         }
@@ -425,11 +434,9 @@ export class OpenAICompatClient extends ModelClient {
         // overall request budget is only checked between attempts, so each read
         // is bounded here.
         const { done, value } = await readWithTimeout(reader, progressDeadline.nextReadTimeout());
-        if (done) break;
-
-        buffer += decoder.decode(value, { stream: true });
+        buffer += done ? decoder.decode() : decoder.decode(value, { stream: true });
         const lines = buffer.split('\n');
-        buffer = lines.pop() || '';
+        buffer = done ? '' : lines.pop() || '';
 
         for (const rawLine of lines) {
           const line = rawLine.trim();
@@ -437,7 +444,7 @@ export class OpenAICompatClient extends ModelClient {
           const data = line.slice(5).trim();
           if (data === '[DONE]') {
             progressDeadline.progress();
-            continue;
+            break streamLoop;
           }
 
           let chunk: any;
@@ -501,6 +508,7 @@ export class OpenAICompatClient extends ModelClient {
             }
           }
         }
+        if (done) break;
       }
     } catch (error: any) {
       // An owner abort rejects an in-flight reader.read() before the loop can

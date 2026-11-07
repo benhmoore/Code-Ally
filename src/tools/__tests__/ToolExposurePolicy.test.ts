@@ -24,17 +24,25 @@ const coreDefs = CORE_TOOL_NAMES.map(name => definition(name));
 const mcpDefs = Array.from({ length: 25 }, (_, index) => definition(`chrome_action_${index}`, 400));
 
 describe('selectExposedTools', () => {
-  it('sends every tool and no catalogue when the surface fits', () => {
-    const definitions = [...coreDefs, definition('web-fetch'), definition(TOOL_SEARCH_TOOL_NAME)];
+  it('keeps optional tools discoverable on a roomy window without loading their schemas', () => {
+    const definitions = [...coreDefs, definition('web-fetch'), definition('tree'), definition('ls'), definition(TOOL_SEARCH_TOOL_NAME)];
+    const result = selectExposedTools({ definitions, schemaBudget: 1_000_000, estimateTokens: estimate });
+    expect(result.deferred.map(tool => tool.name)).toEqual(['web-fetch', 'tree', 'ls']);
+    expect(result.exposed.map(tool => tool.function.name)).toContain(TOOL_SEARCH_TOOL_NAME);
+    expect(result.exposedTokens).toBeLessThan(estimate(JSON.stringify(definitions)));
+  });
 
-    const result = selectExposedTools({
-      definitions, schemaBudget: 1_000_000, estimateTokens: estimate,
-    });
-
+  it('exposes all tools if discovery is unavailable even when over budget', () => {
+    const definitions = [...coreDefs, ...mcpDefs];
+    const result = selectExposedTools({ definitions, schemaBudget: 1, estimateTokens: estimate });
+    expect(result.exposed).toEqual(definitions);
     expect(result.deferred).toEqual([]);
-    // The search tool is pointless when nothing is withheld, so it is not sent.
-    expect(result.exposed.map(d => d.function.name)).not.toContain(TOOL_SEARCH_TOOL_NAME);
-    expect(result.exposed).toHaveLength(definitions.length - 1);
+  });
+
+  it('omits the discovery schema when no tools are deferred', () => {
+    const result = selectExposedTools({ definitions: [...coreDefs, definition(TOOL_SEARCH_TOOL_NAME)], schemaBudget: 1_000_000, estimateTokens: estimate });
+    expect(result.deferred).toEqual([]);
+    expect(result.exposed.map(tool => tool.function.name)).not.toContain(TOOL_SEARCH_TOOL_NAME);
   });
 
   it('keeps the core loop and defers the rest when the surface does not fit', () => {
@@ -128,7 +136,7 @@ describe('selectExposedTools', () => {
 
     const result = selectExposedTools({
       definitions, schemaBudget: 200, estimateTokens: estimate,
-      pinned: ['structured-output'],
+      pinned: ['STRUCTURED-OUTPUT'],
     });
 
     expect(result.exposed.map(d => d.function.name)).toContain('structured-output');
