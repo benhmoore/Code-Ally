@@ -1,3 +1,4 @@
+import type { PermissionPolicyService } from './PermissionPolicyService.js';
 /**
  * ServiceMap - The registry's key/type contract
  *
@@ -131,6 +132,7 @@ export interface ServiceMap {
   tool_activation_registry: ToolActivationRegistry;
   tool_call_history: ToolCallHistory;
   trust_manager: TrustManager;
+  permission_policy: PermissionPolicyService;
   permission_manager: PermissionManager;
 
   // --- Extensions ---

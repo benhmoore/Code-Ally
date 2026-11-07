@@ -54,7 +54,11 @@ export const DEFAULT_CONFIG: Config = {
   // EXECUTION SETTINGS
   // ==========================================
   bash_timeout: TIMEOUT_LIMITS.DEFAULT / 1000, // Bash command timeout in seconds
-  auto_confirm: false, // Skip permission prompts (dangerous)
+  permission_mode: 'auto', // Effective manual until the SystemOne reviewer is ready
+  reviewer_model: null, // Auto-detect a locally advertised decision model
+  reviewer_endpoint: null, // Inherit main endpoint; must support /v1/systemone
+  reviewer_api_key: null, // Inherit main credentials only when endpoints match
+  reviewer_shadow: false, // Observe review decisions while keeping manual approval
   parallel_tools: true, // Enable parallel tool execution
   stream_responses: true, // Stream main-agent responses independently of tool parallelism
   tool_call_activity_timeout: 120, // Timeout for agents without tool call activity (seconds)
@@ -167,7 +171,11 @@ export const CONFIG_TYPES: Record<keyof Config, string> = {
 
   // Execution Settings
   bash_timeout: 'number',
-  auto_confirm: 'boolean',
+  permission_mode: 'string',
+  reviewer_model: 'string',
+  reviewer_endpoint: 'string',
+  reviewer_api_key: 'string',
+  reviewer_shadow: 'boolean',
   parallel_tools: 'boolean',
   stream_responses: 'boolean',
   tool_call_activity_timeout: 'number',
@@ -241,7 +249,10 @@ export function validateConfigValue(
 ): { valid: boolean; coercedValue?: any; error?: string } {
   const expectedType = getConfigType(key);
 
-  if (key === 'endpoint') {
+  if (['reviewer_model', 'reviewer_endpoint', 'reviewer_api_key'].includes(key) && (value === null || value === undefined || value === '')) {
+    return { valid: true, coercedValue: null };
+  }
+  if (key === 'endpoint' || key === 'reviewer_endpoint') {
     try {
       if (typeof value !== 'string') throw new Error('Invalid URL');
       const url = new URL(value);

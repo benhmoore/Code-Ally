@@ -29,7 +29,7 @@ export function persistentMessage(message: Message): Message | null {
     tool_call_id: message.tool_call_id,
     is_error: message.is_error,
     content: `[Tool Call ID: ${message.tool_call_id}]\nEphemeral tool output discarded; this call completed${message.is_error ? ' with an error' : ''}.`,
-    metadata: { tool_status: message.metadata.tool_status },
+    metadata: { tool_status: message.metadata.tool_status, tool_permission: message.metadata.tool_permission },
   };
 }
 

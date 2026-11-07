@@ -43,7 +43,7 @@ function call(orchestrator: ToolOrchestrator, name: string) {
 }
 
 function installPolicy(disallowed: string[]): void {
-  const trustManager = new TrustManager(true);
+  const trustManager = new TrustManager('allow-all');
   trustManager.setRunAuthorizationPolicy({ disallowed_tools: disallowed });
   ServiceRegistry.getInstance().registerInstance('trust_manager', trustManager);
 }

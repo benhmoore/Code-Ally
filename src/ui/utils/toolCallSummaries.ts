@@ -1,4 +1,5 @@
 import type { ToolCallTreeNode } from '@shared/index.js';
+import { permissionDecisionText } from './permissionPresentation.js';
 
 export interface ToolCallTimelineItem {
   type: 'toolCall';
@@ -55,6 +56,7 @@ export function isSummarizableContextToolCall(toolCall: ToolCallTreeNode): boole
     !toolCall.isLinkedPlugin &&
     !toolCall.error &&
     !toolCall.diffPreview &&
+    !permissionDecisionText(toolCall.permissionDecision) &&
     !hasVisibleChildren(toolCall)
   );
 }

@@ -161,6 +161,7 @@ export function reconstructToolCallsFromMessages(messages: Message[], serviceReg
           status,
           toolName: tc.function.name,
           arguments: parsedArgs,
+          ...(result?.metadata?.tool_permission?.[tc.id] ? { permissionDecision: result.metadata.tool_permission[tc.id] } : {}),
           output: result?.output,
           error: result?.error,
           startTime: baseTimestamp + index, // Slightly offset multiple calls in same message

@@ -1,31 +1,25 @@
-/**
- * TrustManager - Handles tool execution permissions and user confirmations
- *
- * Manages permission flows for potentially destructive operations, including:
- * - Session-based trust tracking
- * - User permission prompts with keyboard navigation
- * - Command sensitivity analysis for bash operations
- * - Batch operation permissions
- * - Trust scope management (once, session, path, global)
- *
- * Security Model:
- * - Non-destructive tools (read, glob, grep) never require confirmation
- * - Sensitive tools (write, apply-patch, bash) require user permission
- * - Extremely sensitive commands (rm with wildcards, system commands) disable "Always Allow"
- * - Session-based trust (cleared on exit, no persistence)
- */
+import path from 'node:path';
+/** One consent boundary: explicit run policy, exact session grants, selective review, then human approval. */
 
 import { ActivityStream } from '../services/ActivityStream.js';
 import { ActivityEventType, ActivityEvent } from '../types/index.js';
-import { API_TIMEOUTS, TEXT_LIMITS, PERMISSION_MESSAGES } from '../config/constants.js';
+import { API_TIMEOUTS, PERMISSION_MESSAGES } from '../config/constants.js';
 import { PermissionDeniedError, PolicyDeniedError } from '../security/PathSecurity.js';
 import { logger } from '../services/Logger.js';
 import type { ScheduledTaskPermissionPolicy } from '../services/ScheduledTaskManager.js';
 import type { RunPolicyManager } from '../services/RunPolicyManager.js';
-import {
-  evaluateRunAuthorization,
-  type RunAuthorizationPolicy,
-} from '../security/RunAuthorizationPolicy.js';
+import { evaluateRunAuthorization, type RunAuthorizationPolicy } from '../security/RunAuthorizationPolicy.js';
+
+import type { PermissionMode } from '../security/PermissionMode.js';
+import type { PermissionPolicyService, PermissionEvaluation } from '../services/PermissionPolicyService.js';
+
+export interface PermissionContext {
+  onDecision?: (decision: import('../security/PermissionDecision.js').PermissionDecision) => void;
+  requiresConfirmation: boolean;
+  workspaceRoot: string;
+  task?: string;
+  signal?: AbortSignal;
+}
 
 /**
  * Trust scope levels for permission management
@@ -75,14 +69,15 @@ export enum PermissionChoice {
  * 1. Track trusted tools per session
  * 2. Prompt users for permissions when needed
  * 3. Analyze command sensitivity
- * 4. Manage batch operation permissions
- * 5. Support auto-confirm mode for scripting
+ * 4. Apply explicit permission modes
  */
 export class TrustManager {
   /**
-   * Auto-confirm flag (dangerous - for scripting/testing only)
+   * Requested mode when no runtime policy service is installed
    */
-  private autoConfirm: boolean;
+  private permissionMode: PermissionMode;
+  private readonly subscriptions: Array<() => void> = [];
+  private permissionPolicy?: PermissionPolicyService;
 
   /**
    * Session-based trust storage
@@ -91,21 +86,9 @@ export class TrustManager {
   private trustedTools: Map<string, Set<string>>;
 
   /**
-   * Pre-approved operations for batch processing
-   * Set of operation keys that have been approved in advance
-   */
-  private preApprovedOperations: Set<string>;
-
-  /**
    * Activity stream for event-based permission prompts
    */
   private activityStream?: ActivityStream;
-
-  /**
-   * Auto-allow mode getter function
-   * When enabled, automatically approves non-EXTREMELY_SENSITIVE commands
-   */
-  private autoAllowModeGetter?: () => boolean;
 
   /** Central interaction policy. When absent, behavior remains interactive. */
   private runPolicyManager?: RunPolicyManager;
@@ -142,26 +125,28 @@ export class TrustManager {
     }
   > = new Map();
 
-  constructor(autoConfirm: boolean = false, activityStream?: ActivityStream, autoAllowModeGetter?: () => boolean) {
-    this.autoConfirm = autoConfirm;
+  constructor(permissionMode: PermissionMode = 'manual', activityStream?: ActivityStream) {
+    this.permissionMode = permissionMode;
     this.trustedTools = new Map();
-    this.preApprovedOperations = new Set();
     this.activityStream = activityStream;
-    this.autoAllowModeGetter = autoAllowModeGetter;
 
     // Listen for permission responses if ActivityStream is provided
     if (this.activityStream) {
-      this.activityStream.subscribe(ActivityEventType.PERMISSION_RESPONSE, (event) => {
-        this.handlePermissionResponse(event);
-      });
+      this.subscriptions.push(
+        this.activityStream.subscribe(ActivityEventType.PERMISSION_RESPONSE, event => {
+          this.handlePermissionResponse(event);
+        })
+      );
 
       // Reject any pending permission prompts when the user interrupts the
       // agent, so the awaiting tool unwinds immediately instead of hanging
       // until the 2-minute timeout. The UI clears the prompt separately on
       // the same event (see useActivitySubscriptions).
-      this.activityStream.subscribe(ActivityEventType.USER_INTERRUPT_INITIATED, () => {
-        this.cancelAllPending();
-      });
+      this.subscriptions.push(
+        this.activityStream.subscribe(ActivityEventType.USER_INTERRUPT_INITIATED, () => {
+          this.cancelAllPending();
+        })
+      );
     }
   }
 
@@ -173,25 +158,58 @@ export class TrustManager {
    * @param path - Context-specific path/command
    * @returns True if permission granted, throws PermissionDeniedError if denied
    */
-  async checkPermission(toolName: string, args: any, path?: CommandPath): Promise<boolean> {
-    // Policy runs first: it is the only tier that can deny outright, and a
-    // strict policy never falls through to the tiers below.
-    if (this.authorizationPolicy && this.checkPolicy(toolName, args, path)) {
+  async checkPermission(
+    toolName: string,
+    args: Record<string, unknown>,
+    path?: CommandPath,
+    context?: PermissionContext
+  ): Promise<boolean> {
+    if (context?.signal?.aborted) throw new PermissionDeniedError('Permission request interrupted');
+    if (this.authorizationPolicy && this.checkPolicy(toolName, args, path)) return true;
+    if (this.isTrusted(toolName, path)) return true;
+    const mode = this.permissionPolicy?.getSnapshot().requestedMode ?? this.permissionMode;
+    if (mode === 'allow-all') {
+      if (this.getCommandSensitivity(toolName, path) === SensitivityTier.EXTREMELY_SENSITIVE) {
+        throw new PolicyDeniedError(
+          'Allow-all does not permit this extremely sensitive operation',
+          'allow_all.extremely_sensitive',
+          ['Narrow the operation or use Manual mode for explicit approval']
+        );
+      }
       return true;
     }
+    let reason: string | undefined;
+    if (mode === 'auto' && this.permissionPolicy) {
+      const startedInManual = this.permissionPolicy.getSnapshot().effectiveMode === 'manual';
+      const input: PermissionEvaluation = {
+        toolName,
+        args,
+        workspaceRoot: context?.workspaceRoot ?? process.cwd(),
+        task: context?.task,
+        signal: context?.signal,
+      };
+      const result = await this.permissionPolicy.evaluate(input);
+      // Audit observers cannot alter the authorization result being enforced.
+      context?.onDecision?.(Object.freeze({ ...result }));
+      if (context?.signal?.aborted) throw new PermissionDeniedError('Permission review interrupted');
+      if (result.verdict === 'allow') return true;
+      if (result.verdict === 'deny')
+        throw new PolicyDeniedError(result.reason, 'auto.denied', [
+          'Choose an action consistent with the task or request explicit approval in Manual mode',
+        ]);
+      reason = result.reason;
+      // Manual fallback preserves ordinary read-only behavior, but a live Auto
+      // policy's explicit ask must not be bypassed by tool capability metadata.
+      if (startedInManual && context?.requiresConfirmation === false) return true;
+    } else if (context?.requiresConfirmation === false) return true;
+    return this.promptForPermission(toolName, args, path, reason, context?.signal);
+  }
 
-    // Auto-confirm mode bypasses all permission checks
-    if (this.autoConfirm) {
-      return true;
-    }
-
-    // Check if tool is already trusted
-    if (this.isTrusted(toolName, path)) {
-      return true;
-    }
-
-    // Prompt user for permission
-    return this.promptForPermission(toolName, args, path);
+  setPermissionPolicy(service: PermissionPolicyService): void {
+    this.permissionPolicy = service;
+  }
+  setPermissionMode(mode: PermissionMode): void {
+    this.permissionMode = mode;
   }
 
   /**
@@ -200,10 +218,7 @@ export class TrustManager {
    * @param policy - Policy to install, or undefined to clear.
    * @param options.strict - Deny anything the policy does not name.
    */
-  setRunAuthorizationPolicy(
-    policy?: RunAuthorizationPolicy,
-    options?: { strict?: boolean }
-  ): void {
+  setRunAuthorizationPolicy(policy?: RunAuthorizationPolicy, options?: { strict?: boolean }): void {
     this.authorizationPolicy = policy;
     this.authorizationStrict = options?.strict ?? false;
   }
@@ -230,11 +245,8 @@ export class TrustManager {
     const policy = this.authorizationPolicy;
     if (!policy) return false;
 
-    const command = typeof path === 'object' && path?.command
-        ? path.command
-        : typeof args?.command === 'string'
-          ? args.command
-          : '';
+    const command =
+      typeof path === 'object' && path?.command ? path.command : typeof args?.command === 'string' ? args.command : '';
     const decision = evaluateRunAuthorization(policy, toolName, command);
     if (decision.verdict === 'allow') {
       return true;
@@ -246,29 +258,24 @@ export class TrustManager {
     const subject = 'Run policy';
     switch (decision.reason) {
       case 'policy.disallowed_tools':
-        throw new PolicyDeniedError(
-          `${subject} denied tool: ${toolName}`,
-          decision.reason,
-          ['Use a tool that the run policy does not deny']
-        );
+        throw new PolicyDeniedError(`${subject} denied tool: ${toolName}`, decision.reason, [
+          'Use a tool that the run policy does not deny',
+        ]);
       case 'policy.denied_bash_patterns':
-        throw new PolicyDeniedError(
-          `${subject} denied shell command: ${command}`,
-          decision.reason,
-          ['Use a non-shell tool', 'Choose a command the run policy allows']
-        );
+        throw new PolicyDeniedError(`${subject} denied shell command: ${command}`, decision.reason, [
+          'Use a non-shell tool',
+          'Choose a command the run policy allows',
+        ]);
       case 'policy.allowed_bash_commands':
-        throw new PolicyDeniedError(
-          `${subject} is not allowed to run shell command: ${command}`,
-          decision.reason,
-          ['Use a non-shell tool', 'Choose a command allowed by the run policy']
-        );
+        throw new PolicyDeniedError(`${subject} is not allowed to run shell command: ${command}`, decision.reason, [
+          'Use a non-shell tool',
+          'Choose a command allowed by the run policy',
+        ]);
       case 'policy.allowed_tools':
-        throw new PolicyDeniedError(
-          `${subject} is not allowed to use ${toolName}`,
-          decision.reason,
-          ['Use an allowed read-only tool', 'Choose a policy-compliant alternative']
-        );
+        throw new PolicyDeniedError(`${subject} is not allowed to use ${toolName}`, decision.reason, [
+          'Use an allowed read-only tool',
+          'Choose a policy-compliant alternative',
+        ]);
     }
   }
 
@@ -280,31 +287,21 @@ export class TrustManager {
    * @param path - Context-specific path/command
    * @returns True if allowed, throws PermissionDeniedError if denied
    */
-  async promptForPermission(toolName: string, args: any, path?: CommandPath): Promise<boolean> {
+  private async promptForPermission(
+    toolName: string,
+    args: any,
+    path?: CommandPath,
+    decisionReason?: string,
+    signal?: AbortSignal
+  ): Promise<boolean> {
     // Detect command sensitivity tier
     const tier = this.getCommandSensitivity(toolName, path);
 
-    // Auto-allow mode: automatically approve non-EXTREMELY_SENSITIVE commands
-    // Security constraint: EXTREMELY_SENSITIVE commands ALWAYS require explicit user approval
-    // Note: Auto-allow is ephemeral - it bypasses prompts but doesn't create permanent trust
-    if (this.autoAllowModeGetter?.()) {
-      if (tier !== SensitivityTier.EXTREMELY_SENSITIVE) {
-        logger.debug(`[TrustManager] Auto-allowing ${toolName} (auto mode enabled, ephemeral approval)`);
-        return true;
-      }
-      throw new PolicyDeniedError(
-        `Auto mode denied extremely sensitive operation: ${toolName}`,
-        'auto.extremely_sensitive',
-        ['Use a less destructive operation', 'Narrow the target or command']
-      );
-    }
-
     if (this.runPolicyManager && !this.runPolicyManager.isInteractionAvailable()) {
-      throw new PolicyDeniedError(
-        `Automatic run cannot request permission for ${toolName}`,
-        'interaction.none',
-        ['Use a tool that does not require confirmation', 'Choose a policy-allowed operation']
-      );
+      throw new PolicyDeniedError(`Automatic run cannot request permission for ${toolName}`, 'interaction.none', [
+        'Use a tool that does not require confirmation',
+        'Choose a policy-allowed operation',
+      ]);
     }
 
     // Require ActivityStream only after noninteractive policy decisions have
@@ -326,13 +323,12 @@ export class TrustManager {
         : [PermissionChoice.ALLOW, PermissionChoice.ALWAYS_ALLOW, instructOption];
 
     // Get user choice with event-based UI
-    const choice = await this.showPermissionMenu(toolName, args, path, options);
+    const choice = await this.showPermissionMenu(toolName, args, path, options, decisionReason, signal);
 
     // Handle user selection
     switch (choice) {
       case PermissionChoice.ALLOW:
         // One-time permission - just return true (permission already granted)
-        // Do NOT add to preApprovedOperations (that's only for batch operations)
         return true;
 
       case PermissionChoice.ALWAYS_ALLOW:
@@ -355,78 +351,6 @@ export class TrustManager {
   }
 
   /**
-   * Prompt for batch operation permissions
-   *
-   * Used when multiple tools need to execute in sequence.
-   *
-   * @param toolCalls - Array of tool call objects with {function: {name, arguments}}
-   * @returns True if permission granted, false if denied
-   */
-  async promptForBatchOperations(toolCalls: Array<{ function: { name: string; arguments: any } }>): Promise<boolean> {
-    // Auto-confirm mode bypasses all checks
-    if (this.autoConfirm) {
-      // Pre-approve all operations
-      for (const call of toolCalls) {
-        this.markOperationAsApproved(call.function.name, null);
-      }
-      return true;
-    }
-
-    if (this.autoAllowModeGetter?.()) {
-      throw new PolicyDeniedError(
-        'Auto mode cannot approve an opaque batch of sensitive operations',
-        'auto.batch_requires_individual_policy',
-        ['Execute operations individually so each can be evaluated']
-      );
-    }
-
-    if (this.runPolicyManager && !this.runPolicyManager.isInteractionAvailable()) {
-      throw new PolicyDeniedError(
-        'Automatic run cannot request batch permission',
-        'interaction.none',
-        ['Execute policy-allowed operations individually']
-      );
-    }
-
-    // Show appropriate menu based on sensitivity and delegation state
-    // INSTRUCT only shown when there's an active delegation (sub-agent running)
-    const activeDelegationName = this.getActiveDelegationNameGetter?.();
-    const denyOption = activeDelegationName
-      ? `Tell ${activeDelegationName} what to do instead...`
-      : PermissionChoice.DENY;
-    const options = [PermissionChoice.ALLOW, denyOption];
-
-    // Pass batch operation context to permission menu
-    const choice = await this.showPermissionMenu(
-      'batch',
-      { operations: toolCalls.map(tc => tc.function.name) },
-      undefined,
-      options
-    );
-
-    switch (choice) {
-      case PermissionChoice.ALLOW:
-        // Pre-approve all operations for this batch
-        for (const call of toolCalls) {
-          this.markOperationAsApproved(call.function.name, null);
-        }
-        return true;
-
-      case PermissionChoice.DENY:
-        return false;
-
-      case PermissionChoice.INSTRUCT:
-        // INSTRUCT is handled in the UI layer (InputPrompt) which sends the instruction
-        // as an interjection and emits DENY. This case should be unreachable, but if
-        // reached, treat as DENY for safety.
-        return false;
-
-      default:
-        return false;
-    }
-  }
-
-  /**
    * Check if a tool is already trusted for the given context
    *
    * @param toolName - Name of the tool
@@ -434,15 +358,6 @@ export class TrustManager {
    * @returns True if trusted, false otherwise
    */
   isTrusted(toolName: string, path?: CommandPath): boolean {
-    // Check pre-approved operations first (one-time approvals)
-    const operationKey = this.getOperationKey(toolName, path);
-    if (this.preApprovedOperations.has(operationKey)) {
-      // Consume one-time approval (remove it so it only works once)
-      // Note: "Always Allow" also adds to trustedTools, so it will still work
-      this.preApprovedOperations.delete(operationKey);
-      return true;
-    }
-
     // Check trusted tools
     const trustedPaths = this.trustedTools.get(toolName);
     if (!trustedPaths) {
@@ -491,40 +406,8 @@ export class TrustManager {
 
       case TrustScope.ONCE:
         // Once scope doesn't add to trusted tools
-        // It's handled via pre-approved operations
         break;
     }
-  }
-
-  /**
-   * Mark an operation as pre-approved (for batch processing)
-   *
-   * @param toolName - Name of the tool
-   * @param path - Context-specific path/command
-   */
-  markOperationAsApproved(toolName: string, path?: CommandPath): void {
-    const operationKey = this.getOperationKey(toolName, path);
-    this.preApprovedOperations.add(operationKey);
-  }
-
-  /**
-   * Set the auto-allow mode getter function
-   * This should be called after UI initialization to connect the UI state
-   *
-   * @param getter - Function that returns the current auto-allow mode state
-   */
-  setAutoAllowModeGetter(getter: () => boolean): void {
-    this.autoAllowModeGetter = getter;
-  }
-
-  /**
-   * Update auto-confirm mode at runtime.
-   *
-   * Used by /config changes so permission behavior matches the active config
-   * without requiring a restart.
-   */
-  setAutoConfirm(autoConfirm: boolean): void {
-    this.autoConfirm = autoConfirm;
   }
 
   /**
@@ -614,11 +497,10 @@ export class TrustManager {
   }
 
   /**
-   * Reset session trust (clear all trusted tools and pre-approved operations)
+   * Reset session trust
    */
   reset(): void {
     this.trustedTools.clear();
-    this.preApprovedOperations.clear();
   }
 
   /**
@@ -629,17 +511,33 @@ export class TrustManager {
     toolName: string,
     args: any,
     path: CommandPath | undefined,
-    options: (PermissionChoice | string)[]
+    options: (PermissionChoice | string)[],
+    decisionReason?: string,
+    signal?: AbortSignal
   ): Promise<PermissionChoice> {
     return new Promise((resolve, reject) => {
+      if (signal?.aborted) {
+        reject(new PermissionDeniedError('Permission request interrupted'));
+        return;
+      }
       // Generate unique ID for permission request: perm_{timestamp}_{7-char-random} (base-36, skip '0.' prefix)
       const requestId = `perm_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
+
+      const abort = () => {
+        const pending = this.pendingPermissions.get(requestId);
+        if (!pending) return;
+        clearTimeout(pending.timeoutId);
+        this.pendingPermissions.delete(requestId);
+        pending.reject(new PermissionDeniedError('Permission request interrupted'));
+      };
+      signal?.addEventListener('abort', abort, { once: true });
 
       // Set up timeout to reject orphaned permissions after 2 minutes
       const timeoutId = setTimeout(() => {
         if (this.pendingPermissions.has(requestId)) {
           logger.warn(`Permission request ${requestId} timed out after 2 minutes`);
           this.pendingPermissions.delete(requestId);
+          signal?.removeEventListener('abort', abort);
           reject(new PermissionDeniedError('Permission request timed out'));
         }
       }, API_TIMEOUTS.PERMISSION_REQUEST_TIMEOUT);
@@ -647,9 +545,11 @@ export class TrustManager {
       // Store resolver so we can complete it when response arrives
       this.pendingPermissions.set(requestId, {
         resolve: (choice: PermissionChoice) => {
+          signal?.removeEventListener('abort', abort);
           resolve(choice);
         },
         reject: (error: Error) => {
+          signal?.removeEventListener('abort', abort);
           reject(error);
         },
         timeoutId,
@@ -676,6 +576,7 @@ export class TrustManager {
           command,
           arguments: args,
           sensitivity,
+          decisionReason,
           options,
         },
       });
@@ -700,12 +601,16 @@ export class TrustManager {
     }
   }
 
+  cleanup(): void {
+    this.cancelAllPending();
+    for (const unsubscribe of this.subscriptions.splice(0)) unsubscribe();
+    this.reset();
+  }
+
   /**
    * Handle permission response from UI
    */
-  private handlePermissionResponse(
-    event: ActivityEvent<ActivityEventType.PERMISSION_RESPONSE>
-  ): void {
+  private handlePermissionResponse(event: ActivityEvent<ActivityEventType.PERMISSION_RESPONSE>): void {
     const { requestId, choice } = event.data;
 
     // Find pending permission request
@@ -723,32 +628,18 @@ export class TrustManager {
     pending.resolve(choice);
   }
 
-  /**
-   * Generate operation key for trust cache
-   *
-   * @param toolName - Name of the tool
-   * @param path - Context-specific path/command
-   * @returns Operation key
-   */
-  private getOperationKey(toolName: string, path?: CommandPath): string {
-    // Bash tool: truncate command to 50 chars for key
-    if (toolName === 'bash' && path && typeof path === 'object') {
-      const command = path.command || '';
-      return `bash:${command.substring(0, TEXT_LIMITS.DESCRIPTION_MAX)}`;
-    }
-
-    // File operations: use absolute path (TODO: normalize path)
-    if (typeof path === 'string') {
-      return `${toolName}:${path}`;
-    }
-
-    // No path: tool name only
-    return toolName;
+  private commandDirectory(directory?: string): string {
+    return path.resolve(directory ?? process.cwd());
   }
 
   private getTrustPath(path?: CommandPath): string | undefined {
     if (typeof path === 'string') return path;
-    if (path?.command) return `command:${path.command}`;
+    if (path?.command)
+      return JSON.stringify({
+        command: path.command,
+        cwd: this.commandDirectory(path.path),
+        outside: path.outside_cwd === true,
+      });
     if (path?.path) return `path:${path.path}`;
     return undefined;
   }

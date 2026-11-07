@@ -67,6 +67,7 @@ function boundTool(call: ToolCallState): ToolCallState {
     result = {
       ...project(call, TOOL_BYTES) as ToolCallState,
       id: call.id, toolName: call.toolName, status: call.status, startTime: call.startTime,
+      permissionDecision: call.permissionDecision,
     };
   }
   toolProjections.set(call, result);

@@ -39,4 +39,32 @@ describe('essential setup services', () => {
     expect(result.tools).toBe('unknown');
     expect(result.note).toContain('offline');
   });
+  it('checks reviewer readiness in isolation and aborts an outstanding probe', async () => {
+    let signal!: AbortSignal;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((_url, options) => {
+        signal = options.signal;
+        return new Promise((_resolve, reject) =>
+          signal.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')))
+        );
+      })
+    );
+    const controller = new AbortController();
+    const result = new SetupWizard(manager).inspectPermissions(
+      {
+        provider: 'ollama',
+        endpoint: 'http://fixture',
+        api_key: null,
+        model: 'main',
+        context_size: 32768,
+        permission_mode: 'auto',
+      },
+      controller.signal
+    );
+    controller.abort();
+    await expect(result).rejects.toMatchObject({ name: 'AbortError' });
+    expect(signal.aborted).toBe(true);
+    expect(config.permission_mode).toBe('auto');
+  });
 });

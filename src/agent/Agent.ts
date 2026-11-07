@@ -50,6 +50,7 @@ import { CheckpointTracker } from './CheckpointTracker.js';
 import { ToolResultManager } from '../services/ToolResultManager.js';
 import { ConfigManager } from '../services/ConfigManager.js';
 import { PermissionManager } from '../security/PermissionManager.js';
+import { permissionTask } from '../security/permissionTask.js';
 import { isPermissionDeniedError } from '../security/PathSecurity.js';
 import { ResponseProcessor, ResponseContext } from './ResponseProcessor.js';
 import { SessionPersistence } from './SessionPersistence.js';
@@ -775,6 +776,11 @@ export class Agent {
    */
   public getConversationHistory(): Message[] {
     return this.conversationManager.getMessagesCopy();
+  }
+
+  /** Bounded exact authority for permission review; never copies the full transcript. */
+  public getPermissionTask(): string | undefined {
+    return permissionTask(this.conversationManager.getTranscript(), this.conversationManager.getCheckpoint()?.semanticState);
   }
 
   /**

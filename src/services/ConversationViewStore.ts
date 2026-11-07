@@ -309,6 +309,9 @@ export class ConversationViewStore {
         }, true);
         break;
       }
+      case ActivityEventType.TOOL_PERMISSION_DECISION:
+        this.updateTool(event.id, { permissionDecision: data.decision });
+        break;
       case ActivityEventType.TOOL_CALL_END: {
         if (data.groupExecution) break;
         const call = this.snapshot.activeToolCalls.find(item => item.id === event.id);

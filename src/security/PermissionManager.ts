@@ -12,7 +12,7 @@
 
 import path from 'path';
 import { cwd } from 'process';
-import { TrustManager, CommandPath } from '../agent/TrustManager.js';
+import { TrustManager, CommandPath, type PermissionContext } from '../agent/TrustManager.js';
 import { isPathWithinAllowedDirectories } from './PathSecurity.js';
 import { logger } from '../services/Logger.js';
 import type { BaseTool } from '../tools/BaseTool.js';
@@ -32,9 +32,7 @@ export class PermissionManager {
     this.trustManager = trustManager;
     // Store the starting directory at initialization time
     this.startDirectory = path.resolve(cwd());
-    logger.debug(
-      `PermissionManager initialized with starting directory: ${this.startDirectory}`
-    );
+    logger.debug(`PermissionManager initialized with starting directory: ${this.startDirectory}`);
 
     // Create a set of allowed file paths (paths within the working directory)
     this.allowedPaths = new Set();
@@ -51,7 +49,8 @@ export class PermissionManager {
   async checkPermission(
     toolName: string,
     args: Record<string, any>,
-    tool: BaseTool
+    tool: BaseTool,
+    context?: Omit<PermissionContext, 'workspaceRoot' | 'requiresConfirmation'>
   ): Promise<boolean> {
     // Get permission path based on the tool and arguments
     const permissionPath = await this.getPermissionPath(args, tool);
@@ -61,16 +60,11 @@ export class PermissionManager {
     // which covers all tools rather than only the confirm-gated ones this method
     // ever saw. This method's job is now solely trust/consent.
 
-    // Check if already trusted
-    if (this.trustManager.isTrusted(toolName, permissionPath)) {
-      logger.debug(`Tool ${toolName} is already trusted`);
-      return true;
-    }
-
-    logger.debug(`Requesting permission for ${toolName}`);
-
-    // Prompt for permission (this may throw PermissionDeniedError)
-    return await this.trustManager.checkPermission(toolName, args, permissionPath);
+    return await this.trustManager.checkPermission(toolName, args, permissionPath, {
+      ...context,
+      workspaceRoot: this.startDirectory,
+      requiresConfirmation: tool.requiresConfirmation(args),
+    });
   }
 
   /**
@@ -79,17 +73,17 @@ export class PermissionManager {
    * @param args Tool arguments
    * @returns Permission path for trust checking
    */
-  private async getPermissionPath(
-    args: Record<string, any>,
-    tool: BaseTool
-  ): Promise<CommandPath> {
+  private async getPermissionPath(args: Record<string, any>, tool: BaseTool): Promise<CommandPath> {
     // Any tool declaring model-supplied shell execution uses command content.
     const shellCommand = tool.getShellCommand(args);
     if (shellCommand) {
       const command = shellCommand;
-      const workingDir = typeof args.working_dir === 'string' ? args.working_dir : this.startDirectory;
-      const outsideCwd = await this.isCommandOutsideCwd(command)
-        || !await isPathWithinAllowedDirectories(workingDir);
+      const workingDir =
+        typeof args.working_dir === 'string'
+          ? path.resolve(this.startDirectory, args.working_dir)
+          : this.startDirectory;
+      const outsideCwd =
+        (await this.isCommandOutsideCwd(command)) || !(await isPathWithinAllowedDirectories(workingDir));
       return {
         command,
         path: workingDir,
@@ -123,7 +117,7 @@ export class PermissionManager {
     const analysis = analyzeShellCommandPaths(command);
     if (analysis.hasUnresolvedExpansion || analysis.hasParentTraversal) return true;
     for (const candidate of analysis.absolutePaths) {
-      if (!await isPathWithinAllowedDirectories(candidate)) return true;
+      if (!(await isPathWithinAllowedDirectories(candidate))) return true;
     }
     return false;
   }

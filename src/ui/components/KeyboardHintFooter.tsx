@@ -15,6 +15,8 @@
  * ```
  */
 
+import type { PermissionMode } from '../../security/PermissionMode.js';
+import { permissionModeLabel } from '../utils/permissionPresentation.js';
 import React from 'react';
 import { Box, Text } from 'ink';
 import { UI_SYMBOLS } from '@config/uiSymbols.js';
@@ -24,8 +26,8 @@ export interface KeyboardHintFooterProps {
   action?: string;
   /** Cancel action text (default: "cancel") */
   cancelText?: string;
-  /** Whether auto-allow mode is enabled (for permission prompts) */
-  autoAllowMode?: boolean;
+  /** Effective permission mode (for permission prompts) */
+  permissionMode?: PermissionMode;
   /** Fully custom hints. Prefer this for non-standard workflows. */
   hints?: Array<{ key: string; label: string }>;
 }
@@ -39,7 +41,7 @@ export interface KeyboardHintFooterProps {
 const KeyboardHintFooterComponent: React.FC<KeyboardHintFooterProps> = ({
   action = 'confirm',
   cancelText = 'cancel',
-  autoAllowMode,
+  permissionMode,
   hints,
 }) => {
   const resolvedHints = hints ?? [
@@ -54,11 +56,12 @@ const KeyboardHintFooterComponent: React.FC<KeyboardHintFooterProps> = ({
         {resolvedHints.map((hint, index) => (
           <React.Fragment key={`${hint.key}-${hint.label}`}>
             {index > 0 && ` ${UI_SYMBOLS.SEPARATOR.MIDDLE_DOT} `}
-            {hint.key}{hint.label ? ` ${hint.label}` : ''}
+            {hint.key}
+            {hint.label ? ` ${hint.label}` : ''}
           </React.Fragment>
         ))}
-        {autoAllowMode !== undefined
-          ? ` ${UI_SYMBOLS.SEPARATOR.MIDDLE_DOT} shift+tab auto-allow ${autoAllowMode ? 'on' : 'off'}`
+        {permissionMode !== undefined
+          ? ` ${UI_SYMBOLS.SEPARATOR.MIDDLE_DOT} shift+tab ${permissionModeLabel(permissionMode)}`
           : ''}
       </Text>
     </Box>

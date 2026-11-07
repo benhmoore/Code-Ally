@@ -13,7 +13,7 @@ import {
 const overviewCategories: Record<string, (keyof Config)[]> = {
   Connection: ['provider', 'endpoint', 'model', 'service_model'],
   Generation: ['context_size', 'max_tokens', 'reasoning_effort', 'temperature'],
-  Interaction: ['auto_confirm', 'parallel_tools', 'show_thinking_in_chat', 'mouse_support'],
+  Interaction: ['permission_mode', 'parallel_tools', 'show_thinking_in_chat', 'mouse_support'],
   Search: ['search_provider'],
 };
 

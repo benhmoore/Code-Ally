@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { PermissionPolicyService } from './services/PermissionPolicyService.js';
 /**
  * Code Ally CLI Entry Point
  *
@@ -514,8 +515,9 @@ function getCliConfigOverrides(options: CLIOptions): Record<string, any> {
   if (options.reasoningEffort !== undefined)
     overrides.reasoning_effort = options.reasoningEffort;
   if (options.autoConfirm !== undefined) {
-    overrides.auto_confirm = options.autoConfirm;
+    overrides.permission_mode = options.autoConfirm ? 'allow-all' : 'manual';
   }
+  if (options.permissionMode !== undefined) overrides.permission_mode = options.permissionMode;
 
   return overrides;
 }
@@ -1039,7 +1041,7 @@ async function main() {
     if (options.scheduledTask) {
       // Scheduled runs must use their stored deny-by-default policy, even if
       // the user's interactive profile normally has auto_confirm enabled.
-      runtimeOverrides.auto_confirm = false;
+      runtimeOverrides.permission_mode = 'manual';
     }
     configManager.applyRuntimeOverrides(runtimeOverrides);
     const configOverrides = configManager.getConfig();
@@ -1085,7 +1087,7 @@ async function main() {
       completion: usesDurableCompletion ? 'durable_objective' : 'chat',
       authorizationPresetId: options.scheduledTask
         ? 'scheduled'
-        : config.auto_confirm
+        : (config.permission_mode === 'allow-all')
           ? 'auto-confirm'
           : headlessRun
             ? 'deny-by-default'
@@ -1372,8 +1374,12 @@ async function main() {
     logger.debug('[CLI] FormManager created and injected into tools');
 
     // Create trust manager for permission tracking
-    // Note: autoAllowModeGetter will be set after UI initialization
-    const trustManager = new TrustManager(config.auto_confirm, activityStream);
+    const permissionPolicy = new PermissionPolicyService();
+    registry.registerInstance('permission_policy', permissionPolicy);
+    permissionPolicy.configure(config);
+    runPolicyManager.setTerminalAutoAllow(config.permission_mode === 'allow-all');
+    const trustManager = new TrustManager(config.permission_mode, activityStream);
+    trustManager.setPermissionPolicy(permissionPolicy);
     trustManager.setRunPolicyManager(runPolicyManager);
     if (scheduledTaskForRun) {
       // Grants are re-derived from current code on every run, so a hand-edited

@@ -43,6 +43,17 @@ import type { BaseTool } from '../tools/BaseTool.js';
 import { RunPersistenceError } from '../services/RunSupervisor.js';
 import type { RunExecution } from '../services/RunExecution.js';
 
+function snapshotToolArguments(args: Record<string, any>): Record<string, any> {
+  const copy = structuredClone(args);
+  const pending: object[] = [copy];
+  while (pending.length) {
+    const value = pending.pop()!;
+    for (const child of Object.values(value)) if (child && typeof child === 'object' && !Object.isFrozen(child)) pending.push(child);
+    Object.freeze(value);
+  }
+  return copy;
+}
+
 /**
  * Safe tools that can run concurrently
  */
@@ -101,6 +112,7 @@ export class ToolOrchestrator {
   private config: AgentConfig;
   private toolResultManager: ToolResultManager | null = null;
   private permissionManager: PermissionManager | null = null;
+  private readonly permissionDecisions = new Map<string, import('../security/PermissionDecision.js').PermissionDecision>();
   private parentCallId?: string; // Parent context for nested agents
   private cycleDetectionResults: Map<string, import('./LoopDetector.js').CycleInfo> = new Map();
 
@@ -312,16 +324,14 @@ export class ToolOrchestrator {
     // Determine execution mode
     // IMPORTANT: Single tools always use sequential execution
     // Concurrent execution is only beneficial for multiple tools running in parallel
-    if (toolCalls.length === 1) {
+    try {
+      if (toolCalls.length === 1) return await this.executeSequential(toolCalls, outputBudget);
+      if (this.canRunConcurrently(toolCalls) && this.config.config.parallel_tools) {
+        return await this.executeConcurrent(toolCalls, outputBudget);
+      }
       return await this.executeSequential(toolCalls, outputBudget);
-    }
-
-    const canRunConcurrently = this.canRunConcurrently(toolCalls);
-
-    if (canRunConcurrently && this.config.config.parallel_tools) {
-      return await this.executeConcurrent(toolCalls, outputBudget);
-    } else {
-      return await this.executeSequential(toolCalls, outputBudget);
+    } finally {
+      for (const call of toolCalls) this.permissionDecisions.delete(call.id);
     }
   }
 
@@ -489,6 +499,11 @@ export class ToolOrchestrator {
                 );
               }
 
+              // Completed peers must keep their result and audit even when a
+              // different call interrupts the batch. Denials are already saved.
+              if (!(toolResult?.status === 'rejected' && isPermissionDeniedError(toolResult.reason))) {
+                await this.processToolResult(toolCall, resultData, outputBudget);
+              }
               this.emitEvent({
                 id: toolCall.id,
                 type: ActivityEventType.TOOL_CALL_END,
@@ -1068,11 +1083,24 @@ export class ToolOrchestrator {
         }
       }
 
+      // Give approval and execution the same isolated immutable arguments.
+      // Earlier activity events and hook payloads must not be able to mutate an
+      // action after its permission decision.
+      args = snapshotToolArguments(args);
       // Check permissions if PermissionManager is available
-      if (this.permissionManager && tool && tool.requiresConfirmation(args)) {
+      if (this.permissionManager && tool) {
         // TrustManager emits PERMISSION_REQUEST only when it actually needs a
         // human. Automatic policy decisions must not emit prompt-like events.
-        await this.permissionManager.checkPermission(toolName, args, tool);
+        const rootAgent = ServiceRegistry.getInstance().get('agent');
+        await this.permissionManager.checkPermission(toolName, args, tool, {
+          task: rootAgent?.getPermissionTask?.(),
+          signal: this.agent.getToolAbortSignal() ?? this.agent.getTurnInterruptionSignal?.(),
+          onDecision: decision => {
+            this.permissionDecisions.set(id, decision);
+            this.emitEvent({ id, type: ActivityEventType.TOOL_PERMISSION_DECISION,
+              timestamp: decision.timestamp, parentId: effectiveParentId, data: { decision } });
+          },
+        });
       }
 
       if (tool) {
@@ -1234,7 +1262,7 @@ export class ToolOrchestrator {
             alwaysShowFullOutput,
           },
         });
-
+        await this.processToolResult(toolCall, permissionError, outputBudget);
         throw error;
       }
 
@@ -1407,6 +1435,8 @@ export class ToolOrchestrator {
     }
     // Store tool status for session persistence
     metadata.tool_status = { [toolCall.id]: result.success ? 'success' : 'error' };
+    const permissionDecision = this.permissionDecisions.get(toolCall.id);
+    if (permissionDecision) metadata.tool_permission = { [toolCall.id]: permissionDecision };
 
     // Store the DISPLAY payload, separate from the LLM wire format that lives in
     // the message's `content`. Reconstruction (entered fleet agents, session

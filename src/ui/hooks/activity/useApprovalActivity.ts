@@ -14,7 +14,16 @@ export function useApprovalActivity({ modal, lifetime }: ActivitySubscriptionCon
         throw new Error(`PERMISSION_REQUEST event missing required 'id' field`);
       }
 
-      const { requestId, toolName, path, command, arguments: args, sensitivity, options } = event.data || {};
+      const {
+        requestId,
+        toolName,
+        path,
+        command,
+        arguments: args,
+        sensitivity,
+        options,
+        decisionReason,
+      } = event.data || {};
 
       if (!requestId) {
         throw new Error(`PERMISSION_REQUEST event missing required 'requestId' field. ID: ${event.id}`);
@@ -28,6 +37,7 @@ export function useApprovalActivity({ modal, lifetime }: ActivitySubscriptionCon
         arguments: args,
         sensitivity,
         options,
+        decisionReason,
       });
 
       // Send terminal bell to notify user of permission prompt

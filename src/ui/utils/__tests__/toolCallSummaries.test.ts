@@ -47,6 +47,20 @@ function messageItem(timestamp: number, label: string = 'message'): MessageTimel
 
 describe('toolCallSummaries', () => {
   describe('isSummarizableContextToolCall', () => {
+    test('retains meaningful permission reviews while grouping routine policy-approved reads', () => {
+      const permissionDecision = {
+        toolName: 'read', source: 'policy' as const, verdict: 'allow' as const,
+        reason: 'Workspace read', timestamp: 2,
+      };
+      expect(isSummarizableContextToolCall(createToolCall('read-1', 'read', { permissionDecision }))).toBe(true);
+      expect(isSummarizableContextToolCall(createToolCall('read-1', 'read', {
+        permissionDecision: { ...permissionDecision, verdict: 'ask', reason: 'Protected target' },
+      }))).toBe(false);
+      expect(isSummarizableContextToolCall(createToolCall('read-1', 'read', {
+        permissionDecision: { ...permissionDecision, source: 'shadow' },
+      }))).toBe(false);
+    });
+
     test('accepts successful read and discovery tools without visible children', () => {
       expect(isSummarizableContextToolCall(createToolCall('read-1', 'read'))).toBe(true);
       expect(isSummarizableContextToolCall(createToolCall('grep-1', 'grep'))).toBe(true);

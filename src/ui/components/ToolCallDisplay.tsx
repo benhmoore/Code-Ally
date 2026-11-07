@@ -28,6 +28,7 @@ import { resolveToolVisibility } from '../utils/toolVisibility.js';
 import { Clickable } from './Clickable.js';
 import { getAgentType, getAgentDisplayName } from '@utils/agentTypeUtils.js';
 import { getToolCallTiming } from '@utils/toolTiming.js';
+import { permissionDecisionText } from '../utils/permissionPresentation.js';
 
 interface ToolCallDisplayProps {
   /** Tool call to display */
@@ -237,6 +238,7 @@ const ToolCallDisplayComponent: React.FC<ToolCallDisplayProps> = ({
   onToggle,
 }) => {
   const isRunning = toolCall.status === 'executing' || toolCall.status === 'pending';
+  const permissionAudit = permissionDecisionText(toolCall.permissionDecision);
   const visibility = resolveToolVisibility(toolCall, config);
 
   const interjections = toolCall.interjections ?? [];
@@ -398,6 +400,12 @@ const ToolCallDisplayComponent: React.FC<ToolCallDisplayProps> = ({
           <Text dimColor> · {durationStr}</Text>
         )}
       </Clickable>
+
+      {permissionAudit && (
+        <Box paddingLeft={indent.length + 2}>
+          <Text dimColor wrap="truncate-end">{permissionAudit}</Text>
+        </Box>
+      )}
 
       {/* Agent subtext - displayed on indented lines below header */}
       {/* Once child tool calls exist, collapse to first line only */}

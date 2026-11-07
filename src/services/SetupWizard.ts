@@ -1,4 +1,6 @@
 /** Essential first-run connection settings; optional integrations use their own commands. */
+import { PermissionPolicyService, type PermissionSnapshot } from './PermissionPolicyService.js';
+import type { PermissionMode } from '../security/PermissionMode.js';
 import { ConfigManager } from './ConfigManager.js';
 import { API_TIMEOUTS, CONTEXT_SIZES } from '../config/constants.js';
 import { listProviderModels, type ProviderModel, type CapabilityState } from '../llm/ProviderAdapter.js';
@@ -10,6 +12,10 @@ export interface SetupConfig {
   api_key: string | null;
   model: string;
   context_size: number;
+  permission_mode?: PermissionMode;
+  reviewer_model?: string | null;
+  reviewer_endpoint?: string | null;
+  reviewer_api_key?: string | null;
 }
 
 export class SetupWizard {
@@ -61,6 +67,25 @@ export class SetupWizard {
         tools: 'unknown',
         note: `Could not verify tool support: ${error instanceof Error ? error.message : String(error)}. You can retry or continue.`,
       };
+    }
+  }
+
+  /** Probe a disposable policy owner; never changes the active session's permissions. */
+  async inspectPermissions(config: SetupConfig, signal: AbortSignal): Promise<PermissionSnapshot> {
+    const policy = new PermissionPolicyService();
+    const cancel = () => {
+      void policy.cleanup();
+    };
+    signal.throwIfAborted();
+    signal.addEventListener('abort', cancel, { once: true });
+    try {
+      policy.configure({ ...this.configManager.getConfig(), ...config });
+      await policy.refresh();
+      signal.throwIfAborted();
+      return policy.getSnapshot();
+    } finally {
+      signal.removeEventListener('abort', cancel);
+      await policy.cleanup();
     }
   }
 

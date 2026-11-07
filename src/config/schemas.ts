@@ -15,6 +15,7 @@ import {
   type StoreRecord,
   type StoreSchema,
 } from '../utils/versionedStore.js';
+import { normalizePermissionConfig } from '../security/PermissionMode.js';
 
 /** v0 and v1 are structurally identical for this store. */
 const identity = (data: StoreRecord): StoreRecord => data;
@@ -44,7 +45,7 @@ export const SESSION_SCHEMA: StoreSchema = defineStoreSchema({
 /** ~/.ally/profiles/<profile>/config.json */
 export const CONFIG_SCHEMA: StoreSchema = defineStoreSchema({
   kind: 'config',
-  current: 3,
+  current: 4,
   migrations: [
     identity,
     (data: StoreRecord): StoreRecord => {
@@ -53,6 +54,7 @@ export const CONFIG_SCHEMA: StoreSchema = defineStoreSchema({
     },
     // v3 adds the optional `hooks` key. Absence is valid, so nothing to move.
     identity,
+    normalizePermissionConfig,
   ],
 });
 

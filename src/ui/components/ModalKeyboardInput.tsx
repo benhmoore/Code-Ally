@@ -16,10 +16,10 @@ export interface ModalSelection {
 /** One keyboard owner for selectors; wizard/feedback components own text editing. */
 export function ModalKeyboardInput({
   selection,
-  onToggleAutoAllow,
+  onCyclePermissionMode,
 }: {
   selection?: ModalSelection;
-  onToggleAutoAllow?: () => void;
+  onCyclePermissionMode?: () => void;
 }) {
   useForceQuit();
   useInput((input, key) => {
@@ -28,8 +28,8 @@ export function ModalKeyboardInput({
       selection.cancel();
       return;
     }
-    if (key.shift && key.tab && onToggleAutoAllow) {
-      onToggleAutoAllow();
+    if (key.shift && key.tab && onCyclePermissionMode) {
+      onCyclePermissionMode();
       return;
     }
     if (selection.retry && !key.ctrl && !key.meta && input.toLowerCase() === 'r') {

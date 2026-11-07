@@ -44,6 +44,31 @@ describe('ConfigManager', () => {
   });
 
   describe('initialization', () => {
+    it('migrates each legacy permission layer before inheritance and saves only canonical mode', async () => {
+      const basePath = join(tempDir, 'base.json');
+      const base = vi.spyOn(paths, 'getBaseConfigFile').mockReturnValue(basePath);
+      try {
+        await fs.writeFile(basePath, JSON.stringify({ permission_mode: 'allow-all' }));
+        await fs.writeFile(configPath, JSON.stringify({ auto_confirm: false }));
+        configManager = new ConfigManager(configPath);
+        await configManager.initialize();
+        expect(configManager.getConfig().permission_mode).toBe('manual');
+        expect(await configManager.getConfigSource('permission_mode')).toBe('profile');
+        expect(configManager.getConfig()).not.toHaveProperty('auto_confirm');
+        await configManager.setValue('temperature', 0.4);
+        const saved = JSON.parse(await fs.readFile(configPath, 'utf8'));
+        expect(saved.permission_mode).toBe('manual');
+        expect(saved).not.toHaveProperty('auto_confirm');
+      } finally { base.mockRestore(); }
+    });
+
+    it.each(['manual', 'auto', 'allow-all'] as const)('retains explicit %s over a conflicting legacy alias', async permission_mode => {
+      await fs.writeFile(configPath, JSON.stringify({ auto_confirm: true, permission_mode }));
+      configManager = new ConfigManager(configPath);
+      await configManager.initialize();
+      expect(configManager.getConfig().permission_mode).toBe(permission_mode);
+    });
+
     it('should initialize with default config when no file exists', async () => {
       configManager = new ConfigManager(configPath);
       await configManager.initialize();
@@ -149,7 +174,7 @@ describe('ConfigManager', () => {
       expect(typeof configManager.getValue('endpoint')).toBe('string');
       expect(typeof configManager.getValue('context_size')).toBe('number');
       expect(configManager.getValue('temperature')).toBeUndefined();
-      expect(typeof configManager.getValue('auto_confirm')).toBe('boolean');
+      expect(typeof configManager.getValue('permission_mode')).toBe('string');
     });
   });
 
@@ -176,7 +201,7 @@ describe('ConfigManager', () => {
 
     it('should set valid boolean values', async () => {
       await configManager.setValue('auto_confirm', true);
-      expect(configManager.getValue('auto_confirm')).toBe(true);
+      expect(configManager.getValue('permission_mode')).toBe('allow-all');
     });
 
     it('encrypts and redacts provider credentials while preserving runtime access', async () => {
@@ -194,6 +219,22 @@ describe('ConfigManager', () => {
       expect(reloaded.getValue('api_key')).toBe('sk-test-secret-value');
     });
 
+    it('encrypts reviewer credentials and restores them without exposing plaintext in config display', async () => {
+      await configManager.setValue('reviewer_api_key', 'reviewer-secret-token');
+      expect(await fs.readFile(configPath, 'utf8')).not.toContain('reviewer-secret-token');
+      expect(configManager.getDisplayValue('reviewer_api_key')).toBe('[REDACTED]');
+      const restored = new ConfigManager(configPath);
+      await restored.initialize();
+      expect(restored.getConfig().reviewer_api_key).toBe('reviewer-secret-token');
+    });
+
+    it('accepts legacy string command writes as canonical mode and rejects invalid aliases', async () => {
+      expect(await configManager.setFromString('auto_confirm=true')).toMatchObject({ key: 'permission_mode', newValue: 'allow-all' });
+      expect(await configManager.setFromString('auto_confirm=false')).toMatchObject({ key: 'permission_mode', newValue: 'manual' });
+      await expect(configManager.setFromString('auto_confirm=not-a-boolean')).rejects.toThrow('Invalid legacy');
+      expect(configManager.getConfig().permission_mode).toBe('manual');
+    });
+
     it('should reject invalid types', async () => {
       await expect(
         configManager.setValue('temperature', 'invalid' as any)
@@ -207,10 +248,10 @@ describe('ConfigManager', () => {
 
     it('should coerce string booleans', async () => {
       await configManager.setValue('auto_confirm', 'true' as any);
-      expect(configManager.getValue('auto_confirm')).toBe(true);
+      expect(configManager.getValue('permission_mode')).toBe('allow-all');
 
       await configManager.setValue('auto_confirm', 'false' as any);
-      expect(configManager.getValue('auto_confirm')).toBe(false);
+      expect(configManager.getValue('permission_mode')).toBe('manual');
     });
   });
 
@@ -229,7 +270,7 @@ describe('ConfigManager', () => {
 
       expect(configManager.getValue('temperature')).toBe(0.7);
       expect(configManager.getValue('model')).toBe('multi-test');
-      expect(configManager.getValue('auto_confirm')).toBe(true);
+      expect(configManager.getValue('permission_mode')).toBe('allow-all');
     });
 
     it('should validate all values before applying any', async () => {
@@ -273,12 +314,12 @@ describe('ConfigManager', () => {
       // Verify reset
       expect(configManager.getValue('temperature')).toBe(DEFAULT_CONFIG.temperature);
       expect(configManager.getValue('model')).toBe(DEFAULT_CONFIG.model);
-      expect(configManager.getValue('auto_confirm')).toBe(DEFAULT_CONFIG.auto_confirm);
+      expect(configManager.getValue('permission_mode')).toBe(DEFAULT_CONFIG.permission_mode);
 
       // Verify change tracking
       expect(changes.temperature).toBe(true);
       expect(changes.model).toBe(true);
-      expect(changes.auto_confirm).toBe(true);
+      expect(changes.permission_mode).toBe(true);
     });
 
     it('should not report unchanged values', async () => {
@@ -376,7 +417,7 @@ describe('ConfigManager', () => {
       // Verify user settings are preserved in memory
       expect(configManager.getValue('model')).toBe('custom-model');
       expect(configManager.getValue('temperature')).toBe(0.7);
-      expect(configManager.getValue('auto_confirm')).toBe(true);
+      expect(configManager.getValue('permission_mode')).toBe('allow-all');
 
       // Loading alone must not rewrite the file
       expect(JSON.parse(await fs.readFile(configPath, 'utf-8'))).toEqual(oldConfig);
@@ -387,7 +428,8 @@ describe('ConfigManager', () => {
       const savedConfig = JSON.parse(await fs.readFile(configPath, 'utf-8'));
       expect(savedConfig.model).toBe('custom-model');
       expect(savedConfig.temperature).toBe(0.4);
-      expect(savedConfig.auto_confirm).toBe(true);
+      expect(savedConfig.permission_mode).toBe('allow-all');
+      expect(savedConfig.auto_confirm).toBeUndefined();
       expect(savedConfig.future_only_field).toBe('must-survive');
       expect(savedConfig.schema_version).toBe(CONFIG_SCHEMA.current);
     });

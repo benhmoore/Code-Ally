@@ -21,9 +21,9 @@ class Stdin extends PassThrough {
 const mounts: Array<{ unmount: () => void }> = [];
 afterEach(() => { for (const instance of mounts.splice(0)) instance.unmount(); exit.mockClear(); });
 const settle = () => new Promise(resolve => setTimeout(resolve, 20));
-function mount(selection?: ModalSelection, onToggleAutoAllow?: () => void) {
+function mount(selection?: ModalSelection, onCyclePermissionMode?: () => void) {
   const stdin = new Stdin();
-  const instance = render(<ModalKeyboardInput selection={selection} onToggleAutoAllow={onToggleAutoAllow}/>, {
+  const instance = render(<ModalKeyboardInput selection={selection} onCyclePermissionMode={onCyclePermissionMode}/>, {
     stdout: new Stdout() as unknown as NodeJS.WriteStream, stdin: stdin as unknown as NodeJS.ReadStream,
     debug: true, exitOnCtrlC: false, patchConsole: false,
   });

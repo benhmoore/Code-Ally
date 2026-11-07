@@ -4,7 +4,7 @@ import { PolicyDeniedError } from '../../security/PathSecurity.js';
 
 describe('non-strict run authorization policy', () => {
   it('pre-approves an allowed tool without prompting', async () => {
-    const manager = new TrustManager(false);
+    const manager = new TrustManager('manual');
     manager.setRunAuthorizationPolicy({ allowed_tools: ['Read', 'write'] });
 
     await expect(manager.checkPermission('read', {}, 'a.txt')).resolves.toBe(true);
@@ -12,7 +12,7 @@ describe('non-strict run authorization policy', () => {
   });
 
   it('denies a disallowed tool even under auto-confirm', async () => {
-    const manager = new TrustManager(true);
+    const manager = new TrustManager('allow-all');
     manager.setRunAuthorizationPolicy({ disallowed_tools: ['mcp__github__*'] });
 
     await expect(manager.checkPermission('mcp-github-create-issue', {}))
@@ -20,22 +20,22 @@ describe('non-strict run authorization policy', () => {
   });
 
   it('denies a disallowed tool that is also allowed', async () => {
-    const manager = new TrustManager(false);
+    const manager = new TrustManager('manual');
     manager.setRunAuthorizationPolicy({ allowed_tools: ['bash'], disallowed_tools: ['bash'] });
 
     await expect(manager.checkPermission('bash', { command: 'ls' }, { command: 'ls' }))
       .rejects.toBeInstanceOf(PolicyDeniedError);
   });
 
-  it('falls through to auto-confirm for an unnamed tool', async () => {
-    const manager = new TrustManager(true);
+  it('falls through to Allow-all for an unnamed tool', async () => {
+    const manager = new TrustManager('allow-all');
     manager.setRunAuthorizationPolicy({ allowed_tools: ['read'] });
 
     await expect(manager.checkPermission('write', {}, 'a.txt')).resolves.toBe(true);
   });
 
-  it('falls through to auto-allow mode for an unnamed tool', async () => {
-    const manager = new TrustManager(false, undefined, () => true);
+  it('falls through to Allow-all while retaining extreme-operation denials', async () => {
+    const manager = new TrustManager('allow-all');
     manager.setRunAuthorizationPolicy({ allowed_tools: ['read'] });
 
     await expect(manager.checkPermission('write', {}, 'a.txt')).resolves.toBe(true);
@@ -44,7 +44,7 @@ describe('non-strict run authorization policy', () => {
   });
 
   it('falls through to the interaction check when nothing else grants', async () => {
-    const manager = new TrustManager(false);
+    const manager = new TrustManager('manual');
     manager.setRunAuthorizationPolicy({ allowed_tools: ['read'] });
     manager.setRunPolicyManager({ isInteractionAvailable: () => false } as never);
 
@@ -53,7 +53,7 @@ describe('non-strict run authorization policy', () => {
   });
 
   it('reports its disallowed globs for schema exclusion', () => {
-    const manager = new TrustManager(false);
+    const manager = new TrustManager('manual');
     expect(manager.getDisallowedToolPatterns()).toEqual([]);
 
     manager.setRunAuthorizationPolicy({ disallowed_tools: ['bash'] });
@@ -63,7 +63,7 @@ describe('non-strict run authorization policy', () => {
 
 describe('strict run authorization policy', () => {
   it('denies an unnamed tool even under auto-confirm', async () => {
-    const manager = new TrustManager(true);
+    const manager = new TrustManager('allow-all');
     manager.setScheduledPermissionPolicy({ allowed_tools: ['read'] });
 
     await expect(manager.checkPermission('write', {}, 'a.txt'))
@@ -72,7 +72,7 @@ describe('strict run authorization policy', () => {
   });
 
   it('denies an unnamed shell command even under auto-allow mode', async () => {
-    const manager = new TrustManager(false, undefined, () => true);
+    const manager = new TrustManager('allow-all');
     manager.setScheduledPermissionPolicy({
       allowed_bash_commands: [{ match: 'exact', value: 'git status' }],
     });

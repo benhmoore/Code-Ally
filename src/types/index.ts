@@ -5,6 +5,10 @@
 import type { ConversationCheckpointV1, ProviderCheckpointState } from '../agent/compaction/types.js';
 import type { HooksConfig } from '../hooks/types.js';
 import type { ModelProvider } from '../config/providers.js';
+import type { PermissionMode } from '../security/PermissionMode.js';
+import type { PermissionDecision } from '../security/PermissionDecision.js';
+export type { PermissionDecision } from '../security/PermissionDecision.js';
+export type { PermissionMode } from '../security/PermissionMode.js';
 
 // Agent definition types (data shapes for stored/loaded agents)
 export type { AgentData, AgentInfo, BaseAgentConfig } from './agents.js';
@@ -111,6 +115,7 @@ export interface MessageMetadata {
   tool_status?: Record<string, 'success' | 'error'>;
   /** Per-tool-call context data for session resume/rewind (keyed by tool call ID) */
   tool_context?: Record<string, ToolCallContext>;
+  tool_permission?: Record<string, PermissionDecision>;
   /**
    * Per-tool-call DISPLAY payload (keyed by tool call ID). The clean
    * ToolResult.content used to render the tool call in the UI on reconstruction
@@ -237,6 +242,7 @@ export interface ToolResult {
 export enum ActivityEventType {
   TOOL_CALL_START = 'tool_call_start',
   TOOL_CALL_END = 'tool_call_end',
+  TOOL_PERMISSION_DECISION = 'tool_permission_decision',
   TOOL_PERMISSION_REQUEST = 'tool_permission_request',
   TOOL_EXECUTION_START = 'tool_execution_start',
   TOOL_OUTPUT_CHUNK = 'tool_output_chunk',
@@ -359,6 +365,7 @@ export type ActivityEventData<T extends ActivityEventType> =
   ActivityEventType extends T ? Record<string, any> :
   T extends ActivityEventType.TOOL_CALL_START ? ToolCallStartActivityData :
   T extends ActivityEventType.TOOL_CALL_END ? ToolCallEndActivityData :
+  T extends ActivityEventType.TOOL_PERMISSION_DECISION ? { decision: PermissionDecision } :
   T extends ActivityEventType.TOOL_EXECUTION_START ? Record<string, never> :
   T extends ActivityEventType.TOOL_OUTPUT_CHUNK ? { chunk: string; toolName?: string } :
   T extends ActivityEventType.ASSISTANT_CHUNK ? { chunk: string } :
@@ -408,6 +415,7 @@ export interface ToolCallAnnotation {
 }
 
 export interface ToolCallState {
+  permissionDecision?: PermissionDecision;
   id: string;
   status: ToolStatus;
   toolName: string;
@@ -505,7 +513,11 @@ export interface Config {
 
   // Execution Settings
   bash_timeout: number;
-  auto_confirm: boolean;
+  permission_mode: PermissionMode;
+  reviewer_model: string | null;
+  reviewer_endpoint: string | null;
+  reviewer_api_key: string | null;
+  reviewer_shadow: boolean;
   parallel_tools: boolean;
   stream_responses: boolean;
   tool_call_activity_timeout: number; // Timeout in seconds for any agent without a tool call

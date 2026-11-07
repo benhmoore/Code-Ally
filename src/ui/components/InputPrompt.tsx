@@ -11,6 +11,7 @@
  * - Modal integrations
  */
 
+import type { PermissionMode } from '../../security/PermissionMode.js';
 import React, { useState, useEffect, useLayoutEffect, useRef } from 'react';
 import { useBottomLayout } from './BottomAlignedLayout.js';
 import { useTerminalRows } from '../hooks/useTerminalRows.js';
@@ -81,7 +82,7 @@ interface InputPromptProps {
   /** Completion provider instance */
   completionProvider?: CompletionProvider;
   /** Callback to toggle auto-allow mode during permission prompts */
-  onAutoAllowToggle?: () => void;
+  onPermissionModeCycle?: () => void;
   /** Callback to switch back to default agent (Esc shortcut) */
   onSwitchToDefault?: () => void;
   /** Current active agent name (for Esc behavior) */
@@ -101,13 +102,12 @@ interface InputPromptProps {
   /** Conversation-owned editing state, retained while a modal or another agent is selected. */
   draft?: PromptDraft;
   onDraftChange?: (draft: PromptDraft) => void;
-  /** Whether auto-allow mode is enabled (changes border color to danger) */
-  autoAllowMode?: boolean;
+  /** Effective permission mode (Allow-all uses a danger-colored border) */
+  permissionMode?: PermissionMode;
   /** Whether the input was prefilled from prompt library (changes border color to primary) */
   promptPrefilled?: boolean;
   /** Callback when prompt prefill state should be cleared (user modified buffer) */
   onPromptPrefilledClear?: () => void;
-
 }
 
 /**
@@ -136,7 +136,7 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
   placeholder = 'Type a message...',
   commandHistory,
   completionProvider,
-  onAutoAllowToggle,
+  onPermissionModeCycle,
   onSwitchToDefault,
   currentAgent,
   defaultAgent = 'ally',
@@ -147,17 +147,21 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
   onExitConfirmationChange,
   draft,
   onDraftChange,
-  autoAllowMode = false,
+  permissionMode = 'manual',
   promptPrefilled = false,
   onPromptPrefilledClear,
 }) => {
   const bottomLayout = useBottomLayout();
   const terminalRows = useTerminalRows();
-  useLayoutEffect(() => { bottomLayout?.measure(); });
+  useLayoutEffect(() => {
+    bottomLayout?.measure();
+  });
   const { exit } = useApp();
   useForceQuit(isActive);
-  const { buffer, cursorPosition, bufferRef, cursorPositionRef, updateBuffer, setCursorPosition } =
-    usePromptDraft(draft, onDraftChange);
+  const { buffer, cursorPosition, bufferRef, cursorPositionRef, updateBuffer, setCursorPosition } = usePromptDraft(
+    draft,
+    onDraftChange
+  );
   const onPrefillConsumedRef = useRef(onPrefillConsumed);
 
   useEffect(() => {
@@ -202,10 +206,11 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
   const replaceCompletions = React.useCallback((nextCompletions: Completion[]) => {
     const previousSelection = completionsRef.current[completionIndexRef.current];
     const matchingIndex = previousSelection
-      ? nextCompletions.findIndex(completion =>
-          completion.type === previousSelection.type &&
-          completion.value === previousSelection.value &&
-          completion.insertText === previousSelection.insertText
+      ? nextCompletions.findIndex(
+          completion =>
+            completion.type === previousSelection.type &&
+            completion.value === previousSelection.value &&
+            completion.insertText === previousSelection.insertText
         )
       : -1;
     const nextIndex = matchingIndex >= 0 ? matchingIndex : 0;
@@ -248,41 +253,46 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
   }, [isWaitingForExitConfirmation, onExitConfirmationChange]);
 
   // A replacement provider must invalidate in-flight completion results.
-  useEffect(() => () => { completionRequestIdRef.current++; }, [completionProvider]);
+  useEffect(
+    () => () => {
+      completionRequestIdRef.current++;
+    },
+    [completionProvider]
+  );
 
-  const refreshCompletions = React.useCallback(async (
-    input: string,
-    cursor: number,
-    activeHistoryIndex: number
-  ): Promise<Completion[] | null> => {
-    const requestId = ++completionRequestIdRef.current;
-    if (!completionProvider || !input.trim() || activeHistoryIndex !== -1) {
-      completionSourceRef.current = null;
-      replaceCompletions([]);
-      setShowCompletions(false);
-      return [];
-    }
-
-    let results: Completion[];
-    try {
-      results = await completionProvider.getCompletions(input, cursor);
-    } catch (error) {
-      if (requestId === completionRequestIdRef.current) {
+  const refreshCompletions = React.useCallback(
+    async (input: string, cursor: number, activeHistoryIndex: number): Promise<Completion[] | null> => {
+      const requestId = ++completionRequestIdRef.current;
+      if (!completionProvider || !input.trim() || activeHistoryIndex !== -1) {
         completionSourceRef.current = null;
+        replaceCompletions([]);
+        setShowCompletions(false);
+        return [];
       }
-      logger.debug(`[COMPLETION] Refresh failed: ${error instanceof Error ? error.message : String(error)}`);
-      return null;
-    }
-    if (requestId !== completionRequestIdRef.current) return null;
-    completionSourceRef.current = { input, cursorPosition: cursor };
-    replaceCompletions(results);
-    setShowCompletions(results.length > 0);
-    return results;
-  }, [completionProvider, replaceCompletions]);
 
-  const updateCompletions = React.useCallback(() => (
-    refreshCompletions(buffer, cursorPosition, historyIndex)
-  ), [buffer, cursorPosition, historyIndex, refreshCompletions]);
+      let results: Completion[];
+      try {
+        results = await completionProvider.getCompletions(input, cursor);
+      } catch (error) {
+        if (requestId === completionRequestIdRef.current) {
+          completionSourceRef.current = null;
+        }
+        logger.debug(`[COMPLETION] Refresh failed: ${error instanceof Error ? error.message : String(error)}`);
+        return null;
+      }
+      if (requestId !== completionRequestIdRef.current) return null;
+      completionSourceRef.current = { input, cursorPosition: cursor };
+      replaceCompletions(results);
+      setShowCompletions(results.length > 0);
+      return results;
+    },
+    [completionProvider, replaceCompletions]
+  );
+
+  const updateCompletions = React.useCallback(
+    () => refreshCompletions(buffer, cursorPosition, historyIndex),
+    [buffer, cursorPosition, historyIndex, refreshCompletions]
+  );
 
   /**
    * Debounced completion update
@@ -326,11 +336,7 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
 
   const completionSourceIsCurrent = (): boolean => {
     const source = completionSourceRef.current;
-    return Boolean(
-      source &&
-      source.input === bufferRef.current &&
-      source.cursorPosition === cursorPositionRef.current
-    );
+    return Boolean(source && source.input === bufferRef.current && source.cursorPosition === cursorPositionRef.current);
   };
 
   const acceptCompletion = async (key: 'enter' | 'tab'): Promise<void> => {
@@ -346,12 +352,13 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
     }
 
     const completion = previousSelection
-      ? available.find(candidate =>
-          candidate.type === previousSelection.type &&
-          candidate.value === previousSelection.value &&
-          candidate.insertText === previousSelection.insertText
-        ) ?? available[0]
-      : available[completionIndexRef.current] ?? available[0];
+      ? (available.find(
+          candidate =>
+            candidate.type === previousSelection.type &&
+            candidate.value === previousSelection.value &&
+            candidate.insertText === previousSelection.insertText
+        ) ?? available[0])
+      : (available[completionIndexRef.current] ?? available[0]);
 
     if (!completion) {
       if (key === 'enter') void handleSubmit(input);
@@ -462,7 +469,11 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
     }
 
     // Classify extracted paths into directories, images, and files
-    const { directories: extractedDirectories, images: extractedImages, files: extractedFiles } = classifyPaths(extractedPaths);
+    const {
+      directories: extractedDirectories,
+      images: extractedImages,
+      files: extractedFiles,
+    } = classifyPaths(extractedPaths);
 
     // Call callback with mentions if any
     const mentions = {
@@ -551,11 +562,14 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
     }, 1000);
   };
 
-  useEffect(() => () => {
-    completionRequestIdRef.current++;
-    if (escTimerRef.current) clearTimeout(escTimerRef.current);
-    if (exitConfirmationTimerRef.current) clearTimeout(exitConfirmationTimerRef.current);
-  }, []);
+  useEffect(
+    () => () => {
+      completionRequestIdRef.current++;
+      if (escTimerRef.current) clearTimeout(escTimerRef.current);
+      if (exitConfirmationTimerRef.current) clearTimeout(exitConfirmationTimerRef.current);
+    },
+    []
+  );
 
   const handlePromptEscape = () => {
     // Dismissal is local and non-destructive. It never interrupts a running
@@ -573,12 +587,7 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
     const currentAgentRef = agentRef.current;
     const currentActivityStream = activityStreamRef.current;
 
-    if (
-      isViewingAgent &&
-      buffer.length === 0 &&
-      onExitAgent &&
-      !currentAgentRef?.isProcessing?.()
-    ) {
+    if (isViewingAgent && buffer.length === 0 && onExitAgent && !currentAgentRef?.isProcessing?.()) {
       onExitAgent();
       return;
     }
@@ -665,12 +674,7 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
       }
     }
 
-    if (
-      key.downArrow &&
-      fleetCount > 0 &&
-      buffer.length === 0 &&
-      onEnterFleet
-    ) {
+    if (key.downArrow && fleetCount > 0 && buffer.length === 0 && onEnterFleet) {
       onEnterFleet();
       return true;
     }
@@ -693,8 +697,8 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
     }
 
     if (key.tab) {
-      if (key.shift && onAutoAllowToggle) {
-        onAutoAllowToggle();
+      if (key.shift && onPermissionModeCycle) {
+        onPermissionModeCycle();
         return true;
       }
       if (showCompletions) {
@@ -787,13 +791,13 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
     borderColor = UI_COLORS.MEMORY;
   }
 
-  // Override border color when auto-allow mode is active (danger color)
-  if (autoAllowMode) {
+  // Keep unrestricted approval visible even while editing a command.
+  if (permissionMode === 'allow-all') {
     borderColor = UI_COLORS.ERROR;
   }
 
   // Override border color when prompt is prefilled from library (primary color)
-  if (promptPrefilled && !autoAllowMode) {
+  if (promptPrefilled && permissionMode !== 'allow-all') {
     borderColor = UI_COLORS.PRIMARY;
   }
 

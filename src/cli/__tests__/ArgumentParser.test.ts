@@ -166,6 +166,18 @@ describe('ArgumentParser', () => {
   });
 
   describe('Advanced Settings', () => {
+    it.each(['manual', 'auto', 'allow-all'])('parses explicit permission mode %s', permissionMode => {
+      expect(parser.parse(['node', 'ally', '--permission-mode', permissionMode]).permissionMode).toBe(permissionMode);
+    });
+
+    it('supports the explicit legacy manual flag without changing the default', () => {
+      expect(parser.parse(['node', 'ally', '--no-auto-confirm']).autoConfirm).toBe(false);
+    });
+
+    it('rejects contradictory legacy and canonical permission flags', () => {
+      expect(() => parser.parse(['node', 'ally', '--permission-mode', 'auto', '--auto-confirm'])).toThrow('Conflicting permission flags');
+    });
+
     it('should parse --auto-confirm flag', () => {
       const options = parser.parse(['node', 'ally', '--auto-confirm']);
       expect(options.autoConfirm).toBe(true);

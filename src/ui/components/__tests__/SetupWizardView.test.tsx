@@ -42,6 +42,7 @@ function setup(overrides: Partial<Config> = {}, geometry = { columns: 100, rows:
     endpoint: 'http://fixture:8888',
     model: 'saved-model',
     setup_completed: true,
+    permission_mode: 'manual' as const,
     ...overrides,
   };
   const setValues = vi.fn(async (patch: Partial<Config>) => {
@@ -98,9 +99,11 @@ describe('essential setup keyboard flow', () => {
       name === 'config_manager' ? (ui.manager as any) : name === 'model_client' ? (client as any) : null
     );
     await selectConnection(ui);
-    await ui.see('3 / 5 · Model');
+    await ui.see('3 / 6 · Model');
     ui.press('\r');
     await ui.see('Context window');
+    ui.press('\r');
+    await ui.see('Permissions');
     ui.press('\r');
     await ui.see('Review settings');
     ui.press('\r');
@@ -126,7 +129,7 @@ describe('essential setup keyboard flow', () => {
     );
     const ui = setup({ setup_completed: false }, { columns: 40, rows: 12 });
     await selectConnection(ui);
-    await ui.see('3 / 5 · Model');
+    await ui.see('3 / 6 · Model');
     expect(ui.frame()).toContain('enter continue');
     expect(ui.frame().split('\n').length).toBeLessThanOrEqual(12);
     expect(ui.frame()).not.toContain('long-model-name'.repeat(5));
@@ -135,6 +138,8 @@ describe('essential setup keyboard flow', () => {
     expect(ui.frame()).toContain('32K');
     expect(ui.frame()).toContain('enter continue');
     expect(ui.frame().split('\n').length).toBeLessThanOrEqual(12);
+    ui.press('\r');
+    await ui.see('Permissions');
     ui.press('\r');
     await ui.see('Review settings');
     expect(ui.frame()).toContain('enter save');
@@ -148,9 +153,11 @@ describe('essential setup keyboard flow', () => {
     );
     const ui = setup();
     await selectConnection(ui);
-    await ui.see('3 / 5 · Model');
+    await ui.see('3 / 6 · Model');
     ui.press('\r');
     await ui.see('Context window');
+    ui.press('\r');
+    await ui.see('Permissions');
     ui.press('\r');
     await ui.see('Review settings');
     let finish!: () => void;
@@ -186,13 +193,15 @@ describe('essential setup keyboard flow', () => {
       temperature: 0.8,
       context_size: 65536,
       service_model: 'titles-model',
-      auto_confirm: true,
+      permission_mode: 'allow-all',
       enable_idle_messages: false,
     });
     await selectConnection(ui);
-    await ui.see('3 / 5 · Model');
+    await ui.see('3 / 6 · Model');
     ui.press('\r');
     await ui.see('Context window');
+    ui.press('\r');
+    await ui.see('Permissions');
     ui.press('\r');
     await ui.see('Review settings');
     expect(ui.frame()).toContain('65,536');
@@ -208,13 +217,128 @@ describe('essential setup keyboard flow', () => {
       context_size: 65536,
       temperature: 0.8,
       service_model: 'titles-model',
-      auto_confirm: true,
+      permission_mode: 'allow-all',
       enable_idle_messages: false,
       setup_completed: true,
     });
     expect(ui.onComplete).not.toHaveBeenCalled();
     ui.press('\r');
     await vi.waitFor(() => expect(ui.onComplete).toHaveBeenCalledOnce());
+  });
+
+  it('configures Auto with inherited reviewer settings, reports Manual fallback, and preserves secrets', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async url => (String(url).endsWith('/v1/models') ? models() : Response.json({ models: [] })))
+    );
+    const ui = setup({
+      permission_mode: 'auto',
+      reviewer_model: null,
+      reviewer_endpoint: null,
+      reviewer_api_key: 'review-secret',
+    });
+    await selectConnection(ui);
+    await ui.see('3 / 6 · Model');
+    ui.press('\r');
+    await ui.see('Context window');
+    ui.press('\r');
+    await ui.see('Permissions');
+    expect(ui.frame()).toContain('Fall back to Manual');
+    ui.press('\r');
+    await ui.see('Auto reviewer');
+    const optionsFrame = ui.frame();
+    ui.press('\u001b[B');
+    await vi.waitFor(() => expect(ui.frame()).not.toBe(optionsFrame));
+    ui.press('\r');
+    await ui.see('Reviewer model');
+    ui.press('\r');
+    await ui.see('Reviewer endpoint');
+    ui.press('\r');
+    await ui.see('Reviewer API key');
+    expect(ui.frame()).not.toContain('review-secret');
+    ui.press('\r');
+    await ui.see('Effective mode: Manual');
+    expect(ui.setValues).not.toHaveBeenCalled();
+    ui.press('\r');
+    await ui.see('Review settings');
+    expect(ui.frame()).toContain('Permissions: Auto → Manual');
+    expect(ui.frame()).not.toContain('review-secret');
+    ui.press('\r');
+    await ui.see('Ready to code');
+    expect(ui.config).toMatchObject({
+      permission_mode: 'auto',
+      reviewer_model: null,
+      reviewer_endpoint: null,
+      reviewer_api_key: 'review-secret',
+    });
+  });
+
+  it('uses saved Auto defaults directly and shows successful reviewer readiness', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async url => {
+        if (String(url).endsWith('/v1/models')) return models();
+        if (String(url).endsWith('/api/tags'))
+          return Response.json({ models: [{ name: 'tev1:4b', capabilities: ['decision'] }] });
+        return Response.json({
+          answers: {
+            permission: { type: 'choice', choice: 'deny', probabilities: { allow: 0.01, ask: 0.01, deny: 0.98 } },
+          },
+        });
+      })
+    );
+    const ui = setup({ permission_mode: 'auto' });
+    await selectConnection(ui);
+    await ui.see('3 / 6 · Model');
+    ui.press('\r');
+    await ui.see('Context window');
+    ui.press('\r');
+    await ui.see('Permissions');
+    ui.press('\r');
+    await ui.see('Auto reviewer');
+    ui.press('\r');
+    await ui.see('Effective mode: Auto');
+    expect(ui.frame()).toContain('tev1:4b');
+    expect(ui.setValues).not.toHaveBeenCalled();
+    ui.press('\r');
+    await ui.see('Review settings');
+    expect(ui.frame()).toContain('Permissions: Auto → Auto');
+  });
+
+  it('checks default Auto directly and cancels its isolated probe on Back in a narrow terminal', async () => {
+    let signal!: AbortSignal;
+    let finish!: (response: Response) => void;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((url, options) => {
+        if (String(url).endsWith('/v1/models')) return Promise.resolve(models());
+        signal = options.signal;
+        return new Promise<Response>(resolve => {
+          finish = resolve;
+        });
+      })
+    );
+    const ui = setup({ permission_mode: 'auto' }, { columns: 40, rows: 12 });
+    await selectConnection(ui);
+    await ui.see('3 / 6 · Model');
+    ui.press('\r');
+    await ui.see('Context window');
+    ui.press('\r');
+    await ui.see('Permissions');
+    expect(ui.frame().split('\n').length).toBeLessThanOrEqual(12);
+    ui.press('\r');
+    await ui.see('Auto reviewer');
+    expect(ui.frame()).toContain('Check reviewer');
+    expect(ui.frame().split('\n').length).toBeLessThanOrEqual(12);
+    ui.press('\r');
+    await ui.see('Checking reviewer');
+    ui.press('\u001b');
+    await ui.see('Auto reviewer');
+    expect(signal.aborted).toBe(true);
+    finish(Response.json({ models: [] }));
+    await new Promise<void>(resolve => setImmediate(resolve));
+    expect(ui.frame()).toContain('Auto reviewer');
+    expect(ui.setValues).not.toHaveBeenCalled();
   });
 
   it('aborts discovery on Back and ignores a late result', async () => {
@@ -247,9 +371,11 @@ describe('essential setup keyboard flow', () => {
     await selectConnection(ui);
     await ui.see('Connection needs attention');
     ui.press('\r');
-    await ui.see('3 / 5 · Model');
+    await ui.see('3 / 6 · Model');
     ui.press('\r');
     await ui.see('Context window');
+    ui.press('\r');
+    await ui.see('Permissions');
     ui.press('\r');
     await ui.see('Review settings');
     ui.setValues.mockRejectedValueOnce(new Error('disk full'));
@@ -277,15 +403,15 @@ describe('essential setup keyboard flow', () => {
     );
     const ui = setup({ provider: 'ollama' });
     await selectConnection(ui);
-    await ui.see('3 / 5 · Model');
+    await ui.see('3 / 6 · Model');
     ui.press('\r');
     await ui.see('Checking tool support');
     ui.press('\u001b');
-    await ui.see('3 / 5 · Model');
+    await ui.see('3 / 6 · Model');
     expect(signal.aborted).toBe(true);
     finish(Response.json({ capabilities: ['tools'] }));
     await new Promise<void>(resolve => setImmediate(resolve));
-    expect(ui.frame()).toContain('3 / 5 · Model');
+    expect(ui.frame()).toContain('3 / 6 · Model');
     ui.press('\u001b');
     await ui.see('Server endpoint');
     ui.press('\u0003');

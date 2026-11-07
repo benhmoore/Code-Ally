@@ -16,6 +16,8 @@ import { ActivityEventType, Config } from '../types/index.js';
 import { BottomAlignedLayout } from './components/BottomAlignedLayout.js';
 import { useProviderDiagnostics } from './hooks/useProviderDiagnostics.js';
 import { useTerminalRows } from './hooks/useTerminalRows.js';
+import { PermissionModeStatus } from './components/PermissionModeStatus.js';
+import { usePermissionMode } from './hooks/usePermissionPolicy.js';
 import { ModalHost } from './components/ModalHost.js';
 import { InputPrompt } from './components/InputPrompt.js';
 import { EMPTY_DRAFT, type PromptDraft } from './hooks/usePromptDraft.js';
@@ -166,23 +168,7 @@ const AppContentComponent: React.FC<AppContentProps> = ({
   const backgroundProcessCount = useBackgroundProcesses();
   const scheduledTaskCount = useScheduledTaskCount();
 
-  // Connect auto-allow mode to TrustManager after initialization
-  useEffect(() => {
-    const registry = ServiceRegistry.getInstance();
-    const trustManager = registry.get('trust_manager');
-    const runPolicyManager = registry.get('run_policy_manager');
-    if (trustManager && trustManager.setAutoAllowModeGetter) {
-      trustManager.setAutoAllowModeGetter(() => modal.autoAllowMode);
-    }
-    if (runPolicyManager) {
-      runPolicyManager.setTerminalAutoAllow(modal.autoAllowMode);
-      if (modal.autoAllowMode) {
-        registry.get('form_manager')?.cancelAllPending();
-        registry.get('plan_mode_manager')?.cancelPendingApproval();
-      }
-      registry.get('tool_manager')?.clearDefinitionsCache();
-    }
-  }, [modal.autoAllowMode]);
+  const permission = usePermissionMode(state.config, actions);
 
   // Periodic cache maintenance — clear syntax highlighting and markdown parse caches
   // every 5 minutes to prevent unbounded memory growth in long sessions
@@ -392,7 +378,7 @@ const AppContentComponent: React.FC<AppContentProps> = ({
     <BottomAlignedLayout historyKey={state.staticRemountKey} footer={
       <>
 
-      <ModalHost modal={modal} activityStream={activityStream} status={statusIndicator}
+      <ModalHost requestedPermissionMode={state.config.permission_mode} permissionMode={permission.effectiveMode} onPermissionModeCycle={permission.cycle} modal={modal} activityStream={activityStream} status={statusIndicator}
         onPermissionInstruct={handleInterjection}
         reportError={content => actions.addMessage({ role: 'assistant', content, metadata: { isError: true } })}>
         {/* Bottom interaction region */}
@@ -423,7 +409,13 @@ const AppContentComponent: React.FC<AppContentProps> = ({
             </Box>
           )}
 
-          {displayedIsThinking && <Text dimColor wrap="truncate-end">{isChildSelected ? 'Enter steers this agent · Esc stops' : 'Enter steers · Alt+Enter queues a follow-up · Esc stops'}</Text>}
+          {displayedIsThinking && (
+            <Box paddingLeft={1}>
+              <Text dimColor wrap="truncate-end">
+                {isChildSelected ? 'Enter steers this agent · Esc stops' : 'Enter steers · Alt+Enter queues a follow-up · Esc stops'}
+              </Text>
+            </Box>
+          )}
 
           {/* Input Prompt */}
           <InputPrompt
@@ -437,11 +429,11 @@ const AppContentComponent: React.FC<AppContentProps> = ({
             isActive={true}
             commandHistory={commandHistory || undefined}
             completionProvider={completionProvider || undefined}
-            onAutoAllowToggle={() => modal.setAutoAllowMode(!modal.autoAllowMode)}
+            onPermissionModeCycle={permission.cycle}
             onSwitchToDefault={handleSwitchToDefault}
             currentAgent={displayedAgentName}
             defaultAgent={defaultAgent}
-            autoAllowMode={modal.autoAllowMode}
+            permissionMode={permission.effectiveMode}
             activityStream={activityStream}
             agent={foregroundAgent}
             prefillText={modal.inputPrefillText}
@@ -465,6 +457,7 @@ const AppContentComponent: React.FC<AppContentProps> = ({
             onToggleToolOutput={handleToggleToolOutput}
           />
 
+          <PermissionModeStatus requestedMode={state.config.permission_mode} onCycle={permission.cycle}/>
           {/* Persistent metadata belongs to the normal input state only. */}
           <Box width={Math.max(1, terminalWidth - 2)} paddingLeft={1}>
             {modal.isWaitingForExitConfirmation ? (
@@ -480,7 +473,6 @@ const AppContentComponent: React.FC<AppContentProps> = ({
                 {getActiveProfile() !== 'default' && <> · <Text color={UI_COLORS.PRIMARY}>{getActiveProfile()}</Text></>}
                 {backgroundProcessCount > 0 && <> · <Text color={UI_COLORS.PRIMARY}>{backgroundProcessCount} running</Text></>}
                 {scheduledTaskCount > 0 && <> · <Text color={UI_COLORS.PRIMARY}>{scheduledTaskCount} scheduled</Text></>}
-                {modal.autoAllowMode && <> · <Text color={UI_COLORS.ERROR}>auto-allow on</Text></>}
                 {displayedAgentName !== defaultAgent && <> · <Text color={UI_COLORS.PRIMARY}>{displayedAgentName}</Text></>}
               </Text>
             )}

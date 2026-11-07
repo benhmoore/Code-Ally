@@ -1,4 +1,5 @@
 /** Render the top modal with one status boundary and one keyboard owner. */
+import type { PermissionMode } from '../../security/PermissionMode.js';
 import React from 'react';
 import { Box } from 'ink';
 import { ActivityEventType } from '@shared/index.js';
@@ -26,6 +27,9 @@ import { PlanApprovalPrompt } from './PlanApprovalPrompt.js';
 import { PermissionPrompt } from './PermissionPrompt.js';
 
 interface ModalHostProps {
+  permissionMode?: PermissionMode;
+  requestedPermissionMode?: PermissionMode;
+  onPermissionModeCycle?: () => void;
   modal: ModalState;
   activityStream: ActivityStream;
   status: React.ReactNode;
@@ -66,6 +70,9 @@ export function ModalHost({
   children,
   onPermissionInstruct,
   reportError,
+  permissionMode = 'manual',
+  requestedPermissionMode = permissionMode,
+  onPermissionModeCycle,
 }: ModalHostProps) {
   const rewind = useRewindPreview(
     modal.rewindRequest,
@@ -338,7 +345,8 @@ export function ModalHost({
             request={request}
             selectedIndex={entry.selectedIndex}
             visible
-            autoAllowMode={modal.autoAllowMode}
+            permissionMode={permissionMode}
+            requestedPermissionMode={requestedPermissionMode}
             instructText={entry.instructText}
             onInstructTextChange={modal.setPermissionInstructText}
             cursorPosition={entry.cursorPosition}
@@ -361,7 +369,7 @@ export function ModalHost({
       {view.content}
       <ModalKeyboardInput
         selection={view.selection}
-        onToggleAutoAllow={entry.kind === 'permission' ? () => modal.setAutoAllowMode(!modal.autoAllowMode) : undefined}
+        onCyclePermissionMode={entry.kind === 'permission' ? onPermissionModeCycle : undefined}
       />
     </Box>
   );

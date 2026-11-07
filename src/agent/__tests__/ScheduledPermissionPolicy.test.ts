@@ -4,7 +4,7 @@ import { PermissionDeniedError } from '../../security/PathSecurity.js';
 
 describe('scheduled permission policy', () => {
   it('allows matching scheduled bash commands without prompting', async () => {
-    const manager = new TrustManager(false);
+    const manager = new TrustManager('manual');
     manager.setScheduledPermissionPolicy({
       allowed_bash_commands: [
         { match: 'exact', value: 'git push' },
@@ -17,7 +17,7 @@ describe('scheduled permission policy', () => {
   });
 
   it('denies non-matching or explicitly denied scheduled bash commands', async () => {
-    const manager = new TrustManager(false);
+    const manager = new TrustManager('manual');
     manager.setScheduledPermissionPolicy({
       allowed_bash_commands: [{ match: 'prefix', value: 'git ' }],
       denied_bash_patterns: ['\\bgit\\s+commit\\b'],
@@ -30,7 +30,7 @@ describe('scheduled permission policy', () => {
   });
 
   it('denies sensitive non-bash tools unless explicitly allowed', async () => {
-    const manager = new TrustManager(false);
+    const manager = new TrustManager('manual');
     manager.setScheduledPermissionPolicy({ allowed_tools: ['write'] });
 
     await expect(manager.checkPermission('write', { file_path: 'a.txt' }, 'a.txt')).resolves.toBe(true);
@@ -40,7 +40,7 @@ describe('scheduled permission policy', () => {
 
   describe('allow-rule matching is exhaustive and fails closed', () => {
     it('refuses a regex allow-rule, including the catch-all .*', async () => {
-      const manager = new TrustManager(false);
+      const manager = new TrustManager('manual');
       manager.setScheduledPermissionPolicy({
         allowed_bash_commands: [{ match: 'regex', value: '.*' } as any],
       });
@@ -52,7 +52,7 @@ describe('scheduled permission policy', () => {
     });
 
     it('refuses unknown, misspelled, and missing match kinds', async () => {
-      const manager = new TrustManager(false);
+      const manager = new TrustManager('manual');
       manager.setScheduledPermissionPolicy({
         allowed_bash_commands: [
           { match: 'startswith', value: 'curl' } as any,
@@ -69,7 +69,7 @@ describe('scheduled permission policy', () => {
     });
 
     it('still honors regex deny patterns, which fail closed', async () => {
-      const manager = new TrustManager(false);
+      const manager = new TrustManager('manual');
       manager.setScheduledPermissionPolicy({
         allowed_bash_commands: [{ match: 'prefix', value: 'git ' }],
         denied_bash_patterns: ['.*'],

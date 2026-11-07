@@ -4,6 +4,7 @@
  * Executes bash commands with timeout, streaming output, and security validation.
  */
 
+import { consumeAutoReadCommand, spawnReadCommand, type ReadCommandPlan } from '../security/ReadCommandPlan.js';
 import { BaseTool } from './BaseTool.js';
 import { ToolCapability } from './ToolCapability.js';
 import { ToolResult, FunctionDefinition, Config } from '../types/index.js';
@@ -320,13 +321,19 @@ export class BashTool extends BaseTool {
       );
     }
 
+    const readAdmission = await consumeAutoReadCommand(args, workingDir);
+    if (readAdmission.kind === 'rejected') {
+      return this.formatErrorResponse(readAdmission.reason, 'policy_denied');
+    }
+    const readPlan = readAdmission.kind === 'approved' ? readAdmission.plan : undefined;
+
     // Branch on execution mode
     if (runInBackground) {
       return this.spawnBackground(command, workingDir, blocksCompletion);
     } else {
       // Existing foreground execution
       try {
-        const result = await this.executeCommand(command, workingDir, timeout, outputMode, this.currentAbortSignal);
+        const result = await this.executeCommand(command, workingDir, timeout, outputMode, this.currentAbortSignal, readPlan);
         return result;
       } catch (error) {
         return this.formatErrorResponse(
@@ -582,7 +589,8 @@ export class BashTool extends BaseTool {
     workingDir: string,
     timeout: number,
     outputMode: string = 'full',
-    abortSignal?: AbortSignal
+    abortSignal?: AbortSignal,
+    readPlan?: ReadCommandPlan,
   ): Promise<ToolResult> {
     const stdoutBuffer = new BoundedOutputBuffer();
     const stderrBuffer = new BoundedOutputBuffer();
@@ -604,12 +612,15 @@ export class BashTool extends BaseTool {
       // Use 'ignore' for stdin to prevent hanging on interactive prompts
       // Use detached: true on Unix to create a new process group for proper cleanup
       // Note: env is filtered to prevent leaking sensitive environment variables
-      const child: ChildProcess = spawnBashCommand(command, {
+      const spawnOptions = {
         cwd: workingDir,
-        stdio: ['ignore', 'pipe', 'pipe'],
-        detached: process.platform !== 'win32', // Create process group on Unix
+        stdio: ['ignore', 'pipe', 'pipe'] as ['ignore', 'pipe', 'pipe'],
+        detached: process.platform !== 'win32',
         env: this.getSafeEnvironment(),
-      });
+      };
+      const child: ChildProcess = readPlan
+        ? spawnReadCommand(readPlan, spawnOptions)
+        : spawnBashCommand(command, spawnOptions);
 
       const cancellation = new AbortController();
       const abortHandler = () => cancellation.abort();

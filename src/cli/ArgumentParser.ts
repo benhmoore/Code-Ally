@@ -7,6 +7,7 @@
 
 import { Command, InvalidArgumentError } from 'commander';
 import { MODEL_PROVIDERS, type ModelProvider } from '../config/providers.js';
+import { PERMISSION_MODES, type PermissionMode } from '../security/PermissionMode.js';
 
 export const OUTPUT_FORMATS = ['text', 'json', 'stream-json'] as const;
 export type OutputFormat = (typeof OUTPUT_FORMATS)[number];
@@ -74,6 +75,7 @@ export interface CLIOptions {
 
   // Advanced settings
   autoConfirm?: boolean;
+  permissionMode?: PermissionMode;
   durableObjective?: boolean;
 
   // Profile options
@@ -205,7 +207,9 @@ Use '/help' for complete interactive command reference.
 
     // Advanced Settings
     this.program
-      .option('--auto-confirm', 'Auto-confirm tool executions')
+      .option('--permission-mode <mode>', 'Permissions: manual, auto (selective review), or allow-all', oneOf(PERMISSION_MODES))
+      .option('--auto-confirm', 'Deprecated alias for --permission-mode allow-all')
+      .option('--no-auto-confirm', 'Deprecated alias for --permission-mode manual')
       .option(
         '--durable-objective',
         'Keep an interactive objective running until complete-objective or block-objective is accepted'
@@ -232,6 +236,10 @@ Use '/help' for complete interactive command reference.
   parse(argv: string[] = process.argv): CLIOptions {
     this.program.parse(argv);
     const opts = this.program.opts();
+    if (opts.permissionMode && opts.autoConfirm !== undefined
+      && opts.permissionMode !== (opts.autoConfirm ? 'allow-all' : 'manual')) {
+      throw new InvalidArgumentError('Conflicting permission flags. Use --permission-mode manual, auto, or allow-all.');
+    }
 
     // Convert commander's camelCase to our preferred format
     return {
@@ -278,6 +286,7 @@ Use '/help' for complete interactive command reference.
 
       // Advanced
       autoConfirm: opts.autoConfirm,
+      permissionMode: opts.permissionMode,
       durableObjective: opts.durableObjective,
 
       // Profile

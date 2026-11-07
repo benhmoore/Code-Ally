@@ -369,10 +369,6 @@ export interface ModalState {
   setPermissionInstructText: (text: string) => void;
   setPermissionCursorPosition: (position: number) => void;
 
-  // Auto-allow mode
-  autoAllowMode: boolean;
-  setAutoAllowMode: (enabled: boolean) => void;
-
   // Model selector
   modelSelectRequest?: ModelSelectRequest;
   modelSelectedIndex: number;
@@ -502,7 +498,6 @@ export const useModalState = (): ModalState => {
   const [stack, dispatch] = useReducer(modalReducer, [] as ModalEntry[]);
 
   // Non-modal state that legitimately coexists with any modal.
-  const [autoAllowMode, setAutoAllowMode] = useState(false);
   const [agentWizardData, setAgentWizardData] = useState<AgentWizardData>({});
   const [inputPrefillText, setInputPrefillText] = useState<string | undefined>(undefined);
   const [promptPrefilled, setPromptPrefilled] = useState(false);
@@ -699,10 +694,6 @@ export const useModalState = (): ModalState => {
     setPermissionSelectedIndex,
     setPermissionInstructText,
     setPermissionCursorPosition,
-
-    // Auto-allow mode
-    autoAllowMode,
-    setAutoAllowMode,
 
     // Model selector
     modelSelectRequest: model?.request,

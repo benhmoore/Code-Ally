@@ -7,13 +7,14 @@ import { PolicyDeniedError } from '../PathSecurity.js';
 import type { BaseTool } from '../../tools/BaseTool.js';
 
 const shellTool = {
+  requiresConfirmation: () => true,
   getShellCommand: (args: Record<string, unknown>) => String(args.command),
 } as BaseTool;
 
 describe('PermissionManager shell resources', () => {
-  it('allows a read-only pipeline over a project-owned session artifact in auto mode', async () => {
-    const trust = new TrustManager(false);
-    trust.setAutoAllowModeGetter(() => true);
+  it('allows a read-only pipeline over a project-owned session artifact in Allow-all mode', async () => {
+    const trust = new TrustManager('manual');
+    trust.setPermissionMode('allow-all');
     const manager = new PermissionManager(trust);
     const artifact = path.join(getProjectSessionsDir(), 'session', 'tool-results', 'call.txt');
 
@@ -24,8 +25,8 @@ describe('PermissionManager shell resources', () => {
   });
 
   it('does not authorize a pipeline that reads an unapproved absolute path', async () => {
-    const trust = new TrustManager(false);
-    trust.setAutoAllowModeGetter(() => true);
+    const trust = new TrustManager('manual');
+    trust.setPermissionMode('allow-all');
     const manager = new PermissionManager(trust);
 
     await expect(manager.checkPermission('bash', {

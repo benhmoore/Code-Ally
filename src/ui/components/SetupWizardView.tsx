@@ -1,4 +1,7 @@
 /** Essential setup with cancellable discovery and an explicit review before saving. */
+import { PERMISSION_MODES, type PermissionMode } from '../../security/PermissionMode.js';
+import { permissionModeLabel } from '../utils/permissionPresentation.js';
+import type { PermissionSnapshot } from '@services/PermissionPolicyService.js';
 import React, { useEffect, useRef, useState } from 'react';
 import { Text, useInput } from 'ink';
 import { SetupWizard, type SetupConfig } from '@services/SetupWizard.js';
@@ -27,6 +30,13 @@ type Step =
   | 'checking'
   | 'unverified'
   | 'context'
+  | 'permissions'
+  | 'reviewer-options'
+  | 'reviewer-model'
+  | 'reviewer-endpoint'
+  | 'reviewer-key'
+  | 'permission-check'
+  | 'permission-result'
   | 'review'
   | 'saving'
   | 'complete';
@@ -48,6 +58,11 @@ export const SetupWizardView: React.FC<Props> = ({ onComplete, onSkip }) => {
   const [endpoint, setEndpoint] = useState(initial.endpoint);
   const [apiKey, setApiKey] = useState(initial.api_key ?? '');
   const [model, setModel] = useState(initial.model ?? '');
+  const [permissionMode, setPermissionMode] = useState<PermissionMode>(initial.permission_mode);
+  const [reviewerModel, setReviewerModel] = useState(initial.reviewer_model ?? '');
+  const [reviewerEndpoint, setReviewerEndpoint] = useState(initial.reviewer_endpoint ?? '');
+  const [reviewerKey, setReviewerKey] = useState(initial.reviewer_api_key ?? '');
+  const [permissionResult, setPermissionResult] = useState<PermissionSnapshot>();
   const [cursor, setCursor] = useState(initial.endpoint.length);
   const [step, setStep] = useState<Step>('provider');
   const [models, setModels] = useState<ProviderModel[]>([]);
@@ -77,6 +92,10 @@ export const SetupWizardView: React.FC<Props> = ({ onComplete, onSkip }) => {
     api_key: apiKey.trim() || null,
     model: model.trim(),
     context_size: contextOptions[contextIndex]!.value,
+    permission_mode: permissionMode,
+    reviewer_model: reviewerModel.trim() || null,
+    reviewer_endpoint: reviewerEndpoint.trim() || null,
+    reviewer_api_key: reviewerKey.trim() || null,
   };
 
   useEffect(() => {
@@ -119,7 +138,19 @@ export const SetupWizardView: React.FC<Props> = ({ onComplete, onSkip }) => {
     } else if (['checking', 'unverified', 'context'].includes(step)) {
       go(models.length ? 'model' : 'manual');
       setCursor(model.length);
-    } else go('context');
+    } else if (step === 'reviewer-model') go('reviewer-options');
+    else if (step === 'reviewer-endpoint') {
+      setCursor(reviewerModel.length);
+      go('reviewer-model');
+    } else if (step === 'reviewer-key') {
+      setCursor(reviewerEndpoint.length);
+      go('reviewer-endpoint');
+    } else if (step === 'permission-check' || step === 'permission-result') {
+      go('reviewer-options');
+    } else if (step === 'reviewer-options') {
+      go('permissions');
+    } else if (step === 'review') go('permissions');
+    else go('context');
   };
   const discover = async () => {
     go('discovering');
@@ -186,6 +217,21 @@ export const SetupWizardView: React.FC<Props> = ({ onComplete, onSkip }) => {
       setStep('unverified');
     }
   };
+  const checkPermissions = async () => {
+    go('permission-check');
+    const controller = new AbortController();
+    request.current = controller;
+    try {
+      const result = await wizard.inspectPermissions(draft, controller.signal);
+      if (!mounted.current || controller.signal.aborted) return;
+      setPermissionResult(result);
+      setStep('permission-result');
+    } catch (failure) {
+      if (!mounted.current || controller.signal.aborted) return;
+      setError(failure instanceof Error ? failure.message : 'Reviewer check failed');
+      setStep('reviewer-key');
+    }
+  };
   const save = async () => {
     if (saveInProgress.current) return;
     saveInProgress.current = true;
@@ -234,7 +280,13 @@ export const SetupWizardView: React.FC<Props> = ({ onComplete, onSkip }) => {
     request.current?.abort();
     onSkip?.();
   };
-  const textStep = step === 'endpoint' || step === 'credentials' || step === 'manual';
+  const textStep =
+    step === 'endpoint' ||
+    step === 'credentials' ||
+    step === 'manual' ||
+    step === 'reviewer-model' ||
+    step === 'reviewer-endpoint' ||
+    step === 'reviewer-key';
   useInput((input, key) => {
     if (key.eventType === 'release') return;
     if (activated.current) {
@@ -274,7 +326,7 @@ export const SetupWizardView: React.FC<Props> = ({ onComplete, onSkip }) => {
       }
     } else if (step === 'context') {
       if (key.upArrow || key.downArrow) setContextIndex(index => move(index, contextOptions.length - 1));
-      if (key.return) go('review');
+      if (key.return) go('permissions');
     } else if (step === 'discovery-error' || step === 'unverified') {
       if (key.upArrow || key.downArrow) setChoice(index => move(index, 2));
       if (key.return) {
@@ -288,17 +340,55 @@ export const SetupWizardView: React.FC<Props> = ({ onComplete, onSkip }) => {
           go('manual');
         }
       }
-    } else if (step === 'review' && key.return) void save();
+    } else if (step === 'permissions') {
+      if (key.upArrow || key.downArrow)
+        setPermissionMode(PERMISSION_MODES[move(PERMISSION_MODES.indexOf(permissionMode), 2)]!);
+      if (key.return) {
+        if (permissionMode === 'auto') {
+          go('reviewer-options');
+        } else go('review');
+      }
+    } else if (step === 'reviewer-options') {
+      if (key.upArrow || key.downArrow) setChoice(index => move(index, 1));
+      if (key.return) {
+        if (choice === 0) void checkPermissions();
+        else {
+          setCursor(reviewerModel.length);
+          go('reviewer-model');
+        }
+      }
+    } else if (step === 'permission-result' && key.return) go('review');
+    else if (step === 'review' && key.return) void save();
     else if (step === 'complete' && key.return) complete();
   });
 
   const submitText = (value: string) => {
-    if (step === 'endpoint') {
+    if (step === 'reviewer-model') {
+      setCursor(reviewerEndpoint.length);
+      go('reviewer-endpoint');
+      return;
+    }
+    if (step === 'reviewer-key') {
+      void checkPermissions();
+      return;
+    }
+    if (step === 'reviewer-endpoint' && !value.trim()) {
+      setCursor(reviewerKey.length);
+      go('reviewer-key');
+      return;
+    }
+    if (step === 'endpoint' || step === 'reviewer-endpoint') {
       try {
         const url = new URL(value.trim());
         if (!['http:', 'https:'].includes(url.protocol)) throw new Error();
       } catch {
         setError('Enter a complete http:// or https:// endpoint.');
+        return;
+      }
+      if (step === 'reviewer-endpoint') {
+        setReviewerEndpoint(value.trim());
+        setCursor(reviewerKey.length);
+        go('reviewer-key');
         return;
       }
       setEndpoint(value.trim());
@@ -308,17 +398,24 @@ export const SetupWizardView: React.FC<Props> = ({ onComplete, onSkip }) => {
     else void checkModel(value);
   };
   const titles: Record<Step, string> = {
-    provider: '1 / 5 · Model provider',
-    endpoint: '2 / 5 · Server endpoint',
-    credentials: '2 / 5 · API key',
+    provider: '1 / 6 · Model provider',
+    endpoint: '2 / 6 · Server endpoint',
+    credentials: '2 / 6 · API key',
     discovering: 'Connecting…',
     'discovery-error': 'Connection needs attention',
-    model: '3 / 5 · Model',
-    manual: '3 / 5 · Model name',
+    model: '3 / 6 · Model',
+    manual: '3 / 6 · Model name',
     checking: 'Checking tool support…',
     unverified: 'Tool support is unverified',
-    context: '4 / 5 · Context window',
-    review: '5 / 5 · Review settings',
+    context: '4 / 6 · Context window',
+    permissions: '5 / 6 · Permissions',
+    'reviewer-options': '5 / 6 · Auto reviewer',
+    'reviewer-model': '5 / 6 · Reviewer model',
+    'reviewer-endpoint': '5 / 6 · Reviewer endpoint',
+    'reviewer-key': '5 / 6 · Reviewer API key',
+    'permission-check': 'Checking reviewer…',
+    'permission-result': 'Reviewer readiness',
+    review: '6 / 6 · Review settings',
     saving: 'Saving settings…',
     complete: 'Ready to code',
   };
@@ -326,7 +423,18 @@ export const SetupWizardView: React.FC<Props> = ({ onComplete, onSkip }) => {
     step === 'discovery-error'
       ? ['Retry connection', 'Edit endpoint', 'Enter model manually']
       : ['Retry check', 'Choose another model', 'Continue with this model'];
-  const textValue = step === 'endpoint' ? endpoint : step === 'credentials' ? apiKey : model;
+  const textValue =
+    step === 'reviewer-model'
+      ? reviewerModel
+      : step === 'reviewer-endpoint'
+        ? reviewerEndpoint
+        : step === 'reviewer-key'
+          ? reviewerKey
+          : step === 'endpoint'
+            ? endpoint
+            : step === 'credentials'
+              ? apiKey
+              : model;
   const modelRows = Math.max(1, Math.min(12, terminalRows - 9));
   const modelWindowStart = Math.max(0, Math.min(modelIndex - Math.floor(modelRows / 2), models.length - modelRows));
   const hints =
@@ -334,7 +442,7 @@ export const SetupWizardView: React.FC<Props> = ({ onComplete, onSkip }) => {
       ? []
       : step === 'complete'
         ? [{ key: 'enter', label: 'start' }]
-        : step === 'discovering' || step === 'checking'
+        : step === 'discovering' || step === 'checking' || step === 'permission-check'
           ? [
               { key: 'esc', label: 'stop check' },
               { key: 'ctrl+c', label: 'leave' },
@@ -370,16 +478,34 @@ export const SetupWizardView: React.FC<Props> = ({ onComplete, onSkip }) => {
       {textStep && (
         <>
           <Text dimColor>
-            {step === 'endpoint'
-              ? 'Use the base URL of your model server.'
-              : step === 'credentials'
-                ? 'Leave empty for a local server that does not require authentication.'
-                : notice || 'Enter the exact model name served by this endpoint.'}
+            {step === 'reviewer-model'
+              ? 'Empty: auto-discover a local reviewer model.'
+              : step === 'reviewer-endpoint'
+                ? 'Empty: use the model server endpoint.'
+                : step === 'reviewer-key'
+                  ? 'Empty: inherit credentials only on the same endpoint.'
+                  : step === 'endpoint'
+                    ? 'Use the base URL of your model server.'
+                    : step === 'credentials'
+                      ? 'Leave empty for a local server that does not require authentication.'
+                      : notice || 'Enter the exact model name served by this endpoint.'}
           </Text>
           <TextInput
             key={step}
             value={textValue}
-            onValueChange={step === 'endpoint' ? setEndpoint : step === 'credentials' ? setApiKey : setModel}
+            onValueChange={
+              step === 'reviewer-model'
+                ? setReviewerModel
+                : step === 'reviewer-endpoint'
+                  ? setReviewerEndpoint
+                  : step === 'reviewer-key'
+                    ? setReviewerKey
+                    : step === 'endpoint'
+                      ? setEndpoint
+                      : step === 'credentials'
+                        ? setApiKey
+                        : setModel
+            }
             cursorPosition={cursor}
             onCursorChange={setCursor}
             onSubmit={submitText}
@@ -392,7 +518,7 @@ export const SetupWizardView: React.FC<Props> = ({ onComplete, onSkip }) => {
               }
               return false;
             }}
-            mask={step === 'credentials' ? '*' : undefined}
+            mask={step === 'credentials' || step === 'reviewer-key' ? '*' : undefined}
             multiline={false}
             maxVisibleRows={1}
           />
@@ -440,6 +566,53 @@ export const SetupWizardView: React.FC<Props> = ({ onComplete, onSkip }) => {
           ))}
         </>
       )}
+      {step === 'permissions' && (
+        <>
+          {PERMISSION_MODES.map(mode => (
+            <SelectionIndicator key={mode} isSelected={mode === permissionMode}>
+              {permissionModeLabel(mode)}
+            </SelectionIndicator>
+          ))}
+          <Text dimColor wrap="truncate-end">
+            {permissionMode === 'manual'
+              ? 'Ask before protected operations.'
+              : permissionMode === 'auto'
+                ? 'Review bounded actions; ask when uncertain.'
+                : 'Skip permission approval. Choose only if trusted.'}
+          </Text>
+          {permissionMode === 'auto' && (
+            <Text dimColor wrap="truncate-end">
+              Reviewer unavailable? Fall back to Manual.
+            </Text>
+          )}
+        </>
+      )}
+      {step === 'reviewer-options' && (
+        <>
+          <Text wrap="truncate-end">Model: {reviewerModel || 'auto-discover'}</Text>
+          <Text wrap="truncate-end">Server: {reviewerEndpoint || 'same endpoint'}</Text>
+          <Text dimColor wrap="truncate-end">
+            Unavailable reviewer falls back to Manual.
+          </Text>
+          {['Check reviewer', 'Configure reviewer'].map((label, index) => (
+            <SelectionIndicator key={label} isSelected={choice === index}>
+              {label}
+            </SelectionIndicator>
+          ))}
+        </>
+      )}
+      {step === 'permission-check' && <Text wrap="truncate-end">Checking reviewer with a small test request…</Text>}
+      {step === 'permission-result' && (
+        <>
+          <Text>Effective mode: {permissionModeLabel(permissionResult?.effectiveMode ?? 'manual')}</Text>
+          <Text wrap="truncate-end">{permissionResult?.fallbackReason ?? permissionResult?.reviewerModel}</Text>
+          <Text dimColor wrap="truncate-end">
+            {permissionResult?.effectiveMode === 'auto'
+              ? 'Readiness is checked again when activated.'
+              : 'Auto stays selected; Manual currently applies.'}
+          </Text>
+        </>
+      )}
       {step === 'review' && (
         <>
           <Text wrap="truncate-end">
@@ -448,9 +621,16 @@ export const SetupWizardView: React.FC<Props> = ({ onComplete, onSkip }) => {
           <Text wrap="truncate-end">Model: {model}</Text>
           <Text>Context: {draft.context_size.toLocaleString()} tokens</Text>
           <Text>API key: {apiKey ? 'configured (hidden)' : 'not required'}</Text>
-          <Text dimColor wrap="truncate-end">
-            Other saved preferences stay unchanged.
+          <Text wrap="truncate-end">
+            Permissions: {permissionModeLabel(permissionMode)}
+            {permissionMode === 'auto' ? ` → ${permissionModeLabel(permissionResult?.effectiveMode ?? 'manual')}` : ''}
           </Text>
+          {permissionMode === 'auto' && (
+            <Text dimColor wrap="truncate-end">
+              Reviewer: {reviewerModel || 'auto-discover'} · {reviewerEndpoint || 'same endpoint'} · key{' '}
+              {reviewerKey ? 'hidden' : 'inherited if same server'}
+            </Text>
+          )}
           {provider.value !== initial.provider && initial.service_model && (
             <Text dimColor>The auxiliary model will follow this model after changing providers.</Text>
           )}

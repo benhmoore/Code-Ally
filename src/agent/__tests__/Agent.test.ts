@@ -107,7 +107,7 @@ describe('Agent - Interruption Handling', () => {
       temperature: 0.7,
       max_tokens: 2048,
       bash_timeout: 120000,
-      auto_confirm: false,
+      permission_mode: 'manual',
       parallel_tools: false,
       theme: 'default',
       show_thinking_in_chat: false,

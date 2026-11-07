@@ -18,6 +18,28 @@ function setup(parentId?: string) {
 }
 
 describe.each([undefined, 'child'])('conversation projection (%s)', parent => {
+  it('owns one exact inline permission audit per call across re-entry and persisted restore', () => {
+    const { store, messages, emit } = setup(parent);
+    emit(E.TOOL_CALL_START, { toolName: 'read', arguments: {} }, 'first');
+    emit(E.TOOL_CALL_START, { toolName: 'read', arguments: {} }, 'second');
+    const decision = { toolName: 'read', verdict: 'ask', reason: 'Authorization unclear', source: 'reviewer', reviewerModel: 'decision:4b', timestamp: 100 };
+    emit(E.TOOL_PERMISSION_DECISION, { decision }, 'second');
+    emit(E.TOOL_PERMISSION_DECISION, { decision }, 'second');
+    const unsubscribe = store.subscribe(() => {});
+    unsubscribe();
+    expect(store.getSnapshot().activeToolCalls.find(call => call.id === 'first')?.permissionDecision).toBeUndefined();
+    expect(store.getSnapshot().activeToolCalls.find(call => call.id === 'second')?.permissionDecision).toEqual(decision);
+    expect(store.getSnapshot().activeToolCalls).toHaveLength(2);
+    messages.push({ id: 'assistant', role: 'assistant', content: '', tool_calls: [
+      { id: 'second', type: 'function', function: { name: 'read', arguments: {} } },
+    ] }, { id: 'result', role: 'tool', tool_call_id: 'second', content: 'ok', metadata: {
+      tool_permission: { second: decision as any },
+    } });
+    store.refresh(true);
+    expect(store.getSnapshot().activeToolCalls).toHaveLength(1);
+    expect(store.getSnapshot().activeToolCalls[0]?.permissionDecision).toEqual(decision);
+  });
+
   it('owns nested interjections and acknowledgments across subscriptions and transcript refresh', () => {
     const { store, messages, stream, emit } = setup(parent);
     emit(E.TOOL_CALL_START, { toolName: 'agent', arguments: {} }, 'tool');

@@ -5,6 +5,7 @@
  * context lines, line numbering, and multiple output modes.
  */
 
+import { consumeAutoGrepRead } from '../security/GrepReadBoundary.js';
 import { BaseTool } from './BaseTool.js';
 import { ToolCapability } from './ToolCapability.js';
 import { ToolExecutionContext, ToolResult, FunctionDefinition } from '../types/index.js';
@@ -205,8 +206,10 @@ For multi-step investigations with unknown scope, prefer explore() to preserve c
     }
 
     try {
-      // Resolve search path
-      const absolutePath = resolvePath(searchPath);
+      const admission = await consumeAutoGrepRead(args);
+      if (admission.kind === 'rejected') return this.formatErrorResponse(admission.reason, 'policy_denied');
+      // Resolve search path; an Auto grant binds it to its canonical admission target.
+      const absolutePath = admission.kind === 'approved' ? admission.target : resolvePath(searchPath);
 
       // Validate focus constraint if active
       const registry = this.getExecutionRegistry(executionContext);
@@ -280,7 +283,9 @@ For multi-step investigations with unknown scope, prefer explore() to preserve c
       rgArgs.push(absolutePath);
 
       // Spawn ripgrep process
-      const rgResult = await this.executeRipgrep(rgArgs);
+      // Last matching globs win: policy exclusions must follow every user filter.
+      if (admission.kind === 'approved') rgArgs.splice(rgArgs.length - 1, 0, ...admission.extraArguments);
+      const rgResult = await this.executeRipgrep(rgArgs, admission.kind === 'approved');
 
       // Parse JSON output
       const rawMatches = this.parseRipgrepJson(rgResult.stdout);
@@ -429,9 +434,9 @@ For multi-step investigations with unknown scope, prefer explore() to preserve c
   /**
    * Execute ripgrep and return stdout/stderr
    */
-  private executeRipgrep(args: string[]): Promise<{ stdout: string; stderr: string }> {
+  private executeRipgrep(args: string[], autoRead = false): Promise<{ stdout: string; stderr: string }> {
     return new Promise((resolve, reject) => {
-      const process = spawn(rgPath, args, { shell: false });
+      const process = spawn(rgPath, args, { shell: false, ...(autoRead ? { env: { LANG: 'C', LC_ALL: 'C', TZ: 'UTC' } } : {}) });
 
       let stdout = '';
       let stderr = '';

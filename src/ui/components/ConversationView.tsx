@@ -25,6 +25,7 @@ import { useTerminalRows } from '../hooks/useTerminalRows.js';
 import { wrapAnsiText } from '@utils/terminalText.js';
 import { liveRegionBudget } from '../utils/layout.js';
 import { resolveToolVisibility } from '../utils/toolVisibility.js';
+import { permissionDecisionText } from '../utils/permissionPresentation.js';
 import { fitToolsToBudget, partitionCompletedToolCalls } from '../utils/liveToolCalls.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -237,6 +238,7 @@ const MAX_STREAMING_LINES = 60;
 function estimateToolRows(toolCall: ToolCallTreeNode, config?: any): number {
   const visibility = resolveToolVisibility(toolCall, config);
   let rows = 1;
+  if (permissionDecisionText(toolCall.permissionDecision)) rows += 1;
   const output = toolCall.output?.trim();
   if (output && visibility.showOutput) {
     rows += Math.min(6, output.split('\n').length);

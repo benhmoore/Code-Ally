@@ -28,13 +28,13 @@ async function main(): Promise<void> {
     return;
   }
   if (!model || !endpoint || !output) throw new Error('Coding worker requires model, endpoint, and output');
-  const config = { ...DEFAULT_CONFIG, model, endpoint, context_size: Number(contextSize), max_tokens: Number(maxTokens), temperature: 0, auto_confirm: true, stream_responses: false, tool_call_activity_timeout: 0 };
+  const config = { ...DEFAULT_CONFIG, model, endpoint, context_size: Number(contextSize), max_tokens: Number(maxTokens), temperature: 0, permission_mode: 'allow-all' as const, stream_responses: false, tool_call_activity_timeout: 0 };
   const stream = new ActivityStream();
   const allowedTools = ['read', 'apply-patch', 'write', 'bash', 'grep', 'glob'];
   const manager = new ToolManager(createBuiltInTools(stream, config).filter(tool => allowedTools.includes(tool.name)));
   const registry = ServiceRegistry.getInstance();
   const policy = new RunPolicyManager({ interaction: 'none', execution: 'headless', completion: 'chat', authorizationPresetId: 'coding-eval' });
-  const trust = new TrustManager(true, stream);
+  const trust = new TrustManager('allow-all', stream);
   trust.setRunPolicyManager(policy);
   trust.setRunAuthorizationPolicy({ allowed_tools: allowedTools.filter(name => name !== 'bash'), allowed_bash_commands: [{ match: 'exact', value: 'node --test' }] }, { strict: true });
   registry.registerInstance('run_policy_manager', policy);

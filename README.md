@@ -254,7 +254,10 @@ Run `ally --init` for interactive setup. Profile overrides live at
 lives at `~/.ally/config.json`.
 
 Inside Ally, use `/config setup` to choose a provider, enter its endpoint and
-optional API key, select a model and context window, then review before saving.
+optional API key, select a model and context window, configure permissions, then
+review before saving. Auto checks reviewer readiness with a small decision request;
+you can use discovery on the model server or configure a separate reviewer model,
+endpoint, and API key. If the reviewer is unavailable, setup shows the Manual fallback.
 Escape goes back a step (or closes the first step); Ctrl+C cancels setup.
 Rerunning setup preserves unrelated settings and integrations. `/config` shows
 common settings; `/config show all` shows the full catalogue, and
@@ -284,7 +287,11 @@ the primary model. Secrets are hidden in configuration output and completion.
 | Option | Default | Description |
 |--------|---------|-------------|
 | `bash_timeout` | `120` | Command timeout (seconds) |
-| `auto_confirm` | `false` | Skip permission prompts |
+| `permission_mode` | `auto` | Selective review; falls back to manual until a reviewer is ready |
+| `reviewer_model` | `null` | Auto-detect a local model advertising decision capability |
+| `reviewer_endpoint` | `null` | Reviewer server supporting `/v1/systemone`; inherits main endpoint |
+| `reviewer_api_key` | `null` | Encrypted reviewer key; inherits main key only for the same endpoint |
+| `reviewer_shadow` | `false` | Record reviewer recommendations while retaining manual approval |
 | `parallel_tools` | `true` | Enable parallel tool execution |
 | `stream_responses` | `true` | Stream model responses independently of tool parallelism |
 | `default_agent` | `ally` | Default agent at startup |
@@ -314,7 +321,8 @@ ally --model llama3.2
 ally --temperature 0.7
 ally --endpoint http://remote:11434
 ally --provider rapid-mlx --model rapid-mlx/your-model
-ally --auto-confirm
+ally --permission-mode auto
+ally --permission-mode allow-all # Explicitly skip approval prompts
 ally --reasoning-effort high
 ```
 
@@ -366,8 +374,49 @@ its parent instructions.
   durable state is written atomically.
 - Web fetches reject private, loopback, link-local, and metadata-network targets,
   including redirect and DNS-resolution bypasses, and cap response size.
-- `auto_confirm` removes interactive approval prompts; use it only in a trusted,
-  isolated workspace.
+- Permission modes are `manual` (ask), `auto` (selective review), and
+  `allow-all` (skip interactive approval). Auto uses a dedicated SystemOne
+  reviewer endpoint, not a chat-completions model. It falls back to manual
+  while a compatible reviewer is unavailable. Automatic discovery excludes
+  models hosted through remote hosts.
+- Auto is the default for new profiles. Shift+Tab cycles Manual → Auto →
+  Allow-all and saves the choice to the profile; `/config set permission_mode=auto`
+  also selects Auto and retries an unavailable reviewer. Mode changes apply to
+  subsequent requests; an already-open approval still needs a decision.
+- Review decisions appear beside their tool calls and survive session reloads.
+  The footer shows the current mode, active review, and any Manual fallback;
+  completed decisions do not linger there. Routine policy-approved reads retain
+  their compact tool status.
+- With Auto selected, use `/config set reviewer_shadow=true` to evaluate
+  recommendations while keeping manual approval. Configure a reviewer explicitly with
+  `/config set reviewer_model=<decision-model>` and, if needed,
+  `/config set reviewer_endpoint=http://<host>:11434`.
+- `allow-all` removes interactive approval prompts; use it only in a trusted,
+  isolated workspace. Choose it explicitly with `--permission-mode allow-all`.
+  Hard run-policy denials and path restrictions still apply. Extremely sensitive
+  operations are denied in Allow-all, requiring an explicit decision in Manual.
+  The legacy `--auto-confirm` flag remains an alias; `--no-auto-confirm` selects
+  manual approval. Saved legacy `auto_confirm` values migrate to the matching
+  canonical mode, without overriding an explicitly saved `permission_mode`.
+
+Auto uses deterministic rules for ordinary workspace reads. Eligible literal
+shell reads execute pinned utilities directly, with no shell expansion. Verified
+`&&` chains can combine workspace `cd`, literal `echo`, file-listing/read commands,
+and supported Git status, log, branch, remote, and metadata diff reads. Git options
+are validated by operation family, including common aliases and flag ordering.
+Repositories with external content filters or submodules require approval for
+working-tree inspection. Scripts, unknown command forms, package runners,
+network tools, and unverified Git repository layouts still ask. Auto grep excludes known credential/instruction paths and disables
+ripgrep configuration and inherited preprocessing settings. Bounded new-file
+writes and contextual patches require a positive reviewer decision. The reviewer
+cannot broaden this envelope. This is not an OS sandbox for arbitrary programs.
+
+The reviewer receives original human directions and complete proposed arguments,
+not the coding model's reasoning or a lossy summary. If the authority exceeds
+2,000 characters or arguments exceed 4,000 characters, Auto asks instead of
+silently truncating evidence. These compact decision records do not change the
+coding model's 32K-or-larger context. Timeout, malformed output, or an unavailable
+reviewer falls back to human approval (or a structured denial in headless runs).
 
 ### Management
 

@@ -1,8 +1,9 @@
 import { DIFF_LAYOUT_VALUES, MOUSE_SUPPORT_VALUES, type Config } from '../types/index.js';
 import { MODEL_PROVIDERS } from './providers.js';
 import { REASONING_EFFORT_API_VALUES } from './constants.js';
+import { PERMISSION_MODES } from '../security/PermissionMode.js';
 
-export const SECRET_CONFIG_KEYS = new Set<keyof Config>(['api_key', 'search_api_key']);
+export const SECRET_CONFIG_KEYS = new Set<keyof Config>(['api_key', 'search_api_key', 'reviewer_api_key']);
 
 export const CONFIG_SUGGESTIONS: Partial<Record<keyof Config, readonly unknown[]>> = {
   temperature: [null, 0, 0.3, 0.5, 0.7, 1],
@@ -15,6 +16,7 @@ export const CONFIG_SUGGESTIONS: Partial<Record<keyof Config, readonly unknown[]
 };
 
 export const CONFIG_CHOICES: Partial<Record<keyof Config, readonly string[]>> = {
+  permission_mode: PERMISSION_MODES,
   provider: MODEL_PROVIDERS.map(provider => provider.value),
   reasoning_effort: REASONING_EFFORT_API_VALUES,
   search_provider: ['none', 'brave', 'serper'],
@@ -74,7 +76,7 @@ export const CONFIG_CATEGORIES: Record<string, (keyof Config)[]> = {
   'Agent Settings': ['default_agent'],
   'Execution Settings': [
     'bash_timeout',
-    'auto_confirm',
+    'permission_mode',
     'parallel_tools',
     'stream_responses',
     'tool_call_activity_timeout',
@@ -112,6 +114,7 @@ export const CONFIG_CATEGORIES: Record<string, (keyof Config)[]> = {
   'Read Tool': ['read_max_tokens'],
   Setup: ['setup_completed'],
   'Search Integration': ['search_provider', 'search_api_key'],
+  'Permission Reviewer': ['reviewer_model', 'reviewer_endpoint', 'reviewer_api_key', 'reviewer_shadow'],
 };
 
 export const CONFIG_DESCRIPTIONS: Partial<Record<keyof Config, string>> = {
@@ -141,7 +144,11 @@ export const CONFIG_DESCRIPTIONS: Partial<Record<keyof Config, string>> = {
 
   // Execution Settings
   bash_timeout: 'Bash command timeout (seconds)',
-  auto_confirm: 'Skip permission prompts',
+  permission_mode: 'manual asks for approval; auto selectively reviews actions and falls back to manual until a reviewer is ready; allow-all skips interactive approval.',
+  reviewer_model: 'SystemOne decision model. Unset auto-detects a local model advertising decision capability; remote-hosted models are excluded.',
+  reviewer_endpoint: 'Reviewer server base URL supporting /v1/systemone, not a chat-completions endpoint. Unset inherits the main endpoint.',
+  reviewer_api_key: 'Reviewer API key (encrypted). Unset inherits the main key only when reviewer and main endpoints match.',
+  reviewer_shadow: 'Observe reviewer recommendations while keeping manual approval. Useful when evaluating a reviewer before enabling selective Auto.',
   parallel_tools: 'Enable parallel tool execution',
   tool_call_activity_timeout: 'Agent no-tool activity timeout (seconds)',
 

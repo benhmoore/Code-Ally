@@ -20,7 +20,7 @@ const config = {
   temperature: 0.7,
   max_tokens: 2048,
   bash_timeout: 120000,
-  auto_confirm: true,
+  permission_mode: 'allow-all',
   parallel_tools: false,
   theme: 'default',
   stream_responses: false,

@@ -116,9 +116,15 @@ export function applyRuntimeConfigUpdates(
     messageHistory?.setMaxTokens(fullConfig.context_size);
   }
 
-  if (hasUpdate(updates, 'auto_confirm')) {
-    const trustManager = serviceRegistry.get('trust_manager');
-    setIfAvailable(trustManager, 'setAutoConfirm', fullConfig.auto_confirm);
+  if (['permission_mode', 'reviewer_model', 'reviewer_endpoint', 'reviewer_api_key', 'reviewer_shadow', 'provider', 'endpoint', 'api_key'].some(key => hasUpdate(updates, key as keyof Config))) {
+    serviceRegistry.get('permission_policy')?.configure(fullConfig);
+    serviceRegistry.get('trust_manager')?.setPermissionMode(fullConfig.permission_mode);
+    serviceRegistry.get('run_policy_manager')?.setTerminalAutoAllow(fullConfig.permission_mode === 'allow-all');
+    if (fullConfig.permission_mode === 'allow-all') {
+      serviceRegistry.get('form_manager')?.cancelAllPending();
+      serviceRegistry.get('plan_mode_manager')?.cancelPendingApproval();
+    }
+    serviceRegistry.get('tool_manager')?.clearDefinitionsCache();
   }
 
   const toolManager = serviceRegistry.get('tool_manager');

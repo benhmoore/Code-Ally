@@ -24,6 +24,7 @@ import { CONFIG_SCHEMA } from '../config/schemas.js';
 
 import { SECRET_CONFIG_KEYS, formatConfigValue } from '../config/metadata.js';
 import { providerConfigUpdates } from '../config/providers.js';
+import { normalizePermissionConfig } from '../security/PermissionMode.js';
 
 export class ConfigManager implements IService {
   private _config: Config;
@@ -75,9 +76,9 @@ export class ConfigManager implements IService {
     try {
       const baseConfigPath = getBaseConfigFile();
       const content = await fs.readFile(baseConfigPath, 'utf-8');
-      const baseConfig = this.decryptSecrets(
+      const baseConfig = normalizePermissionConfig(this.decryptSecrets(
         migrateRecord<Record<string, unknown>>(JSON.parse(content), CONFIG_SCHEMA)
-      );
+      ));
 
       // Validate and coerce types
       const validatedConfig: Partial<Config> = {};
@@ -136,7 +137,7 @@ export class ConfigManager implements IService {
         const content = await fs.readFile(this._configPath, 'utf-8');
         // Unversioned profile configs (every existing install) read as v0.
         const migrated = migrateRecord<Record<string, unknown>>(JSON.parse(content), CONFIG_SCHEMA);
-        const rawProfileConfig = this.decryptSecrets(migrated);
+        const rawProfileConfig = normalizePermissionConfig(this.decryptSecrets(migrated));
 
         // Validate and coerce types for profile config
         for (const [key, value] of Object.entries(rawProfileConfig)) {
@@ -350,7 +351,9 @@ export class ConfigManager implements IService {
    * @param value - New value to set
    * @throws Error if validation fails
    */
-  async setValue<K extends keyof Config>(key: K, value: Config[K]): Promise<void> {
+  async setValue(key: 'auto_confirm', value: boolean | string): Promise<void>;
+  async setValue<K extends keyof Config>(key: K, value: Config[K]): Promise<void>;
+  async setValue(key: keyof Config | 'auto_confirm', value: unknown): Promise<void> {
     await this.setValues({ [key]: value } as Partial<Config>);
   }
 
@@ -360,11 +363,11 @@ export class ConfigManager implements IService {
    * @param values - Object with key-value pairs to set
    * @throws Error if any validation fails
    */
-  async setValues(values: Partial<Config>): Promise<void> {
+  async setValues(values: Partial<Config> & { auto_confirm?: unknown }): Promise<void> {
     // Validate all values first
     const validations: Array<[keyof Config, any]> = [];
 
-    for (const [key, value] of Object.entries(values)) {
+    for (const [key, value] of Object.entries(this.normalizePermissionUpdates(values))) {
       if (key in DEFAULT_CONFIG) {
         const validation = validateConfigValue(key as keyof Config, value);
 
@@ -404,9 +407,9 @@ export class ConfigManager implements IService {
    * Explicit persistent updates later in the run take ownership of their keys
    * and remove the corresponding overlay entry.
    */
-  applyRuntimeOverrides(values: Partial<Config>): void {
+  applyRuntimeOverrides(values: Partial<Config> & { auto_confirm?: unknown }): void {
     const validated: Partial<Config> = {};
-    for (const [key, value] of Object.entries(values)) {
+    for (const [key, value] of Object.entries(this.normalizePermissionUpdates(values))) {
       if (!(key in DEFAULT_CONFIG)) throw new Error(`Unknown config key '${key}'`);
       const result = validateConfigValue(key as keyof Config, value);
       if (!result.valid) {
@@ -415,6 +418,15 @@ export class ConfigManager implements IService {
       (validated as any)[key] = result.coercedValue;
     }
     this._runtimeOverrides = { ...this._runtimeOverrides, ...providerConfigUpdates(this.getConfig(), validated) };
+  }
+
+  private normalizePermissionUpdates(values: Partial<Config> & { auto_confirm?: unknown }): Record<string, unknown> {
+    if (Object.hasOwn(values, 'auto_confirm')) {
+      const validation = validateConfigValue('parallel_tools', values.auto_confirm);
+      if (!validation.valid) throw new Error(`Invalid legacy auto_confirm value: ${validation.error}`);
+      return normalizePermissionConfig({ ...values, auto_confirm: validation.coercedValue });
+    }
+    return values;
   }
 
   /**
@@ -530,7 +542,7 @@ export class ConfigManager implements IService {
       // Check profile config
       const profileConfigPath = this._configPath;
       const profileContent = await fs.readFile(profileConfigPath, 'utf-8');
-      const profileConfig = JSON.parse(profileContent);
+      const profileConfig = normalizePermissionConfig(JSON.parse(profileContent));
       if (key in profileConfig) {
         return 'profile';
       }
@@ -605,6 +617,13 @@ export class ConfigManager implements IService {
     }
 
     const { key, valueString } = parsed;
+    if (key === 'auto_confirm') {
+      let value: unknown = valueString;
+      try { value = JSON.parse(valueString); } catch { /* Legacy boolean strings remain accepted. */ }
+      const validation = validateConfigValue('parallel_tools', value);
+      if (!validation.valid) throw new Error(`Invalid legacy auto_confirm value: ${validation.error}`);
+      return this.setFromString(`permission_mode=${validation.coercedValue ? 'allow-all' : 'manual'}`);
+    }
 
     // Validate key exists
     if (!this.hasKey(key)) {
