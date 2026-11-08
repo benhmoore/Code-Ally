@@ -1,9 +1,9 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { Box, Text } from 'ink';
+import React, { useState, useEffect, useLayoutEffect, useRef } from 'react';
+import { Box, Text, measureElement, type DOMElement } from 'ink';
 import { CommittedTranscript, useBottomLayout } from './BottomAlignedLayout.js';
 import { Message, ToolCallState, ToolCallTreeNode, Config } from '@shared/index.js';
 import { MessageDisplay } from './MessageDisplay.js';
-import { ToolCallDisplay, agentPreviewLines } from './ToolCallDisplay.js';
+import { ToolCallDisplay } from './ToolCallDisplay.js';
 import { CompactionNotice, RewindNotice, StatusMessage } from '../contexts/AppContext.js';
 import { readFileSync } from 'fs';
 import { fileURLToPath } from 'url';
@@ -24,8 +24,6 @@ import { ErrorBoundary } from './ErrorBoundary.js';
 import { useTerminalRows } from '../hooks/useTerminalRows.js';
 import { wrapAnsiText } from '@utils/terminalText.js';
 import { liveRegionBudget } from '../utils/layout.js';
-import { resolveToolVisibility } from '../utils/toolVisibility.js';
-import { permissionDecisionText } from '../utils/permissionPresentation.js';
 import { fitToolsToBudget, partitionCompletedToolCalls } from '../utils/liveToolCalls.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -235,23 +233,7 @@ const MAX_VISIBLE_RUNNING_TOOLS = 8;
  */
 const MAX_STREAMING_LINES = 60;
 
-function estimateToolRows(toolCall: ToolCallTreeNode, config: Partial<Config> | undefined, width: number): number {
-  const visibility = resolveToolVisibility(toolCall, config);
-  let rows = 1 + agentPreviewLines(toolCall, width).length;
-  if (permissionDecisionText(toolCall.permissionDecision)) rows += 1;
-  const output = toolCall.output?.trim();
-  if (output && visibility.showOutput) {
-    rows += Math.min(6, output.split('\n').length);
-  }
-  if (toolCall.diffPreview && !visibility.collapsed) rows += 6;
-  if (toolCall.thinking && toolCall.thinkingEndTime) rows += 1;
-  if (visibility.showChildren) {
-    rows += (toolCall.children ?? []).reduce((sum, child) => sum + estimateToolRows(child, config, Math.max(1, width - 4)), 0);
-  }
-  return rows;
-}
-
-const ActiveContent = React.memo<{
+export const ActiveContent = React.memo<{
   /** Completed calls of the current turn, still open to expansion. */
   completedToolCalls: ToolCallTreeNode[];
   runningToolCalls: ToolCallTreeNode[];
@@ -266,22 +248,41 @@ const ActiveContent = React.memo<{
   const layout = useBottomLayout();
   const maxActiveHeight = Math.min(liveRegionBudget(terminalRows), layout?.liveRows ?? Infinity);
 
-  // Early return null if nothing to render - prevents empty Box from taking space
-  if (maxActiveHeight === 0 || (completedToolCalls.length === 0 && runningToolCalls.length === 0 && !streamingContent && !pendingSummary)) {
-    return null;
-  }
+  // Measure the actual renderer, rather than keeping a second approximation of
+  // every row it can produce. Like committed transcript preflight, this subtree
+  // is absolutely positioned and clipped to zero height before it can paint.
+  const visibleRunning = React.useMemo(() => runningToolCalls.slice(-MAX_VISIBLE_RUNNING_TOOLS), [runningToolCalls]);
+  const candidates = React.useMemo(() => [...completedToolCalls, ...visibleRunning], [completedToolCalls, visibleRunning]);
+  const measuredNodes = useRef(new Map<string, DOMElement>());
+  const [measuredRows, setMeasuredRows] = useState(new Map<string, number>());
+  useLayoutEffect(() => {
+    const next = new Map(candidates.map(call => [call.id,
+      measuredNodes.current.has(call.id) ? measureElement(measuredNodes.current.get(call.id)!).height : 0]));
+    setMeasuredRows(previous => previous.size === next.size && [...next].every(([id, rows]) => previous.get(id) === rows)
+      ? previous : next);
+  }, [candidates, width, config, compactionNotices]);
+  const toolView = (call: ToolCallTreeNode, measuring = false) => (
+    <Box key={call.id} paddingLeft={2} width={width} flexShrink={0}
+      ref={measuring ? node => { if (node) measuredNodes.current.set(call.id, node); else measuredNodes.current.delete(call.id); } : undefined}>
+      <ErrorBoundary label={`live-tool-${call.id}`}>
+        {renderToolCallTree(call, 0, config, compactionNotices, Math.max(1, width - 2), measuring ? undefined : onToggleToolCall)}
+      </ErrorBoundary>
+    </Box>
+  );
+  const measurement = (
+    <Box position="absolute" width={width} height={0} overflow="hidden">
+      <Box position="absolute" width={width} flexDirection="column">{candidates.map(call => toolView(call, true))}</Box>
+    </Box>
+  );
+  if (maxActiveHeight === 0 || (candidates.length === 0 && !streamingContent && !pendingSummary)) return measurement;
 
-  // Cap visible running tools to keep dynamic output height bounded
-  const visibleRunning = runningToolCalls.length > MAX_VISIBLE_RUNNING_TOOLS
-    ? runningToolCalls.slice(-MAX_VISIBLE_RUNNING_TOOLS)
-    : runningToolCalls;
   const hiddenToolCount = runningToolCalls.length - visibleRunning.length;
   const noticeRows = (pendingSummary ? 1 : 0) + (hiddenToolCount > 0 ? 1 : 0);
 
   // The newest streaming lines come first within the budget; tools take what
   // is left, dropping the oldest, so an expanded call never hides the reply.
-  const estimate = (toolCall: ToolCallTreeNode) => estimateToolRows(toolCall, config, Math.max(1, width - 2));
-  const wantedToolRows = [...completedToolCalls, ...visibleRunning].reduce((sum, toolCall) => sum + estimate(toolCall), 0);
+  const rowsFor = (toolCall: ToolCallTreeNode) => measuredRows.get(toolCall.id) ?? 0;
+  const wantedToolRows = [...completedToolCalls, ...visibleRunning].reduce((sum, toolCall) => sum + rowsFor(toolCall), 0);
   let displayStreaming = streamingContent?.trimStart();
   let streamingRows = 0;
   if (displayStreaming) {
@@ -295,15 +296,16 @@ const ActiveContent = React.memo<{
     streamingRows = Math.min(lines.length, availableStreamingRows);
   }
   const toolBudget = Math.max(1, maxActiveHeight - noticeRows - streamingRows);
-  const visibleTools = fitToolsToBudget([...completedToolCalls, ...visibleRunning], toolBudget, estimate);
+  const visibleTools = fitToolsToBudget(candidates.filter(call => rowsFor(call) > 0), toolBudget, rowsFor);
 
-  const estimatedRows = noticeRows + streamingRows + visibleTools.reduce((sum, toolCall) => sum + estimate(toolCall), 0);
-  const constrainedHeight = Math.min(maxActiveHeight, Math.max(1, estimatedRows));
+  const measuredHeight = noticeRows + streamingRows + visibleTools.reduce((sum, toolCall) => sum + rowsFor(toolCall), 0);
+  const constrainedHeight = Math.min(maxActiveHeight, Math.max(1, measuredHeight));
 
   return (
-    // The shell owns clipping when docked. Ink does not intersect nested clip
-    // regions; a second clip here can paint over the footer during measurement.
+    // The shell owns the outer clip when docked; the tool-only viewport
+    // separately bounds expanded content before the streaming reply.
     <Box flexDirection="column" height={constrainedHeight} overflowY={layout ? undefined : 'hidden'}>
+      {measurement}
       {/* Trailing context group, deferred out of Static so it can still absorb
           later context calls without rewriting already-printed output */}
       {pendingSummary && (
@@ -318,13 +320,9 @@ const ActiveContent = React.memo<{
         </Box>
       )}
 
-      {visibleTools.map((toolCall) => (
-        <Box key={`live-tool-${toolCall.id}`} paddingLeft={2} width={width} flexShrink={0}>
-          <ErrorBoundary label={`live-tool-${toolCall.id}`}>
-            {renderToolCallTree(toolCall, 0, config, compactionNotices, Math.max(1, width - 2), onToggleToolCall)}
-          </ErrorBoundary>
-        </Box>
-      ))}
+      <Box flexDirection="column" flexShrink={0} height={Math.min(toolBudget, visibleTools.reduce((sum, call) => sum + rowsFor(call), 0))} overflowY="hidden">
+        {visibleTools.map(call => toolView(call))}
+      </Box>
 
       {displayStreaming && (
         <Box paddingLeft={2}>

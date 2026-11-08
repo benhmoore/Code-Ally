@@ -8,7 +8,7 @@
 
 import { promises as fs } from 'fs';
 import { join } from 'path';
-import { homedir } from 'os';
+import { ALLY_HOME } from '../config/paths.js';
 import { logger } from './Logger.js';
 import { CryptoService, CRYPTO_SALTS } from './CryptoService.js';
 import { atomicWriteFile } from '../utils/atomicFile.js';
@@ -28,14 +28,14 @@ export class IntegrationStore implements IService {
    * Get the path to the integrations settings file
    */
   private getSettingsPath(): string {
-    return join(homedir(), '.ally', INTEGRATION_FILES.SETTINGS);
+    return join(ALLY_HOME, INTEGRATION_FILES.SETTINGS);
   }
 
   /**
    * Get the path to the .ally directory
    */
   private getAllyDir(): string {
-    return join(homedir(), '.ally');
+    return ALLY_HOME;
   }
 
   /**

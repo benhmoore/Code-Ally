@@ -1,0 +1,23 @@
+> Execute this task: UX:child-fail This fixture must receive an explicit
+provider failure. Do not recover or use tools.
+
+  Task > Error communicating with Ollama: HTTP 400: Deterministic failed child
+   provider fixture
+
+  Suggested fixes:
+  - Check that Ollama is running: `ollama serve`
+  - Verify Ollama is accessible at the configured endpoint
+  - Check the Ollama logs for errors
+ Completed conversation · Esc returns to main · queued text can be recalled wi…
+    Completed · task
+ ╭────────────────────────────────────────────────────────────────────────────╮
+ │ > Type a message...                                                        │
+ ╰────────────────────────────────────────────────────────────────────────────╯
+
+    ○ main
+  > ● task · Fixture failed child  0s · 1.0k tokens (error)
+
+  ↑↓ move · enter view · x stop · esc back
+  Auto → Manual · shift+tab
+  No local decision model found. Configure reviewer_model and reviewer_endpoin…
+  ux-fuzz:latest · task

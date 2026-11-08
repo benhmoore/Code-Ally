@@ -46,6 +46,15 @@ import {
  * - Context Management: getContextUsagePercentage, ensureContextRoom, cleanupEphemeralMessages
  * - Turn Management: clearCurrentTurn, startToolExecution
  */
+/** The provider failed again after the bounded partial-stream continuation. */
+export class ModelStreamRecoveryError extends Error {
+  readonly code = 'model_stream_recovery_exhausted';
+  constructor(reason: string) {
+    super(`Model stream failed after one recovery attempt: ${reason}`);
+    this.name = 'ModelStreamRecoveryError';
+  }
+}
+
 export interface ResponseContext {
   /** Agent instance ID for logging */
   instanceId: string;
@@ -168,6 +177,19 @@ export class ResponseProcessor {
       return this.recordTextResponse({ role: 'assistant', content: terminalResponse! }, context);
     }
 
+    if (response.error && response.partial && isRetry) {
+      // Keep incomplete work inspectable, but never present a second broken
+      // stream as a successfully completed assistant response or execute its
+      // potentially incomplete tool calls.
+      if (response.content || response.thinking) {
+        this.conversationManager.addMessage({
+          role: 'assistant', content: response.content || '', thinking: response.thinking,
+          timestamp: Date.now(), metadata: { agentName: context.agentName, partial: true },
+        });
+      }
+      throw new ModelStreamRecoveryError(response.error_message || 'Connection lost before the response completed');
+    }
+
     // GAP 2: Partial response due to HTTP error (mid-stream interruption)
     // Detect partial responses that were interrupted by HTTP 500/503 errors
     // If we have partial content/tool_calls, continue from where we left off
@@ -196,6 +218,7 @@ export class ResponseProcessor {
           timestamp: Date.now(),
           metadata: {
             agentName: context.agentName,
+            partial: true,
           },
         };
         this.conversationManager.addMessage(assistantMessage);

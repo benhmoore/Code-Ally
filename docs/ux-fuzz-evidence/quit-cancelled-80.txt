@@ -1,0 +1,20 @@
+  ✓ Send Message
+    Auto needs approval · No local decision model found. Configure reviewer_m…
+
+↳ [Agent pool-agent-1794164137985-0]
+Fixture child requests one parent reply. Fixture messenger ready.
+
+↳ [Agent pool-agent-1794164137985-0; agent-1794164137986-upxg5x done]
+Fixture messenger complete. Tool result received; ready for your next message.
+
+  Fixture message complete. Tool result received; ready for your next message.
+
+  Fixture message complete. Tool result received; ready for your next message.
+    Ready · ally
+ ╭────────────────────────────────────────────────────────────────────────────╮
+ │ > Type a message...                                                        │
+ ╰────────────────────────────────────────────────────────────────────────────╯
+  1 agent · 0 running · ↓ manage
+  Auto → Manual · shift+tab
+  No local decision model found. Configure reviewer_model and reviewer_endpoin…
+  ux-fuzz:latest

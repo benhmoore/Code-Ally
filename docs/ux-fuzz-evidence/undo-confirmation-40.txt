@@ -1,0 +1,11 @@
+
+  ────────────────────────────────────
+  Confirm undo · 1 operation
+  File will be deleted.
+  Undoing write on /tmp/ally-ux-conver
+  sation/workspace/permission-demo.txt
+  pgup/pgdn inspect
+    > Confirm
+      Cancel
+
+  ↑↓ move · enter confirm · esc cancel

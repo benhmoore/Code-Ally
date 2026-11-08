@@ -19,6 +19,10 @@ export interface TurnSnapshot {
   toolCalls: number;
   modelCallsWithoutProgress: number;
   terminationReason?: TurnTerminationReason;
+  /** Typed terminal failure evidence, independent of assistant response text. */
+  error?: string;
+  /** Canonical message that already presents this failure to the user. */
+  errorAuditId?: string;
 }
 
 /** Single authority for turn lifecycle and runaway-work budgets. */
@@ -28,6 +32,8 @@ export class TurnController {
   private modelCalls = 0;
   private toolCalls = 0;
   private terminationReason?: TurnTerminationReason;
+  private error?: string;
+  private errorAuditId?: string;
   private budgetNoticeEmitted = false;
   private callsWithoutProgress = 0;
   private readonly progressFingerprints = new Set<string>();
@@ -40,6 +46,8 @@ export class TurnController {
     this.modelCalls = 0;
     this.toolCalls = 0;
     this.terminationReason = undefined;
+    this.error = undefined;
+    this.errorAuditId = undefined;
     this.budgetNoticeEmitted = false;
     this.callsWithoutProgress = 0;
     this.progressFingerprints.clear();
@@ -115,12 +123,16 @@ export class TurnController {
     this.modelCalls = 0;
     this.toolCalls = 0;
     this.terminationReason = undefined;
+    this.error = undefined;
+    this.errorAuditId = undefined;
     this.budgetNoticeEmitted = false;
     this.state = 'preparing';
   }
 
-  finish(reason: TurnTerminationReason = 'completed'): void {
+  finish(reason: TurnTerminationReason = 'completed', error?: string, errorAuditId?: string): void {
     if (reason === 'completed' && this.isBudgetExhausted()) return;
+    this.error = reason === 'failed' ? error ?? this.error : undefined;
+    this.errorAuditId = reason === 'failed' ? errorAuditId ?? this.errorAuditId : undefined;
     this.terminationReason = reason;
     this.state = reason === 'completed' ? 'completed' : reason === 'interrupted' ? 'interrupted' : reason === 'failed' ? 'failed' : 'finalizing';
   }
@@ -134,6 +146,8 @@ export class TurnController {
       toolCalls: this.toolCalls,
       modelCallsWithoutProgress: this.callsWithoutProgress,
       terminationReason: this.terminationReason,
+      error: this.error,
+      errorAuditId: this.errorAuditId,
     };
   }
 }

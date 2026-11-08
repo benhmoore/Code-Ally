@@ -1,115 +1,53 @@
-/**
- * UndoPrompt - Interactive undo confirmation modal with diff preview
- *
- * Features:
- * - Shows what operations will be undone
- * - Displays diff preview for each file
- * - Keyboard navigation (up/down arrows, Enter to select)
- * - Visual selection indicator
- */
-
+/** Undo confirmation keeps the destructive choice visible while inspecting every change. */
 import React from 'react';
 import { Box, Text } from 'ink';
-import { DiffDisplay } from './DiffDisplay.js';
+import { createTwoFilesPatch } from 'diff';
 import { SelectionIndicator } from './SelectionIndicator.js';
 import { Clickable } from './Clickable.js';
 import { KeyboardHintFooter } from './KeyboardHintFooter.js';
 import { UI_COLORS } from '../constants/colors.js';
 import { InteractiveSurface } from './InteractiveSurface.js';
-import { useTerminalRows } from '../hooks/useTerminalRows.js';
-
+import { stripAnsi } from '@utils/terminalText.js';
 import type { UndoRequest } from '../hooks/useModalState.js';
 
 export interface UndoPromptProps {
-  /** Undo request details */
   request: UndoRequest;
-  /** Currently selected option index (0=Confirm, 1=Cancel) */
   selectedIndex: number;
-  /** Whether the prompt is visible */
   visible?: boolean;
-  /** Activate the option at an index, as a click on its row does. */
   onOptionPress?: (index: number) => void;
 }
 
-/**
- * UndoPrompt Component
- */
-export const UndoPrompt: React.FC<UndoPromptProps> = ({
-  request,
-  selectedIndex,
-  visible = true,
-  onOptionPress,
-}) => {
-  const terminalRows = useTerminalRows();
-
-  if (!visible) {
-    return null;
-  }
-
-  const { count, previewData } = request;
-  const options = ['Confirm', 'Cancel'];
-  const previewLimit = terminalRows >= 35 ? 3 : 1;
-  const visiblePreviews = previewData.slice(0, previewLimit);
-
+export const UndoPrompt: React.FC<UndoPromptProps> = ({ request, selectedIndex, visible = true, onOptionPress }) => {
+  const previews = React.useMemo(() => request.previewData.map(preview => ({
+    ...preview,
+    diff: stripAnsi(createTwoFilesPatch(preview.file_path, preview.file_path,
+      preview.current_content, preview.predicted_content)),
+  })), [request.previewData]);
+  if (!visible) return null;
+  const single = previews.length === 1 ? previews[0] : undefined;
+  const effect = single?.predicted_content === '' && single.current_content !== '' ? 'File will be deleted.'
+    : single?.predicted_content !== '' && single?.current_content === '' ? 'File will be recreated.' : undefined;
   return (
-    <InteractiveSurface title="Confirm undo" tone={UI_COLORS.PRIMARY} meta={`${count} operation${count === 1 ? '' : 's'}`} footer={<KeyboardHintFooter action="confirm" />}>
-      {previewData && previewData.length > 0 && (
-        <Box flexDirection="column">
-          {visiblePreviews.map((preview, index) => (
-            <Box key={preview.file_path} flexDirection="column">
-              {/* Operation header */}
-              <Box marginBottom={0}>
-                {previewData.length > 1 && (
-                  <Text dimColor>{index + 1}. </Text>
-                )}
-                <Text dimColor>Undoing </Text>
-                <Text color={UI_COLORS.TEXT_DEFAULT}>{preview.operation_type}</Text>
-                <Text dimColor> on </Text>
-                <Text>{preview.file_path}</Text>
-              </Box>
-
-              {/* File status indicators */}
-              {preview.predicted_content === '' && preview.current_content !== '' && (
-                <Box marginLeft={2}>
-                  <Text color={UI_COLORS.ERROR}>→ File will be deleted</Text>
-                </Box>
-              )}
-              {preview.predicted_content !== '' && preview.current_content === '' && (
-                <Box marginLeft={2}>
-                  <Text color={UI_COLORS.TEXT_DEFAULT}>→ File will be recreated</Text>
-                </Box>
-              )}
-
-              {/* Diff preview */}
-              {preview.current_content !== preview.predicted_content && (
-                <Box>
-                  <DiffDisplay
-                    oldContent={preview.current_content}
-                    newContent={preview.predicted_content}
-                    filePath={preview.file_path}
-                    maxLinesPerHunk={terminalRows >= 35 ? 8 : 3}
-                  />
-                </Box>
-              )}
-            </Box>
-          ))}
-          {previewData.length > visiblePreviews.length && (
-            <Text dimColor>… {previewData.length - visiblePreviews.length} more</Text>
-          )}
-        </Box>
-      )}
-
-      {/* Options */}
-      <Box flexDirection="column">
-        {options.map((option, index) => (
+    <InteractiveSurface scrollable title="Confirm undo" tone={UI_COLORS.PRIMARY}
+      meta={`${request.count} operation${request.count === 1 ? '' : 's'}`} description={effect}
+      footer={<>
+        {['Confirm', 'Cancel'].map((option, index) => (
           <Clickable key={option} marginLeft={2} onPress={onOptionPress && (() => onOptionPress(index))}>
             <SelectionIndicator isSelected={selectedIndex === index}>
               <Text color={selectedIndex === index ? 'yellow' : undefined}>{option}</Text>
             </SelectionIndicator>
           </Clickable>
         ))}
-      </Box>
-
+        <KeyboardHintFooter action="confirm" />
+      </>}>
+      {previews.map((preview, index) => (
+        <Box key={`${preview.patch_number}:${preview.file_path}`} flexDirection="column">
+          <Text>{previews.length > 1 ? `${index + 1}. ` : ''}Undoing {preview.operation_type} on {preview.file_path}</Text>
+          {preview.predicted_content === '' && preview.current_content !== '' && <Text color={UI_COLORS.ERROR}>→ File will be deleted</Text>}
+          {preview.predicted_content !== '' && preview.current_content === '' && <Text>→ File will be recreated</Text>}
+          {preview.current_content !== preview.predicted_content && <Text>{preview.diff}</Text>}
+        </Box>
+      ))}
     </InteractiveSurface>
   );
 };

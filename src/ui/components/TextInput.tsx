@@ -14,11 +14,28 @@
  * - Visual cursor rendering with inverse colors
  */
 
-import React, { useRef, useEffect, useMemo } from 'react';
+import React, { useRef, useLayoutEffect, useMemo } from 'react';
 import { Box, Text, useInput, type Key } from 'ink';
 import stringWidth from 'string-width';
 import { useInnerWidth } from '../hooks/useInnerWidth.js';
 import { stripAnsi, wrapAnsiText } from '@utils/terminalText.js';
+import { useSurfaceFocus, useSurfaceInputRows } from '../contexts/SurfaceViewportContext.js';
+
+const graphemes = new Intl.Segmenter(undefined, { granularity: 'grapheme' });
+function previousGraphemeBoundary(text: string, cursor: number): number {
+  let previous = 0;
+  for (const segment of graphemes.segment(text)) {
+    if (segment.index >= cursor) break;
+    previous = segment.index;
+  }
+  return previous;
+}
+function nextGraphemeBoundary(text: string, cursor: number): number {
+  for (const segment of graphemes.segment(text)) {
+    if (segment.index > cursor) return segment.index;
+  }
+  return text.length;
+}
 
 export interface TextInputProps {
   /** Current text value */
@@ -96,9 +113,9 @@ export function enterInsertsNewline(multiline: boolean, shift: boolean): boolean
 export const TextInput: React.FC<TextInputProps> = ({
   value,
   maxVisibleRows,
-  onValueChange,
+  onValueChange: notifyValueChange,
   cursorPosition,
-  onCursorChange,
+  onCursorChange: notifyCursorChange,
   onSubmit,
   onSubmitCapture,
   onKeyPressCapture,
@@ -120,12 +137,23 @@ export const TextInput: React.FC<TextInputProps> = ({
   // Use refs to avoid stale closure issues with rapid input events
   const valueRef = useRef(value);
   const cursorRef = useRef(cursorPosition);
+  // Ink can deliver several parsed keys before React commits the controlled
+  // props. Every edit and movement must advance the same synchronous snapshot.
+  const onValueChange = (next: string) => {
+    valueRef.current = next;
+    notifyValueChange(next);
+  };
+  const onCursorChange = (next: number) => {
+    cursorRef.current = next;
+    notifyCursorChange(next);
+  };
 
-  useEffect(() => {
+
+  useLayoutEffect(() => {
     valueRef.current = value;
   }, [value]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     cursorRef.current = cursorPosition;
   }, [cursorPosition]);
 
@@ -210,7 +238,7 @@ export const TextInput: React.FC<TextInputProps> = ({
         let charOffset = 0;
 
         for (const visualLine of visualLines) {
-          const visualLineLength = Array.from(visualLine).length;
+          const visualLineLength = visualLine.length;
           visualLineMap.push({
             charStart: globalCharOffset + charOffset,
             charEnd: globalCharOffset + charOffset + visualLineLength,
@@ -417,9 +445,17 @@ export const TextInput: React.FC<TextInputProps> = ({
   /**
    * Handle keyboard input
    */
-  useInput(
-    (input, key) => {
+  const handleEditorInput = (input: string, key: Key) => {
       if (!isActive || key.eventType === 'release') return;
+      // Ink groups adjacent non-escape control bytes as pasted text. Preserve
+      // rapid editing gestures without interpreting control bytes inside paste.
+      // A chunk made entirely of editing controls is an unambiguous key burst.
+      if (input.length > 1 && /^[\x01\x05\x0b\x15\x17]+$/.test(input)) {
+        for (const character of input) {
+          handleEditorInput(String.fromCharCode(character.charCodeAt(0) + 96), { ...key, ctrl: true });
+        }
+        return;
+      }
 
       const currentValue = valueRef.current;
       const currentCursor = cursorRef.current;
@@ -468,13 +504,13 @@ export const TextInput: React.FC<TextInputProps> = ({
       }
 
       // ===== Move to Start (Ctrl+A) =====
-      if (key.ctrl && input === 'a') {
+      if (key.home || (key.ctrl && input === 'a')) {
         onCursorChange(0);
         return;
       }
 
       // ===== Move to End (Ctrl+E) =====
-      if (key.ctrl && input === 'e') {
+      if (key.end || (key.ctrl && input === 'e')) {
         onCursorChange(currentValue.length);
         return;
       }
@@ -520,22 +556,23 @@ export const TextInput: React.FC<TextInputProps> = ({
       // ===== Backspace =====
       if (key.backspace || key.delete) {
         if (currentCursor > 0) {
-          const before = currentValue.slice(0, currentCursor - 1);
+          const previous = previousGraphemeBoundary(currentValue, currentCursor);
+          const before = currentValue.slice(0, previous);
           const after = currentValue.slice(currentCursor);
           onValueChange(before + after);
-          onCursorChange(currentCursor - 1);
+          onCursorChange(previous);
         }
         return;
       }
 
       // ===== Arrow Keys (Left/Right) =====
       if (key.leftArrow) {
-        onCursorChange(Math.max(0, currentCursor - 1));
+        onCursorChange(previousGraphemeBoundary(currentValue, currentCursor));
         return;
       }
 
       if (key.rightArrow) {
-        onCursorChange(Math.min(currentValue.length, currentCursor + 1));
+        onCursorChange(nextGraphemeBoundary(currentValue, currentCursor));
         return;
       }
 
@@ -590,9 +627,8 @@ export const TextInput: React.FC<TextInputProps> = ({
         onValueChange(newValue);
         onCursorChange(newCursor);
       }
-    },
-    { isActive }
-  );
+  };
+  useInput(handleEditorInput, { isActive });
 
   // Apply mask for display if specified (e.g., password fields)
   // The actual value is preserved in all callbacks - mask only affects rendering
@@ -607,7 +643,7 @@ export const TextInput: React.FC<TextInputProps> = ({
   // Calculate cursor position in logical lines
   const cursorInfo = getCursorLineInfo(value, cursorPosition);
   const cursorLogicalLine = cursorInfo.line;
-  const cursorPosInLogicalLine = cursorInfo.posInLine;
+  const cursorPosInLogicalLine = Array.from((displayValue.split('\n')[cursorLogicalLine] ?? '').slice(0, cursorInfo.posInLine)).length;
 
   // Build visual lines with cursor tracking
   // Each visual line entry tracks: text, whether it has cursor, cursor position within it
@@ -716,10 +752,12 @@ export const TextInput: React.FC<TextInputProps> = ({
     return result;
   }, [displayValue, cursorLogicalLine, cursorPosInLogicalLine, contentWidth, promptWidth, hasPrompt, isEmpty, placeholder, isActive]);
 
-  const visibleRows = Math.max(1, maxVisibleRows ?? visualLinesData.length);
+  const surfaceRows = useSurfaceInputRows();
+  const visibleRows = Math.max(1, Math.min(maxVisibleRows ?? visualLinesData.length, surfaceRows ?? visualLinesData.length));
   const cursorRow = Math.max(0, visualLinesData.findIndex(line => line.hasCursor));
   const firstVisibleRow = Math.max(0, Math.min(visualLinesData.length - visibleRows, cursorRow - visibleRows + 1));
   const visibleLines = visualLinesData.slice(firstVisibleRow, firstVisibleRow + visibleRows);
+  const focusRef = useSurfaceFocus(isActive, (label ? 1 : 0) + cursorRow - firstVisibleRow);
 
   // Render the text content with proper visual line handling
   const renderContent = () => (
@@ -800,7 +838,7 @@ export const TextInput: React.FC<TextInputProps> = ({
   );
 
   return (
-    <Box flexDirection="column" width="100%">
+    <Box ref={focusRef} flexDirection="column" width="100%">
       {label && <Text color={labelColor}>{label}</Text>}
       {renderInput()}
     </Box>

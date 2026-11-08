@@ -18,7 +18,8 @@
  */
 
 import React from 'react';
-import { Text } from 'ink';
+import { Box, Text } from 'ink';
+import { useSurfaceFocus } from '../contexts/SurfaceViewportContext.js';
 import { UI_SYMBOLS } from '@config/uiSymbols.js';
 import { UI_COLORS } from '../constants/colors.js';
 
@@ -40,15 +41,16 @@ const SelectionIndicatorComponent: React.FC<SelectionIndicatorProps> = ({
   isSelected,
   children,
 }) => {
+  const focusRef = useSurfaceFocus(isSelected);
   return (
-    <Text>
+    <Box ref={focusRef}><Text>
       {isSelected ? (
         <Text color={UI_COLORS.PRIMARY}>{UI_SYMBOLS.NAVIGATION.CHEVRON_RIGHT} </Text>
       ) : (
         <Text>  </Text>
       )}
       <Text bold={isSelected}>{children}</Text>
-    </Text>
+    </Text></Box>
   );
 };
 

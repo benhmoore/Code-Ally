@@ -8,8 +8,10 @@ const selectStatus = (view: ConversationViewSnapshot) => ({
 });
 type Props = Omit<React.ComponentProps<typeof StatusIndicator>, keyof ReturnType<typeof selectStatus>> & {
   source: ConversationSource;
+  /** Stable session identity; changing it resets presentation-only timing. */
+  ownerId?: string;
 };
-export const ConversationStatus = React.memo(function ConversationStatus({ source, ...props }: Props) {
+export const ConversationStatus = React.memo(function ConversationStatus({ source, ownerId, ...props }: Props) {
   const status = useConversationSelector(source, selectStatus, shallowEqual);
-  return <StatusIndicator {...props} {...status}/>;
+  return <StatusIndicator key={ownerId} {...props} {...status}/>;
 });

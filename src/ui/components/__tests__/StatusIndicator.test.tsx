@@ -215,3 +215,45 @@ describe('selected conversation work status', () => {
     }
   });
 });
+
+describe('status owner identity', () => {
+  test('resets elapsed and request phase when navigating between active owners', async () => {
+    vi.useFakeTimers();
+    const stdout = new FakeStdout();
+    const source = frozenConversation({ ...EMPTY_CONVERSATION, isThinking: true });
+    const first = new ActivityStream('first');
+    const second = new ActivityStream('second');
+    const view = (ownerId: string, activityStream: ActivityStream) => (
+      <ConversationStatus ownerId={ownerId} source={source} activityStream={activityStream} hideTodos/>
+    );
+    const instance = render(view('first', first), { stdout: stdout as unknown as NodeJS.WriteStream,
+      debug: true, patchConsole: false, exitOnCtrlC: false });
+    try {
+      await vi.advanceTimersByTimeAsync(50);
+      first.emit({ id: 'chunk', type: ActivityEventType.ASSISTANT_CHUNK, timestamp: Date.now(), data: { chunk: 'text' } } as never);
+      await vi.advanceTimersByTimeAsync(10050);
+      let frame = stripAnsi(stdout.frames.at(-1) ?? '');
+      expect(frame).toContain('10s');
+      expect(ARC_GLYPHS).toContain(indicatorOf(frame));
+      // Renders within the same owner preserve its clock.
+      instance.rerender(view('first', first));
+      await vi.advanceTimersByTimeAsync(50);
+      expect(stripAnsi(stdout.frames.at(-1) ?? '')).toContain('10s');
+      instance.rerender(view('second', second));
+      await vi.advanceTimersByTimeAsync(50);
+      frame = stripAnsi(stdout.frames.at(-1) ?? '');
+      expect(frame).toContain('0s');
+      expect(frame).not.toContain('10s');
+      expectBlinking(frame);
+      first.emit({ id: 'old-output', type: ActivityEventType.ASSISTANT_CHUNK, timestamp: Date.now(), data: { chunk: 'old' } } as never);
+      await vi.advanceTimersByTimeAsync(50);
+      expectBlinking(stripAnsi(stdout.frames.at(-1) ?? ''));
+      second.emit({ id: 'new-output', type: ActivityEventType.ASSISTANT_CHUNK, timestamp: Date.now(), data: { chunk: 'new' } } as never);
+      await vi.advanceTimersByTimeAsync(500);
+      expect(ARC_GLYPHS).toContain(indicatorOf(stripAnsi(stdout.frames.at(-1) ?? '')));
+    } finally {
+      instance.unmount();
+      vi.useRealTimers();
+    }
+  });
+});

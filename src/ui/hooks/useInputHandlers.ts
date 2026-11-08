@@ -30,6 +30,7 @@ import { UserShortcutService } from '@services/UserShortcutService.js';
 import { MentionAttachmentService } from '@services/MentionAttachmentService.js';
 import type { ConversationRoute } from '@services/ConversationRoute.js';
 import type { Message } from '@shared/index.js';
+import { redactSensitiveConfigCommand, redactSensitiveConfigCommandsInText } from '@config/configCommandPrivacy.js';
 
 /**
  * Input handler functions
@@ -158,14 +159,14 @@ export const useInputHandlers = (
           // Add user message
           addDisplayMessage({
             role: 'user',
-            content: trimmed,
+            content: redactSensitiveConfigCommand(trimmed),
           });
 
           // Add command response if provided
           if (result.response) {
             addDisplayMessage({
               role: 'assistant',
-              content: result.response,
+              content: redactSensitiveConfigCommandsInText(result.response),
               metadata: result.metadata, // Pass command metadata for styling
             });
           }
@@ -183,7 +184,7 @@ export const useInputHandlers = (
         // Add error message for failed command
         addDisplayMessage({
           role: 'assistant',
-          content: `Command error: ${error instanceof Error ? error.message : 'Unknown error'}`,
+          content: redactSensitiveConfigCommandsInText(`Command error: ${error instanceof Error ? error.message : 'Unknown error'}`),
         });
         return;
       }
@@ -290,10 +291,22 @@ export const useInputHandlers = (
         }
       }
 
+      // A backend failure audit is canonical transcript content. Only the
+      // turn that produced a new audit owns that presentation; preparation
+      // errors must not be hidden by an earlier turn's audit.
+      const previousAuditId = agent.getTurnSnapshot().errorAuditId;
+      const failureAlreadyPresented = () => {
+        const id = agent.getTurnSnapshot().errorAuditId;
+        return !!id && id !== previousAuditId && agent.getMessages().some(message =>
+          message.id === id && message.metadata?.isError === true);
+      };
+
       // Send to agent for processing
+      let requestReturned = false;
       try {
         logger.debug('[INPUT_HANDLER]', 'Sending message to agent:', agent.getInstanceId());
         const response = await agent.sendMessage(trimmed, undefined, base64Images);
+        requestReturned = true;
         logger.debug('[INPUT_HANDLER]', 'Received response (length:', response?.length || 0, ')');
 
         // Check if response is an error message that should be styled in red
@@ -305,11 +318,11 @@ export const useInputHandlers = (
         const isError = response === PERMISSION_MESSAGES.USER_FACING_DENIAL ||
                        response === PERMISSION_MESSAGES.USER_FACING_INTERRUPTION ||
                        turnWasInterrupted ||
-                       response.includes('Error communicating with Ollama');
+                       agent.getTurnSnapshot().state === 'failed';
 
         // Add assistant response for error messages only
         // Normal responses are added via ASSISTANT_MESSAGE_COMPLETE event for proper interleaving
-        if (isError) {
+        if (isError && !failureAlreadyPresented()) {
           let messageContent: string = response;
 
           // For interruptions, check if there are file changes and provide helpful guidance
@@ -358,11 +371,13 @@ export const useInputHandlers = (
         // Send terminal bell/badge notification
         sendTerminalNotification();
       } catch (error) {
-        // Add error message
-        addDisplayMessage({
-          role: 'assistant',
-          content: `Error: ${error instanceof Error ? error.message : 'Unknown error'}`,
-        });
+        if (requestReturned || !failureAlreadyPresented()) {
+          addDisplayMessage({
+            role: 'assistant',
+            content: `Error: ${error instanceof Error ? error.message : 'Unknown error'}`,
+            metadata: { isError: true },
+          });
+        }
 
         // Send terminal bell/badge notification
         sendTerminalNotification();
@@ -391,7 +406,7 @@ export const useInputHandlers = (
       return;
     }
 
-    logger.debug('[APP] Handling interjection:', message);
+    logger.debug('[APP] Handling interjection:', redactSensitiveConfigCommand(message));
 
     logger.debug('[APP] Routing interjection to selected conversation:', route.id);
     const admission = await agent.getSession().submit(message);

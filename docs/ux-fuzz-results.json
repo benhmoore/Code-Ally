@@ -1,0 +1,830 @@
+{
+  "date": "2026-11-08",
+  "status": "passed",
+  "base_commit": "0f94fc5506728fbc3d70762f6e18bf1c20b31334",
+  "environment": {
+    "tmux": "tmux 3.8",
+    "node": "v26.13.0",
+    "sizes": [
+      [
+        120,
+        36
+      ],
+      [
+        80,
+        24
+      ],
+      [
+        40,
+        12
+      ]
+    ],
+    "real_model": "qwen3.8:27b-mlx over Tailscale",
+    "real_model_context": 32768
+  },
+  "strategy": "Real built CLI in isolated tmux sockets and ALLY_DATA_DIR roots; deterministic provider state fixtures; bounded seeded navigation; pairwise state/size coverage; focused renderer and lifecycle regressions; one real-model smoke.",
+  "seeds": [
+    {
+      "seed": 271828,
+      "events": 310,
+      "failures": []
+    },
+    {
+      "seed": 314159,
+      "events": 310,
+      "failures": []
+    }
+  ],
+  "configuration": {
+    "socket": "ally-ux-config",
+    "fixture": "http://127.0.0.1:11436",
+    "seed": 20261108,
+    "captures": 261,
+    "executed": {
+      "config_commands": 16,
+      "seeded_dialog_cases": 24,
+      "terminal_sizes": [
+        [
+          120,
+          36
+        ],
+        [
+          80,
+          24
+        ],
+        [
+          40,
+          12
+        ]
+      ],
+      "pairwise_wizards": [
+        "project all steps",
+        "setup six primary steps and save",
+        "prompt title/content/tags, multiline first and last lines",
+        "agent description + validation + cancel",
+        "agent generated prompt/description/name validation+recovery, custom model, custom tools, create+persist"
+      ],
+      "library_message": [
+        "empty/populated library, insertion",
+        "message accept/cancel/new",
+        "prompt save/edit/delete",
+        "clear cancel/confirm",
+        "load-error schema999 and r retry"
+      ],
+      "session": [
+        "populated selector",
+        "cancel",
+        "ENOTDIR fixture error",
+        "actual r retry",
+        "actual prior conversation acceptance and message proof"
+      ]
+    },
+    "fixed": [
+      "agent/project duplicate Escape callback",
+      "prompt duplicate Escape/Enter callback",
+      "prompt Shift+Tab backward navigation",
+      "prompt multiline Up/Down inspection",
+      "short-terminal wizard heading/field/footer viewport",
+      "rapid editing optimistic cursor/value state",
+      "grouped Ctrl+A/E/U input burst",
+      "Unicode grapheme movement/backspace",
+      "Home/End navigation",
+      "agent first chunk lost leaving navigation mode",
+      "agent duplicate Enter ownership",
+      "short-terminal agent errors visible",
+      "confirmation PgUp/PgDn detail inspection",
+      "Session listing excludes reserved CommandHistory history.json"
+    ],
+    "checks": [
+      "full UI 61 files/372 tests passed",
+      "final targeted 8 keyboard/wizard tests passed",
+      "targeted eslint passed",
+      "build passed",
+      "external controlled Unicode prefill regression passed",
+      "SessionManager64tests passed",
+      "UI plus SessionManager65files451tests passed"
+    ],
+    "remaining": [
+      "all combinatorial permutations not claimed"
+    ],
+    "artifacts": {
+      "driver": "/Users/benmoore/Code-Ally/scripts/ux-fuzz-config.py",
+      "pairwise": "/tmp/ally-ux-config/pairwise.py"
+    }
+  },
+  "task_states": {
+    "build": "combined build after 277 suites / 3542 tests",
+    "endpoint": "http://127.0.0.1:11437",
+    "profile": "/tmp/ally-ux-tasks/data",
+    "preload": false,
+    "results": [
+      {
+        "state": "40x12 freeform compact labels",
+        "verified": true,
+        "capture": "/tmp/ally-ux-tasks/40x12-final-freeform-open.txt",
+        "detail": ""
+      },
+      {
+        "state": "40x12 Unicode answer",
+        "verified": true,
+        "capture": "/tmp/ally-ux-tasks/40x12-final-freeform-answer.txt",
+        "detail": "Answer wraps into the two-column tool summary: final on one row and café 界 on the following row."
+      },
+      {
+        "state": "40x12 failed child parent reason",
+        "verified": true,
+        "capture": "/tmp/ally-ux-tasks/40x12-failed-child-main.txt",
+        "detail": ""
+      },
+      {
+        "state": "40x12 failed child status and transcript reason",
+        "verified": true,
+        "capture": "/tmp/ally-ux-tasks/40x12-failed-child-view.txt",
+        "detail": ""
+      },
+      {
+        "state": "40x12 failed child main return",
+        "verified": true,
+        "capture": "/tmp/ally-ux-tasks/40x12-failed-child-return-visible.txt",
+        "detail": ""
+      },
+      {
+        "state": "40x12 parent Send Message and child message",
+        "verified": true,
+        "capture": "/tmp/ally-ux-tasks/40x12-final-message-bidirectional.txt",
+        "detail": ""
+      },
+      {
+        "state": "80x24 freeform compact labels",
+        "verified": true,
+        "capture": "/tmp/ally-ux-tasks/80x24-final-freeform-open.txt",
+        "detail": ""
+      },
+      {
+        "state": "80x24 Unicode answer",
+        "verified": true,
+        "capture": "/tmp/ally-ux-tasks/80x24-final-freeform-answer.txt",
+        "detail": ""
+      },
+      {
+        "state": "80x24 failed child parent reason",
+        "verified": true,
+        "capture": "/tmp/ally-ux-tasks/80x24-failed-child-main.txt",
+        "detail": ""
+      },
+      {
+        "state": "80x24 failed child status and transcript reason",
+        "verified": true,
+        "capture": "/tmp/ally-ux-tasks/80x24-failed-child-view.txt",
+        "detail": ""
+      },
+      {
+        "state": "80x24 failed child main return",
+        "verified": true,
+        "capture": "/tmp/ally-ux-tasks/80x24-failed-child-return-visible.txt",
+        "detail": ""
+      },
+      {
+        "state": "80x24 parent Send Message and child message",
+        "verified": true,
+        "capture": "/tmp/ally-ux-tasks/80x24-final-message-bidirectional.txt",
+        "detail": ""
+      },
+      {
+        "state": "40x12 form Escape visible",
+        "verified": true,
+        "capture": "/tmp/ally-ux-tasks/40x12-final-freeform-open-visible.txt",
+        "detail": ""
+      },
+      {
+        "state": "40x12 active child selected",
+        "verified": true,
+        "capture": "/tmp/ally-ux-tasks/40x12-final-active-child-visible.txt",
+        "detail": ""
+      },
+      {
+        "state": "40x12 child cancelled and automatic main return",
+        "verified": true,
+        "capture": "/tmp/ally-ux-tasks/40x12-final-cancelled-child-visible.txt",
+        "detail": ""
+      },
+      {
+        "state": "40x12 main conversation restored",
+        "verified": true,
+        "capture": "/tmp/ally-ux-tasks/40x12-final-main-return-visible.txt",
+        "detail": ""
+      },
+      {
+        "state": "40x12 completed child selected",
+        "verified": true,
+        "capture": "/tmp/ally-ux-tasks/40x12-final-completed-child-visible.txt",
+        "detail": ""
+      }
+    ],
+    "message_delivery_directions": {
+      "child_to_parent": true,
+      "parent_to_child": true
+    },
+    "delivery_receipts": {
+      "call-1794161483330-0-yh93xcv": {
+        "argument_recipient": "pool-agent-1794161483177-0",
+        "actual_recipient": "pool-agent-1794161483177-0",
+        "status": "delivered"
+      },
+      "call-1794161483547-0-y5rfhbz": {
+        "argument_recipient": "parent",
+        "actual_recipient": "main",
+        "status": "delivered"
+      },
+      "call-1794161514323-0-919wgnu": {
+        "argument_recipient": "pool-agent-1794161514170-0",
+        "actual_recipient": "pool-agent-1794161514170-0",
+        "status": "delivered"
+      },
+      "call-1794161514546-0-u9bdps7": {
+        "argument_recipient": "parent",
+        "actual_recipient": "main",
+        "status": "delivered"
+      },
+      "call-1794161871585-0-ec4pt3y": {
+        "argument_recipient": "pool-agent-1794161871433-0",
+        "actual_recipient": "pool-agent-1794161871433-0",
+        "status": "delivered"
+      },
+      "call-1794161871799-0-5mg249d": {
+        "argument_recipient": "parent",
+        "actual_recipient": "main",
+        "status": "delivered"
+      },
+      "call-1794161902649-0-6hmfa5l": {
+        "argument_recipient": "pool-agent-1794161902493-0",
+        "actual_recipient": "pool-agent-1794161902493-0",
+        "status": "delivered"
+      },
+      "call-1794161902876-0-kkh3wbs": {
+        "argument_recipient": "parent",
+        "actual_recipient": "main",
+        "status": "delivered"
+      }
+    },
+    "limitations": [
+      "At40x12 failed-child error reason is present in selected-child transcript scrollback; current pane shows error fleet status but chrome displaces full reason. At80x24 full reason is visible."
+    ]
+  },
+  "command_states": [
+    {
+      "case": "choice_success",
+      "observed": true,
+      "capture": "/tmp/ally-ux-tasks/80x24-question-answer.txt",
+      "required": "→ Blue"
+    },
+    {
+      "case": "freeform_unicode_success",
+      "observed": true,
+      "capture": "/tmp/ally-ux-tasks/80x24-freeform-answer.txt",
+      "required": "fixture café 界"
+    },
+    {
+      "case": "permission_denied",
+      "observed": true,
+      "capture": "/tmp/ally-ux-tasks/80x24-permission-cancel.txt",
+      "required": "Permission denied"
+    },
+    {
+      "case": "permission_mode_pending",
+      "observed": true,
+      "capture": "/tmp/ally-ux-tasks/80x24-permission-mode-visible.txt",
+      "required": "new mode applies next"
+    },
+    {
+      "case": "permission_allowed",
+      "observed": true,
+      "capture": "/tmp/ally-ux-tasks/80x24-permission-allowed-visible.txt",
+      "required": "Fixture permission complete"
+    },
+    {
+      "case": "command_failure",
+      "observed": true,
+      "capture": "/tmp/ally-ux-tasks/80x24-command-error-finished-visible.txt",
+      "required": "code 7"
+    },
+    {
+      "case": "read_failure",
+      "observed": true,
+      "capture": "/tmp/ally-ux-tasks/80x24-tool-error-finished-visible.txt",
+      "required": "Full error: /debug errors"
+    },
+    {
+      "case": "foreground_backgrounded",
+      "observed": true,
+      "capture": "/tmp/ally-ux-tasks/80x24-foreground-backgrounded-visible.txt",
+      "required": "Backgrounded 1 command."
+    },
+    {
+      "case": "foreground_running",
+      "observed": true,
+      "capture": "/tmp/ally-ux-tasks/80x24-foreground-backgrounded-visible.txt",
+      "required": "1 running"
+    }
+  ],
+  "plans": [
+    {
+      "size": "80x24",
+      "action": "approve",
+      "modal_observed": true,
+      "capture": "/tmp/ally-ux-tasks/80x24-plan-approve-open-visible.txt",
+      "title_visible": true,
+      "all_options_visible": true,
+      "escape_visible": true,
+      "tool_call_id": "call-1794162434227-0-ajhuviy",
+      "tool_success": true,
+      "actual_tool_result": "Plan approved. Proceed with implementation.",
+      "action_verified": true
+    },
+    {
+      "size": "80x24",
+      "action": "deny",
+      "modal_observed": true,
+      "capture": "/tmp/ally-ux-tasks/80x24-plan-deny-open-visible.txt",
+      "title_visible": true,
+      "all_options_visible": true,
+      "escape_visible": true,
+      "tool_call_id": "call-1794162440958-0-3t12nmk",
+      "tool_success": true,
+      "actual_tool_result": "User provided feedback on your plan:\n\nPlan rejected by user.",
+      "action_verified": true
+    },
+    {
+      "size": "80x24",
+      "action": "feedback",
+      "modal_observed": true,
+      "capture": "/tmp/ally-ux-tasks/80x24-plan-feedback-open-visible.txt",
+      "title_visible": true,
+      "all_options_visible": true,
+      "escape_visible": true,
+      "tool_call_id": "call-1794162447681-0-9hka8l0",
+      "tool_success": true,
+      "actual_tool_result": "User provided feedback on your plan:\n\nKeep the fixture scope bounded.",
+      "action_verified": true,
+      "empty_feedback_guard_verified": true
+    },
+    {
+      "size": "40x12",
+      "action": "approve",
+      "modal_observed": true,
+      "capture": "/tmp/ally-ux-tasks/40x12-plan-approve-open-visible.txt",
+      "title_visible": true,
+      "all_options_visible": true,
+      "escape_visible": true,
+      "tool_call_id": "call-1794162455816-0-tnxbpvf",
+      "tool_success": true,
+      "actual_tool_result": "Plan approved. Proceed with implementation.",
+      "action_verified": true
+    },
+    {
+      "size": "40x12",
+      "action": "deny",
+      "modal_observed": true,
+      "capture": "/tmp/ally-ux-tasks/40x12-plan-deny-open-visible.txt",
+      "title_visible": true,
+      "all_options_visible": true,
+      "escape_visible": true,
+      "tool_call_id": "call-1794162462545-0-c0n4rcd",
+      "tool_success": true,
+      "actual_tool_result": "User provided feedback on your plan:\n\nPlan rejected by user.",
+      "action_verified": true
+    },
+    {
+      "size": "40x12",
+      "action": "feedback",
+      "modal_observed": true,
+      "capture": "/tmp/ally-ux-tasks/40x12-plan-feedback-open-visible.txt",
+      "title_visible": true,
+      "all_options_visible": true,
+      "escape_visible": true,
+      "tool_call_id": "call-1794162469266-0-ss16fzj",
+      "tool_success": true,
+      "actual_tool_result": "User provided feedback on your plan:\n\nKeep the fixture scope bounded.",
+      "action_verified": true,
+      "empty_feedback_guard_verified": true
+    },
+    {
+      "size": "40x12",
+      "action": "approve_clear_context",
+      "action_verified": true,
+      "actual_tool_result": "[Tool Call ID: call-1794162514464-0-encj99i]\n{\"success\":true,\"error\":\"\",\"content\":\"Plan approved with context clearing. Proceed with implementation.\"}\n\n<system-reminder>The user has approved your plan and requested context clearing. Proceed with implementation following the plan you wrote.</system-reminder>",
+      "tool_call_id": "call-1794162514464-0-encj99i",
+      "scroll_verified": true,
+      "capture": "/tmp/ally-ux-tasks/40x12-plan-compact-approved.txt"
+    }
+  ],
+  "undo_rewind": {
+    "terminal_sizes": [
+      [
+        80,
+        24
+      ],
+      [
+        40,
+        12
+      ]
+    ],
+    "undo": {
+      "cancel": "preserved exact fixture file bytes",
+      "confirm": "deleted permission-demo.txt as previewed",
+      "review": "title, file effect and Confirm/Cancel pinned; full filename/diff inspected with PageDown"
+    },
+    "rewind": {
+      "selector": "latest distinct deterministic user turn selected",
+      "review": "all file details pageable with both file-effect choices and Cancel pinned",
+      "accept": "explicit tracked-file restoration",
+      "files": "permission-demo.txt absent after restoration",
+      "history": "entire canonical durable transcript matched before-turn baseline; actual message selector showed original two messages"
+    },
+    "captures": 81,
+    "repro": [
+      "verify-fixed.py",
+      "verify-80.py",
+      "verify-rewind.py"
+    ],
+    "checks": [
+      "UI plus SessionManager: 65 files / 451 tests passed",
+      "targeted lint passed",
+      "build passed"
+    ]
+  },
+  "reviewer_states": [
+    {
+      "mode": "allow",
+      "wrote_file": true
+    },
+    {
+      "mode": "ask",
+      "wrote_file": false
+    },
+    {
+      "mode": "deny",
+      "wrote_file": false
+    },
+    {
+      "mode": "fallback",
+      "wrote_file": false
+    }
+  ],
+  "failure_and_identity_probes": {
+    "partial_error_audits": 1,
+    "quit_cancel": true,
+    "agent_provenance_style": true
+  },
+  "quit_probe": {
+    "elapsed_seconds": 0.236020666998229,
+    "cancelled_before_timeout": true
+  },
+  "message_coverage": {
+    "user": "plain/Unicode/multiline bracketed paste, history, draft editing, queued follow-up/recall, missing mention recovery",
+    "assistant": "streaming/completed Markdown, native thinking, retry, user cancellation, partial transport failure with successful and exhausted recovery regressions",
+    "tools": "pending/executing/success/error/cancelled real terminal; validating and complete six-state rendering matrix in actual Ink renderer regressions; output/diff/error/expanded/collapsed annotations and compaction",
+    "agents": "parallel launch, main/active/completed/cancelled/failed child navigation, parent/child delivery, retained error history, actor provenance",
+    "approvals": "permission allow/deny/pending mode changes, question choice/freeform/cancel, reviewer in-progress/allow/ask/deny/backend failure, plan approve/reject/feedback/compact",
+    "history": "session list and restore, storage failure/retry, undo cancellation and real file restoration, rewind exact durable transcript and tracked-file restoration"
+  },
+  "modal_kinds": [
+    "setupWizard",
+    "projectWizard",
+    "agentWizard",
+    "session",
+    "library",
+    "message",
+    "promptAdd",
+    "model",
+    "rewindOptions",
+    "rewind",
+    "undoFileList",
+    "libraryClearConfirm",
+    "undo",
+    "toolForm",
+    "planApproval",
+    "permission"
+  ],
+  "limitations": [
+    "Bounded representative and pairwise coverage; not every possible content, timing, key sequence or permutation.",
+    "macOS/tmux only; native GUI focus, OS desktop notifications and other terminal emulators were not exhaustively tested.",
+    "External marketplace installs, OS scheduler installation, real OAuth/MCP services and paid non-Ollama inference were not exercised; local help/unconfigured/error UI and provider setup/discovery were covered.",
+    "At 40x12 a long failed-agent reason remains in conversation scrollback while the fleet status stays visible; it cannot all fit beside interaction controls.",
+    "Streaming text is still formatted as Markdown on settlement; this campaign does not implement a new incremental Markdown renderer.",
+    "The real Qwen run is a 32k UX smoke, not a 128k filled-context endurance, model accuracy or comparative latency benchmark.",
+    "An independent-agent tmux launch hit an approval-review timeout; root-owned tmux lanes supplied actual terminal evidence for that reviewer’s fixes."
+  ],
+  "evidence": [
+    {
+      "id": "prompt-wizard-40",
+      "path": "docs/ux-fuzz-evidence/prompt-wizard-40.txt",
+      "source": "/tmp/ally-ux-config/pair-40-prompt-start.txt",
+      "rows": 12,
+      "sha256": "d5704e389391c9690c500ef0e00718f5a364427986dbda8f918d65c2501693bc",
+      "trailing_blank_rows_trimmed": 1
+    },
+    {
+      "id": "rapid-input-cleared-40",
+      "path": "docs/ux-fuzz-evidence/rapid-input-cleared-40.txt",
+      "source": "/tmp/ally-ux-config/fixed-batch-after.txt",
+      "rows": 12,
+      "sha256": "a6cda7d649169cfdc908df394cb213af61db77d15655acad9aaac0c0c968d15f",
+      "trailing_blank_rows_trimmed": 1
+    },
+    {
+      "id": "plan-approval-40",
+      "path": "docs/ux-fuzz-evidence/plan-approval-40.txt",
+      "source": "/tmp/ally-ux-tasks/40x12-plan-approve-open-visible.txt",
+      "rows": 12,
+      "sha256": "9125c16d95a29111ba985490fdc75517e8855ef7c6c9ac1735f41cd86210da37",
+      "trailing_blank_rows_trimmed": 1
+    },
+    {
+      "id": "question-40",
+      "path": "docs/ux-fuzz-evidence/question-40.txt",
+      "source": "/tmp/ally-ux-tasks/40x12-final-freeform-open-visible.txt",
+      "rows": 12,
+      "sha256": "c23a89a8855339fdd527d796a738cc17560483c2d006d9db97a04bba7bd27344",
+      "trailing_blank_rows_trimmed": 1
+    },
+    {
+      "id": "failed-command-80",
+      "path": "docs/ux-fuzz-evidence/failed-command-80.txt",
+      "source": "/tmp/ally-ux-tasks/80x24-command-error-finished-visible.txt",
+      "rows": 24,
+      "sha256": "674076e4685eba2f3455f2d041ebcd8ab18f5e1260666fe6e22f3584e0663541",
+      "trailing_blank_rows_trimmed": 1
+    },
+    {
+      "id": "failed-agent-80",
+      "path": "docs/ux-fuzz-evidence/failed-agent-80.txt",
+      "source": "/tmp/ally-ux-tasks/80x24-failed-child-view-visible.txt",
+      "rows": 24,
+      "sha256": "1fe60e24f08a7734a9de439e2e62c52b43e01a13e0334c51aa5061958b096338",
+      "trailing_blank_rows_trimmed": 1
+    },
+    {
+      "id": "active-child-40",
+      "path": "docs/ux-fuzz-evidence/active-child-40.txt",
+      "source": "/tmp/ally-ux-tasks/40x12-final-active-child-visible.txt",
+      "rows": 12,
+      "sha256": "9fe8d2b696b89a55b760ddb3d1dd79b4bbb994b2997860287c401178af83876f",
+      "trailing_blank_rows_trimmed": 1
+    },
+    {
+      "id": "undo-confirmation-40",
+      "path": "docs/ux-fuzz-evidence/undo-confirmation-40.txt",
+      "source": "/tmp/ally-ux-undo/fixed-confirm-40.txt",
+      "rows": 12,
+      "sha256": "766b5149b01f80f2cd3195105870e679f5e20c51d14b74000a41e5bf5258405b",
+      "trailing_blank_rows_trimmed": 1
+    },
+    {
+      "id": "rewind-options-40",
+      "path": "docs/ux-fuzz-evidence/rewind-options-40.txt",
+      "source": "/tmp/ally-ux-undo/rewind-40-options.txt",
+      "rows": 12,
+      "sha256": "df205c87280f494f71740a009c77703785c603bc34ec91534d97585a5a6b12f4",
+      "trailing_blank_rows_trimmed": 1
+    },
+    {
+      "id": "stream-failure-before-80",
+      "path": "docs/ux-fuzz-evidence/stream-failure-before-80.txt",
+      "source": "/tmp/ally-ux-partial-before/80x24-partial-settled-visible.txt",
+      "rows": 24,
+      "sha256": "cfe264b31a173c3ef2b280f244ff0ca465e3adac317c38e7c071fb820af0a2f1",
+      "trailing_blank_rows_trimmed": 1
+    },
+    {
+      "id": "stream-failure-after-80",
+      "path": "docs/ux-fuzz-evidence/stream-failure-after-80.txt",
+      "source": "/tmp/ally-ux-final-probes/partial-single-audit-visible.txt",
+      "rows": 24,
+      "sha256": "84414a2b7af62534c74b3a680a7024d1b1331e04ce7e80be66c610168f63e79d",
+      "trailing_blank_rows_trimmed": 1
+    },
+    {
+      "id": "quit-cancelled-80",
+      "path": "docs/ux-fuzz-evidence/quit-cancelled-80.txt",
+      "source": "/tmp/ally-ux-final-probes/quit-cancel-fast.txt",
+      "rows": 24,
+      "sha256": "2c0c825d692cced5f82833f3ff8a3dedae21b80875ac7c977fb4c208304e4c4d",
+      "trailing_blank_rows_trimmed": 4
+    },
+    {
+      "id": "real-qwen-32k",
+      "path": "docs/ux-fuzz-evidence/real-qwen-32k.txt",
+      "source": "/tmp/ally-ux-real/real-model.txt",
+      "rows": 30,
+      "sha256": "47df7005102933ff667892c932c41b4ce7c4b936b42a369b341e52903f1c7e23",
+      "trailing_blank_rows_trimmed": 1
+    }
+  ],
+  "providers": {
+    "providers": [
+      {
+        "provider": "ollama",
+        "saved": true,
+        "masked_fake_credentials": true,
+        "cancel_verified_no_config_mutation": true,
+        "loopback_review": true,
+        "context_128k": true,
+        "unknown_back_continue": "not applicable: Ollama advertises tools",
+        "captures": [
+          "provider-0-masked-cancel.txt",
+          "provider-0-cancelled.txt",
+          "provider-0-review.txt",
+          "provider-0-saved.txt"
+        ]
+      },
+      {
+        "provider": "rapid-mlx",
+        "saved": true,
+        "masked_fake_credentials": true,
+        "cancel_verified_no_config_mutation": true,
+        "loopback_review": true,
+        "context_128k": true,
+        "unknown_back_continue": true,
+        "captures": [
+          "provider-1-masked-cancel.txt",
+          "provider-1-cancelled.txt",
+          "provider-1-review.txt",
+          "provider-1-saved.txt"
+        ]
+      },
+      {
+        "provider": "openai-compat",
+        "saved": true,
+        "masked_fake_credentials": true,
+        "cancel_verified_no_config_mutation": true,
+        "loopback_review": true,
+        "context_128k": true,
+        "unknown_back_continue": true,
+        "captures": [
+          "provider-2-masked-cancel.txt",
+          "provider-2-cancelled.txt",
+          "provider-2-review.txt",
+          "provider-2-saved.txt"
+        ]
+      },
+      {
+        "provider": "openai-responses",
+        "saved": true,
+        "masked_fake_credentials": true,
+        "cancel_verified_no_config_mutation": true,
+        "loopback_review": false,
+        "context_128k": true,
+        "unknown_back_continue": true,
+        "captures": [
+          "provider-3-masked-cancel.txt",
+          "provider-3-cancelled.txt",
+          "provider-3-review.txt",
+          "provider-3-saved.txt"
+        ]
+      }
+    ],
+    "saved_custom_context_visible": true,
+    "sampling_set_and_reset_verified": true,
+    "final_context_size": 131072,
+    "external_provider_requests": false
+  },
+  "secret_persistence": {
+    "canary_found": [],
+    "scanned_isolated_files": 9,
+    "debug_dump_files": [
+      "/tmp/ally-ux-config/providers-data/codeally-debug-2026-11-08T19-11-38.txt",
+      "/tmp/ally-ux-config/providers-data/codeally-debug-2026-11-08T19-09-06.txt"
+    ],
+    "reserved_session_checks": [
+      {
+        "args": [
+          "--session",
+          "history"
+        ],
+        "returncode": 1,
+        "history_sha256": "9035f0bfe2fdaebe9af755ee78ad3cb2b9f1de75a2566f5fda09bcd7a8abd493"
+      },
+      {
+        "args": [
+          "--session-id",
+          "History"
+        ],
+        "returncode": 1,
+        "history_sha256": "9035f0bfe2fdaebe9af755ee78ad3cb2b9f1de75a2566f5fda09bcd7a8abd493"
+      }
+    ],
+    "decrypted_configured_value_equals_canary": {
+      "api_key": true,
+      "reviewer_api_key": true,
+      "search_api_key": true,
+      "search_provider": true
+    },
+    "postsubmit_echo_and_config_show_redacted": true,
+    "legacy_sensitive_command_history_scrubbed": true,
+    "search_provider_and_key_saved_before_success": true
+  },
+  "canonical_search": {
+    "cli_show_provider": true,
+    "cli_show_secret_redacted": true,
+    "full_show_canonical": true,
+    "tui_reads_cli_provider": true,
+    "tui_reads_cli_secret": true,
+    "cli_reads_tui_secret": true,
+    "canonical": true,
+    "all_reset_retains_provider": true,
+    "all_reset_retains_key": true,
+    "named_key_reset_null": true,
+    "named_provider_reset_none": true
+  },
+  "reserved_session_ids": {
+    "checks": [
+      {
+        "args": [
+          "--session",
+          "history"
+        ],
+        "returncode": 1,
+        "history_sha256": "9035f0bfe2fdaebe9af755ee78ad3cb2b9f1de75a2566f5fda09bcd7a8abd493",
+        "rejected_before_inference": true,
+        "history_bytes_preserved": true
+      },
+      {
+        "args": [
+          "--session-id",
+          "History"
+        ],
+        "returncode": 1,
+        "history_sha256": "9035f0bfe2fdaebe9af755ee78ad3cb2b9f1de75a2566f5fda09bcd7a8abd493",
+        "rejected_before_inference": true,
+        "history_bytes_preserved": true
+      }
+    ],
+    "casefold_history_listing_unit_passed": true,
+    "legitimate_history_json_review_name_preserved": true
+  },
+  "session_recovery": {
+    "sizes": [
+      [
+        80,
+        24
+      ],
+      [
+        40,
+        12
+      ]
+    ],
+    "actual_cancel": true,
+    "injected_ENOTDIR_error": true,
+    "actual_r_retry": true,
+    "actual_previous_session_accept": true,
+    "restored_original_user_message_verified": true,
+    "history_json_not_treated_as_session": true,
+    "captures": [
+      "session-80-loaderror.txt",
+      "session-80-retry.txt",
+      "session-80-restored-message-proof.txt",
+      "session-40-loaderror.txt",
+      "session-40-retry.txt",
+      "session-40-restored-message-proof.txt"
+    ]
+  },
+  "agent_switching": {
+    "custom_ready_name": true,
+    "custom_fixture_response": true,
+    "ally_ready_name": true,
+    "ally_fixture_response": true,
+    "invalid_switch_retains_ally": true,
+    "model_footer": true,
+    "resource_closed_failure": false,
+    "captures": [
+      "switch-custom-ready.txt",
+      "switch-custom-response.txt",
+      "switch-ally-ready.txt",
+      "switch-ally-response.txt",
+      "switch-invalid.txt"
+    ]
+  },
+  "long_input": {
+    "characters": 4812,
+    "full_durable_text_preserved": true,
+    "size": [
+      40,
+      12
+    ]
+  },
+  "validation": {
+    "command": "npm run check",
+    "exit_code": 0,
+    "typecheck": "passed",
+    "lint": "passed, zero warnings",
+    "test_suites": 282,
+    "tests_passed": 3573,
+    "tests_skipped": 0,
+    "coverage_gates": "passed",
+    "production_build": "passed",
+    "log": "/tmp/ally-ux-shipping-final.log",
+    "script_syntax": "Python AST and node --check passed",
+    "evidence_hashes": "all verified"
+  }
+}

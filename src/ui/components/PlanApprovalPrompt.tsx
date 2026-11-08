@@ -9,12 +9,13 @@
  * Follows PermissionPrompt patterns (keyboard nav, SelectionIndicator, KeyboardHintFooter).
  */
 
+import { basename } from 'node:path';
 import React, { useEffect, useMemo, useState } from 'react';
 import { Box, Text, useInput } from 'ink';
 import { SelectionIndicator } from './SelectionIndicator.js';
 import { Clickable } from './Clickable.js';
 import { KeyboardHintFooter } from './KeyboardHintFooter.js';
-import { wrapAnsiText } from '@utils/terminalText.js';
+import { wrapAnsiText, truncateAnsiToWidth } from '@utils/terminalText.js';
 import { UI_COLORS } from '../constants/colors.js';
 import { UI_SYMBOLS } from '@config/uiSymbols.js';
 import { TextInput } from './TextInput.js';
@@ -69,6 +70,8 @@ export const PlanApprovalPrompt: React.FC<PlanApprovalPromptProps> = ({
   const terminalRows = useTerminalRows();
 
   const contentWidth = useContentWidth();
+  const compact = terminalRows <= 16 || contentWidth < 60;
+  const planLabel = truncateAnsiToWidth(basename(request.planFilePath), Math.max(1, contentWidth - 2), '…');
   const [offset, setOffset] = useState(0);
   const width = Math.max(1, contentWidth - 2);
   // Feedback keystrokes and scrolling must not rewrap the entire plan.
@@ -90,16 +93,18 @@ export const PlanApprovalPrompt: React.FC<PlanApprovalPromptProps> = ({
     <InteractiveSurface
       title="Plan ready for review"
       tone={UI_COLORS.PRIMARY}
-      description={request.planFilePath}
+      description={planLabel}
       footer={<KeyboardHintFooter action="confirm" />}
     >
       <Box flexDirection="column">
         <Text>{displayContent}</Text>
-        <Text dimColor>Lines {start + 1}–{Math.min(start + previewLines, planLines.length)} of {planLines.length} · PgUp/PgDn to scroll · Ctrl+A/E first/last</Text>
+        <Text dimColor>{compact
+          ? `Lines ${start + 1}–${Math.min(start + previewLines, planLines.length)}/${planLines.length} · PgUp/PgDn inspect`
+          : `Lines ${start + 1}–${Math.min(start + previewLines, planLines.length)} of ${planLines.length} · PgUp/PgDn to scroll · Ctrl+A/E first/last`}</Text>
       </Box>
 
       {/* Options */}
-      <Box flexDirection="column" marginTop={1}>
+      <Box flexDirection="column" marginTop={compact ? 0 : 1}>
         {APPROVAL_OPTIONS.map((option, idx) => {
           const isSelected = idx === selectedIndex;
           const isFeedbackOption = idx === 2;

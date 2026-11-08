@@ -1,0 +1,23 @@
+> UX:command-error
+
+  I will exercise the command-error fixture.
+
+  ✕ Bash · Fixture command exits seven
+    Auto needs approval · No local decision model found. Configure reviewer_m…
+      → fixture intentional command failure
+      Command exited with code 7
+
+  Fixture command-error complete. Tool result received; ready for your next
+  message.
+
+
+
+
+
+    Ready · ally
+ ╭────────────────────────────────────────────────────────────────────────────╮
+ │ > Type a message...                                                        │
+ ╰────────────────────────────────────────────────────────────────────────────╯
+  Auto → Manual · shift+tab
+  No local decision model found. Configure reviewer_model and reviewer_endpoin…
+  ux-fuzz:latest

@@ -15,6 +15,7 @@ import { BUFFER_SIZES, UI_DELAYS } from '../config/constants.js';
 import { getProjectSessionsDir } from '../config/paths.js';
 import { atomicWriteFile } from '../utils/atomicFile.js';
 import { logger } from './Logger.js';
+import { isSensitiveConfigCommand } from '../config/configCommandPrivacy.js';
 
 export interface CommandHistoryEntry {
   command: string;
@@ -72,10 +73,12 @@ export class CommandHistory {
             entry !== null &&
             typeof entry.command === 'string' &&
             typeof entry.timestamp === 'number'
+            && !isSensitiveConfigCommand(entry.command)
         );
       }
 
       this.loaded = true;
+      if (Array.isArray(parsed) && parsed.length !== this.history.length) await this.saveImmediate();
     } catch (error) {
       // File doesn't exist or is invalid - start with empty history
       if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
@@ -147,7 +150,7 @@ export class CommandHistory {
    */
   addCommand(command: string, skipDuplicateCheck: boolean = false): void {
     const trimmed = command.trim();
-    if (!trimmed) {
+    if (!trimmed || isSensitiveConfigCommand(trimmed)) {
       return;
     }
 
@@ -308,6 +311,7 @@ export class CommandHistory {
             entry !== null &&
             typeof entry.command === 'string' &&
             typeof entry.timestamp === 'number'
+            && !isSensitiveConfigCommand(entry.command)
         );
 
         // Trim to max size

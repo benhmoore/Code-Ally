@@ -72,6 +72,17 @@ describe('SessionManager', () => {
     await expect(sessionManager.deleteSession(name)).rejects.toThrow('Invalid session identifier');
   });
 
+  it.each(['history', 'History', 'HISTORY'])('reserves command history identity %s before file access', async name => {
+    const file = join(tempDir, 'history.json');
+    const bytes = JSON.stringify([{ command: '/help', timestamp: 1 }]);
+    await fs.writeFile(file, bytes);
+    expect(() => sessionManager.setCurrentSession(name)).toThrow('Invalid session identifier');
+    await expect(sessionManager.createSession(name)).rejects.toThrow('Invalid session identifier');
+    await expect(sessionManager.loadSession(name)).rejects.toThrow('Invalid session identifier');
+    await expect(sessionManager.deleteSession(name)).rejects.toThrow('Invalid session identifier');
+    expect(await fs.readFile(file, 'utf8')).toBe(bytes);
+  });
+
   it('deletes only the exact data directory for a session name containing .json', async () => {
     const name = 'history.json-review';
     await sessionManager.createSession(name);
@@ -303,6 +314,17 @@ describe('SessionManager', () => {
   });
 
   describe('listSessions', () => {
+    it.each(['history.json', 'History.json'])('excludes %s without hiding legitimate session names containing history.json', async historyFilename => {
+      const name = 'history.json-review';
+      await sessionManager.createSession(name);
+      await sessionManager.saveSession(name, [{ role: 'user', content: 'Saved conversation' }]);
+      const history = JSON.stringify([{ command: '/resume', timestamp: Date.now() }]);
+      await fs.writeFile(join(tempDir, historyFilename), history);
+      expect(await sessionManager.listSessions()).toEqual([name]);
+      expect(await sessionManager.getSessionsInfo()).toHaveLength(1);
+      expect(await fs.readFile(join(tempDir, historyFilename), 'utf8')).toBe(history);
+    });
+
     it('should list all sessions', async () => {
       await sessionManager.createSession('session-1');
       await sessionManager.createSession('session-2');

@@ -56,22 +56,16 @@ export const PromptAddWizard: React.FC<PromptAddWizardProps> = ({
   };
 
   useInput((_input, key) => {
-    // ESC - always cancel
-    if (key.escape) {
-      onCancel();
-      return;
-    }
+    // The focused TextInput owns Escape and Ctrl+C.
+    if (key.eventType === 'release') return;
 
     // Note: Ctrl+C is handled by TextInput (always active in this form)
 
     // Submit on Enter (only if not in multiline content field)
-    if (key.return && focusedField !== 'content') {
-      onSubmit();
-      return;
-    }
+    // TextInput owns Enter and calls handleSubmit.
 
     // Tab or Down: move to next field
-    if (key.tab || (key.downArrow && !key.shift)) {
+    if ((key.tab && !key.shift) || (key.downArrow && !key.shift && focusedField !== 'content')) {
       if (focusedField === 'title') {
         onFieldFocus('content');
       } else if (focusedField === 'content') {
@@ -83,7 +77,7 @@ export const PromptAddWizard: React.FC<PromptAddWizardProps> = ({
     }
 
     // Shift+Tab or Up: move to previous field
-    if ((key.tab && key.shift) || key.upArrow) {
+    if ((key.tab && key.shift) || (key.upArrow && focusedField !== 'content')) {
       if (focusedField === 'title') {
         onFieldFocus('tags');
       } else if (focusedField === 'content') {
@@ -130,10 +124,10 @@ export const PromptAddWizard: React.FC<PromptAddWizardProps> = ({
   const isValid = title.trim().length > 0 && content.trim().length > 0;
 
   return (
-    <InteractiveSurface
+    <InteractiveSurface scrollable
       title={isEditMode ? 'Edit prompt' : 'Add prompt'}
       description={isEditMode ? 'Update the saved prompt.' : 'Create a reusable prompt.'}
-      footer={<KeyboardHintFooter hints={[{ key: 'tab/↑↓', label: 'move' }, { key: 'enter', label: isValid ? 'save' : 'save (fields required)' }, { key: 'esc', label: 'cancel' }]} />}
+      footer={<KeyboardHintFooter hints={[{ key: 'tab', label: 'move' }, { key: 'enter', label: isValid ? 'save' : 'save (fields required)' }, { key: 'esc', label: 'cancel' }]} />}
     >
 
         {/* Form fields */}

@@ -15,16 +15,16 @@ describe('ReadHistoryTool', () => {
     try {
       const writer = new SessionManager({ sessionsDir: dir });
       await writer.initialize();
-      await writer.createSession('history');
+      await writer.createSession('history-reader-session');
       const original = `  ${'😀 Exact case Foo foo\n'.repeat(180)}FINAL REQUIREMENT  `;
       const messages: Message[] = [
         { id: 'original', role: 'user', content: original, timestamp: 1 },
         ...Array.from({ length: 650 }, (_, i): Message => ({ id: `a${i}`, role: 'assistant', content: 'Progress', timestamp: i + 2 })),
         { id: 'latest', role: 'user', content: 'Keep previous requirements.', timestamp: 1000 },
       ];
-      expect(await writer.saveSession('history', [], messages)).toBe(true);
+      expect(await writer.saveSession('history-reader-session', [], messages)).toBe(true);
       const reader = new SessionManager({ sessionsDir: dir });
-      reader.setCurrentSession('history');
+      reader.setCurrentSession('history-reader-session');
       const scope = { get(name: string) {
         if (name === 'session_manager') return reader;
         if (name === 'context_budget') return { get: () => ({ maxToolResultTokens: 300 }) };
@@ -43,7 +43,7 @@ describe('ReadHistoryTool', () => {
         if (result.message_id === 'original') recovered += result.content;
         if (!appended && result.message_id === 'original' && result.next_offset !== null) {
           // New input must not redirect a partially read older message.
-          expect(await writer.saveSession('history', [], [...messages,
+          expect(await writer.saveSession('history-reader-session', [], [...messages,
             { id: 'concurrent', role: 'user', content: 'New input during retrieval.', timestamp: 1001 },
           ])).toBe(true);
           appended = true;
@@ -62,7 +62,7 @@ describe('ReadHistoryTool', () => {
         outputBudget: { limitTokens: 1, maxResultTokensByCallId: new Map([['tiny', 1]]) },
       });
       expect(tiny.success).toBe(false);
-      const staleMessage = await tool.execute({ session_id: 'history', before: 1, message_id: 'changed', offset: 1 },
+      const staleMessage = await tool.execute({ session_id: 'history-reader-session', before: 1, message_id: 'changed', offset: 1 },
         'changed', undefined, false, false, { registryScope: scope });
       expect(staleMessage.success).toBe(false);
     } finally { await fs.rm(dir, { recursive: true, force: true }); }

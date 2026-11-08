@@ -351,6 +351,7 @@ const AppContentComponent: React.FC<AppContentProps> = ({
     : state.currentAgentModel || state.config.model;
   const statusIndicator = completedChild ? null : (
     <ConversationStatus
+      ownerId={`${foregroundAgentId}:${foregroundAgent.getInstanceId()}`}
       source={conversationSource}
       isCancelling={isCancelling}
       awaitingHuman={modal.activeModal?.kind === 'permission' || modal.activeModal?.kind === 'planApproval' ? 'approval' : modal.activeModal?.kind === 'toolForm' ? 'input' : undefined}

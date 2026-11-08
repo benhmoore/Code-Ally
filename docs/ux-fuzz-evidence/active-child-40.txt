@@ -1,0 +1,11 @@
+ ╰────────────────────────────────────╯
+
+    ○ main
+    ↑ 1 more…
+  > ● task · Fixtur…  1s · 1.3k tokens
+    ↓ 1 more…
+
+  ↑↓ · enter view · x stop · esc back
+  Auto → Manual · shift+tab
+  No local decision model found. Confi…
+  ux-fuzz:latest · task

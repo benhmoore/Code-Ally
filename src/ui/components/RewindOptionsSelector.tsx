@@ -19,15 +19,12 @@ import { Message } from '@shared/index.js';
 import { SelectionIndicator } from './SelectionIndicator.js';
 import { Clickable } from './Clickable.js';
 import { KeyboardHintFooter } from './KeyboardHintFooter.js';
-import { UI_COLORS } from '../constants/colors.js';
 import type { UndoPreview } from '@services/PatchManager.js';
 import { calculateDiffStats } from '@utils/diffUtils.js';
 import { createTwoFilesPatch } from 'diff';
-import { formatDiffStats, truncatePath } from '../utils/formatters.js';
+import { formatDiffStats } from '../utils/formatters.js';
 import { formatRelativeTime } from '../utils/timeUtils.js';
 import { InteractiveSurface } from './InteractiveSurface.js';
-import { useTerminalRows } from '../hooks/useTerminalRows.js';
-import { visibleItemBudget } from '../utils/layout.js';
 
 /**
  * File change statistics
@@ -115,15 +112,6 @@ export interface RewindOptionsSelectorProps {
 }
 
 /**
- * Truncate message content for display
- */
-function truncateContent(content: string, maxLength: number = 60): string {
-  const firstLine = content.split('\n')[0] || '';
-  if (firstLine.length <= maxLength) return firstLine;
-  return firstLine.slice(0, maxLength - 3) + '...';
-}
-
-/**
  * RewindOptionsSelector Component
  */
 export const RewindOptionsSelector: React.FC<RewindOptionsSelectorProps> = ({
@@ -133,7 +121,6 @@ export const RewindOptionsSelector: React.FC<RewindOptionsSelectorProps> = ({
   onConfirm,
   visible = true,
 }) => {
-  const terminalRows = useTerminalRows();
   // Build options array dynamically based on file count
   const hasFiles = fileChanges.fileCount > 0;
 
@@ -193,7 +180,7 @@ export const RewindOptionsSelector: React.FC<RewindOptionsSelectorProps> = ({
     { isActive: visible }
   );
 
-  const messagePreview = truncateContent(targetMessage.content);
+  const messagePreview = targetMessage.content;
 
   // Prepare file display data from preview data if available
   const fileDisplays = React.useMemo(
@@ -205,22 +192,22 @@ export const RewindOptionsSelector: React.FC<RewindOptionsSelectorProps> = ({
     return null;
   }
 
-  const displayLimit = visibleItemBudget(terminalRows, {
-    chromeRows: 15,
-    rowsPerItem: 2,
-    minimum: 1,
-    maximum: 5,
-  });
-  const displayedFileCount = fileDisplays?.length ?? fileChanges.files.length;
-  const hasMoreFiles = displayedFileCount > displayLimit;
-
   return (
     <InteractiveSurface
+      scrollable
       title="Rewind options"
-      description={<>Rewind to “<Text color={UI_COLORS.TEXT_DEFAULT}>{messagePreview}</Text>”</>}
-      footer={<KeyboardHintFooter action="select" />}
+      footer={<>
+        {options.map((option, index) => <Clickable key={option.choice} onPress={() => onConfirm(option.choice)}>
+          <SelectionIndicator isSelected={index === selectedOption}>
+            {option.choice === 'conversation-only' ? 'Conversation only (keep files)'
+              : option.choice === 'conversation-and-files' ? `Conversation + tracked files (${fileChanges.fileCount})` : 'Cancel'}
+          </SelectionIndicator>
+        </Clickable>)}
+        <KeyboardHintFooter action="select" />
+      </>}
     >
 
+      <Text>Rewind to “{messagePreview}”</Text>
       <Text dimColor>Saved sessions keep the previous conversation as a resumable branch. Files stay as-is unless you select tracked edits; shell commands and external effects cannot be undone here.</Text>
 
       {/* File changes preview with diff stats */}
@@ -229,13 +216,13 @@ export const RewindOptionsSelector: React.FC<RewindOptionsSelectorProps> = ({
           <Text dimColor>Files to restore ({fileChanges.fileCount}):</Text>
           {fileDisplays ? (
             <>
-              {fileDisplays.slice(0, displayLimit).map((file, index) => {
-                const filePath = truncatePath(file.path, 50);
+              {fileDisplays.map((file, index) => {
+                const filePath = file.path;
                 const diffStats = formatDiffStats(file.stats);
                 const timestamp = formatRelativeTime(file.timestamp);
 
                 return (
-                  <Box key={index} flexDirection="column" marginLeft={2} marginBottom={index < Math.min(displayLimit, fileDisplays.length) - 1 ? 0 : 0}>
+                  <Box key={index} flexDirection="column" marginLeft={2}>
                     <Box>
                       <Text>▸ {filePath}</Text>
                     </Box>
@@ -251,55 +238,18 @@ export const RewindOptionsSelector: React.FC<RewindOptionsSelectorProps> = ({
                   </Box>
                 );
               })}
-              {hasMoreFiles && (
-                <Box marginLeft={2}>
-                  <Text dimColor>▸ ... and {displayedFileCount - displayLimit} more</Text>
-                </Box>
-              )}
             </>
           ) : (
             <>
-              {fileChanges.files.slice(0, displayLimit).map((file, index) => (
+              {fileChanges.files.map((file, index) => (
                 <Box key={index} marginLeft={2}>
-                  <Text dimColor>▸ {file.path.split('/').pop() || file.path}</Text>
+                  <Text dimColor>▸ {file.path}</Text>
                 </Box>
               ))}
-              {hasMoreFiles && (
-                <Box marginLeft={2}>
-                  <Text dimColor>▸ ... and {displayedFileCount - displayLimit} more</Text>
-                </Box>
-              )}
             </>
           )}
         </Box>
       )}
-
-      {/* Section header */}
-      <Box marginTop={1}>
-        <Text dimColor>Select an option:</Text>
-      </Box>
-
-      {/* Radio options */}
-      <Box flexDirection="column">
-        {options.map((option, index) => {
-          const isSelected = index === selectedOption;
-
-          return (
-            <Clickable key={option.choice} flexDirection="column" onPress={() => onConfirm(option.choice)}>
-              {/* Option label */}
-              <SelectionIndicator isSelected={isSelected}>
-                <Text>{option.label}</Text>
-              </SelectionIndicator>
-              {/* Option description */}
-              {option.description && (
-                <Box marginLeft={4}>
-                  <Text dimColor>{option.description}</Text>
-                </Box>
-              )}
-            </Clickable>
-          );
-        })}
-      </Box>
 
     </InteractiveSurface>
   );

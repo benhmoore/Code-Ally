@@ -97,10 +97,24 @@ class Logger {
     }
   }
 
+  /** Use the same safe representation for console output and buffered exports. */
+  private safeArgs(args: any[]): any[] {
+    return args.map(arg => {
+      if (typeof arg === 'string') return redactSensitiveText(arg);
+      if (arg instanceof Error) return redactSensitiveText(arg.stack ?? arg.message);
+      if (arg && typeof arg === 'object') {
+        try { return redactSensitiveText(JSON.stringify(arg)); }
+        catch { return '[Circular]'; }
+      }
+      return arg;
+    });
+  }
+
   /**
    * Log an error (always shown)
    */
   error(...args: any[]): void {
+    args = this.safeArgs(args);
     this.storeLog(LogLevel.ERROR, args);
     if (this.logLevel >= LogLevel.ERROR) {
       console.error(...args);
@@ -111,6 +125,7 @@ class Logger {
    * Log a warning (shown at WARN level and above)
    */
   warn(...args: any[]): void {
+    args = this.safeArgs(args);
     this.storeLog(LogLevel.WARN, args);
     if (this.logLevel >= LogLevel.WARN) {
       console.warn(...args);
@@ -121,6 +136,7 @@ class Logger {
    * Log info (shown at INFO level and above)
    */
   info(...args: any[]): void {
+    args = this.safeArgs(args);
     this.storeLog(LogLevel.INFO, args);
     if (this.logLevel >= LogLevel.INFO) {
       console.log(...args);
@@ -131,6 +147,7 @@ class Logger {
    * Log verbose info (shown at VERBOSE level and above)
    */
   verbose(...args: any[]): void {
+    args = this.safeArgs(args);
     this.storeLog(LogLevel.VERBOSE, args);
     if (this.logLevel >= LogLevel.VERBOSE) {
       console.log(...args);
@@ -141,6 +158,7 @@ class Logger {
    * Log debug info (shown only at DEBUG level)
    */
   debug(...args: any[]): void {
+    args = this.safeArgs(args);
     this.storeLog(LogLevel.DEBUG, args);
     if (this.logLevel >= LogLevel.DEBUG) {
       console.log(...args);

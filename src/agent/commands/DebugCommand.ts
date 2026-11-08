@@ -12,6 +12,7 @@ import type { ToolCallHistory } from '@services/ToolCallHistory.js';
 import type { ToolCallState } from '@shared/index.js';
 import { logger, LogLevel, type LogEntry } from '@services/Logger.js';
 import { BUFFER_SIZES } from '@config/constants.js';
+import { ALLY_HOME } from '@config/paths.js';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
@@ -358,7 +359,7 @@ export class DebugCommand extends Command {
       const now = new Date();
       const timestamp = now.toISOString().replace(/[:.]/g, '-').slice(0, -5); // Remove milliseconds
       const filename = `codeally-debug-${timestamp}.txt`;
-      const homeDir = os.homedir();
+      const homeDir = process.env.ALLY_DATA_DIR ? ALLY_HOME : os.homedir();
       const filepath = path.join(homeDir, filename);
 
       // Collect all data sources

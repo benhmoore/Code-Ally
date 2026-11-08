@@ -1290,7 +1290,7 @@ export class Agent {
       logger.debug('[AGENT]', this.instanceId, 'sendMessage caught exception:', error instanceof Error ? error.message : String(error));
       // Mark delegation as failed for parent activity monitoring
       delegationSucceeded = false;
-      this.turnController.finish(isPermissionDeniedError(error) ? 'interrupted' : 'failed');
+      this.turnController.finish(isPermissionDeniedError(error) ? 'interrupted' : 'failed', formatError(error));
 
       // Handle permission denial - check if user provided instructions via INSTRUCT option
       if (isPermissionDeniedError(error)) {
@@ -1319,12 +1319,13 @@ export class Agent {
         return PERMISSION_MESSAGES.USER_FACING_DENIAL;
       }
 
-      if (this.interruptionManager.isInterrupted() || (error instanceof Error && error.message.includes('interrupted'))) {
+      if (this.interruptionManager.isInterrupted()) {
         // Handle interruption (user cancel or unexpected interruption during error)
         // Note: Activity timeouts are handled in processLLMResponse, not here,
         // because they return successfully with interrupted:true rather than throwing
         return this.handleInterruption();
       }
+      this.recordTurnFailure(formatError(error));
       throw error;
     } finally {
       // Emit AGENT_END for this agent's lifecycle (ensures cleanup even on unhandled errors).
@@ -1352,6 +1353,7 @@ export class Agent {
       await ServiceRegistry.getInstance().get('run_supervisor')?.cancel(message);
     }
 
+    this.turnController.finish(cause?.kind === 'activity_timeout' && this.config.isSpecializedAgent ? 'failed' : 'interrupted', message);
     this.emitAgentEnd(true, cause?.kind);
 
     // Clear interruption state
@@ -1931,6 +1933,16 @@ export class Agent {
     }
   }
 
+  /** Keep terminal failures inspectable after a delegated agent is released. */
+  private recordTurnFailure(reason: string): void {
+    const id = this.generateId();
+    this.conversationManager.addMessage({
+      id, role: 'assistant', content: reason, timestamp: Date.now(),
+      metadata: { isError: true, agentName: this.agentName },
+    });
+    this.turnController.finish('failed', reason, id);
+  }
+
   /**
    * Process LLM response (handles interruptions and delegates to ResponseProcessor)
    *
@@ -1949,7 +1961,9 @@ export class Agent {
     }
 
     if (response.error && !response.partial && !response.tool_call_validation_failed) {
-      this.turnController.finish('failed');
+      const reason = response.error_message || response.content || 'Non-retryable model endpoint error';
+      this.turnController.finish('failed', reason);
+      this.recordTurnFailure(reason);
       if (!this.config.isSpecializedAgent) {
         await ServiceRegistry.getInstance().get('run_supervisor')?.block(
           response.content || response.error_message || 'Non-retryable model endpoint error'
@@ -2917,14 +2931,17 @@ export class Agent {
     content?: string
   ): void {
     if (this.invocationState.agentEndEmitted) return;
+    const outcome = this.turnController.snapshot();
     this.emitEvent({
       id: this.generateId(),
       type: ActivityEventType.AGENT_END,
       timestamp: Date.now(),
       data: {
-        interrupted,
+        interrupted: interrupted && outcome.state !== 'failed',
         interruptionCause,
         content,
+        status: outcome.state === 'failed' ? 'error' : interrupted ? 'cancelled' : 'done',
+        error: outcome.error,
         isSpecializedAgent: this.config.isSpecializedAgent || false,
         instanceId: this.instanceId,
         agentName: this.config.agentType || 'ally',

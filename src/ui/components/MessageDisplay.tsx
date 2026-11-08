@@ -7,6 +7,7 @@ import { terminalHyperlinksEnabled } from '../utils/fileLinks.js';
 import { UI_COLORS } from '../constants/colors.js';
 import { formatDuration } from '../utils/timeUtils.js';
 import { useContentWidth } from '../hooks/useContentWidth.js';
+import { isActualUserMessage } from '@utils/messagePersistence.js';
 
 interface MessageDisplayProps {
   /** Message to display */
@@ -56,6 +57,9 @@ const MessageDisplayComponent: React.FC<MessageDisplayProps> = ({ message, confi
 
   // User messages - bold with prompt prefix
   if (role === 'user') {
+    if (!isActualUserMessage(message)) {
+      return <Box flexDirection="column"><Text dimColor>{`↳ ${content}`}</Text></Box>;
+    }
     return (
       <Box flexDirection="column">
         <Text bold color={UI_COLORS.PRIMARY}>

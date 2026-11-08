@@ -1,0 +1,11 @@
+
+  ────────────────────────────────────
+  Add prompt
+  Create a reusable prompt.
+
+  Content:
+   INSPECT-0
+   INSPECT-1
+   INSPECT-2
+
+  tab move · enter save · esc cancel

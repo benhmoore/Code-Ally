@@ -243,7 +243,7 @@ export class SessionManager implements IService {
 
   /** Session identities are single path components, never caller-supplied paths. */
   private getSessionDirectory(sessionName: string): string {
-    if (!sessionName || sessionName === '.' || sessionName === '..' || /[/\\\0]/.test(sessionName)) {
+    if (!sessionName || sessionName.toLowerCase() === 'history' || sessionName === '.' || sessionName === '..' || /[/\\\0]/.test(sessionName)) {
       throw new Error('Invalid session identifier');
     }
     return join(this.sessionsDir, sessionName);
@@ -789,7 +789,8 @@ export class SessionManager implements IService {
     try {
       const files = await fs.readdir(this.sessionsDir);
       return files
-        .filter(file => file.endsWith('.json'))
+        // CommandHistory shares this directory; its array is not a session manifest.
+        .filter(file => file.endsWith('.json') && file.toLowerCase() !== 'history.json')
         .map(file => file.slice(0, -5)) // Remove .json extension
         .sort();
     } catch (error) {

@@ -92,9 +92,30 @@ describe('everyday settings and model commands', () => {
     registry.registerInstance('integration_store', {
       getSettings: async () => ({ searchProvider: 'brave', searchAPIKey: 'private-search' }),
       setSearchAPIKey: save,
+      saveSettings: vi.fn(async () => {}),
     } as never);
     await new ConfigCommand().execute(['reset', 'search_api_key'], [], registry);
     expect(save).toHaveBeenCalledExactlyOnceWith(null);
+  });
+
+  it('persists search credentials before reporting success and rolls back memory when storage fails', async () => {
+    const settings = { searchProvider: 'brave', searchAPIKey: 'old-search-key', searchCount: 0 };
+    const persisted: string[] = [];
+    const saveSettings = vi.fn(async () => { persisted.push(settings.searchAPIKey); });
+    registry.registerInstance('integration_store', {
+      getSettings: () => ({ ...settings }),
+      setSearchProvider: (value: string) => { settings.searchProvider = value; settings.searchAPIKey = ''; },
+      setSearchAPIKey: (value: string) => { settings.searchAPIKey = value; },
+      saveSettings,
+    } as never);
+    const command = new ConfigCommand();
+    const result = await command.execute(['set', 'search_api_key=UX-FAKE-CANARY'], [], registry);
+    expect(result.response).toContain('Saved securely');
+    expect(persisted).toEqual(['UX-FAKE-CANARY']);
+    saveSettings.mockRejectedValueOnce(new Error('fixture storage denied'));
+    const failed = await command.execute(['set', 'search_api_key=not-committed'], [], registry);
+    expect(failed.response).toContain('fixture storage denied');
+    expect(settings.searchAPIKey).toBe('UX-FAKE-CANARY');
   });
 
   it('uses the shared model transaction for direct selection and emits one applied update', async () => {

@@ -538,6 +538,26 @@ src/
 - Ollama running locally
 - Terminal with Unicode support
 
+## Terminal UX regression audit
+
+The [coverage report](docs/ux-fuzz-results.json) records the November 2026 tmux audit, its limits, and representative [terminal captures](docs/ux-fuzz-evidence). The fixture provider makes streaming, failures, questions, permissions, and delegated tasks repeatable without model inference.
+
+Build with `npm run build`, then run these in separate terminals (requires Python 3 and tmux):
+
+```sh
+node scripts/ux-fuzz-provider.mjs --port 11435 --workdir /tmp/ally-ux-conversation/workspace --max-requests 3000
+```
+
+```sh
+python3 scripts/ux-fuzz-conversation.py --seed 271828 --events 240
+```
+
+The harness launches the real CLI with isolated application data and retains screenshots, events, and its summary under `/tmp/ally-ux-conversation`. Use a fresh `--output` directory and `--socket` for another seed. Keep the fixture working directory aligned with the conversation workspace when exercising file tools.
+
+For configuration, start another fixture on port 11436 and run `python3 scripts/ux-fuzz-config.py start`, followed by `config`, `seeded`, `pairwise`, or `advanced`. For task scenarios, start a fixture on port 11437 with the same isolated workspace, then run `python3 scripts/ux-fuzz-tasks.py --commands`, `--fleet`, `--final`, or `--plans`. These drivers retain captures for inspection; observed dialogs alone do not establish correctness. The audit report distinguishes terminal assertions, manual checks, and automated regressions.
+
+Each driver uses its own named tmux socket. After inspection, stop the fixture process and remove only the driver's server with `tmux -L ally-ux-conversation kill-server`, `tmux -L ally-ux-config kill-server`, or `tmux -L ally-ux-tasks kill-server` as appropriate. `npm run check` runs the required TypeScript, lint, regression, coverage, and production-build checks.
+
 ## Contributing
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.

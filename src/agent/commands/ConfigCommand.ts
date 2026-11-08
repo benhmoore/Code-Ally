@@ -17,6 +17,7 @@ import { formatConfigValue } from '@config/metadata.js';
 import { DEFAULT_CONFIG, validateConfigValue } from '@config/defaults.js';
 import { presentConfiguration } from '@config/configPresentation.js';
 import { SEARCH_PROVIDER_INFO } from '../../types/integration.js';
+import { readSearchConfiguration, updateSearchConfiguration } from '@services/SearchConfiguration.js';
 import { applyRuntimeConfigUpdates } from '@services/RuntimeConfigSync.js';
 
 // Fields stored in IntegrationStore instead of ConfigManager
@@ -286,11 +287,8 @@ export class ConfigCommand extends Command {
     }
 
     try {
-      const settings = await integrationStore.getSettings();
-      return {
-        provider: settings.searchProvider,
-        apiKey: settings.searchAPIKey,
-      };
+      const settings = await readSearchConfiguration(integrationStore);
+      return { provider: settings.search_provider, apiKey: settings.search_api_key };
     } catch {
       return { provider: 'none', apiKey: null };
     }
@@ -353,7 +351,7 @@ export class ConfigCommand extends Command {
         }
 
         const oldValue = currentSettings.searchProvider;
-        await integrationStore.setSearchProvider(validation.coercedValue);
+        await updateSearchConfiguration(integrationStore, 'search_provider', validation.coercedValue);
 
         // If switching to a provider that requires API key and none set, remind user
         const providerInfo = SEARCH_PROVIDER_INFO[validation.coercedValue as keyof typeof SEARCH_PROVIDER_INFO];
@@ -380,7 +378,7 @@ export class ConfigCommand extends Command {
         const oldDisplay = oldValue ? `****${oldValue.slice(-4)}` : 'null';
         const newDisplay = validation.coercedValue ? `****${String(validation.coercedValue).slice(-4)}` : 'null';
 
-        await integrationStore.setSearchAPIKey(validation.coercedValue);
+        await updateSearchConfiguration(integrationStore, 'search_api_key', validation.coercedValue);
 
         return this.createResponse(
           `Configuration updated: search_api_key\nSaved securely and applied to subsequent searches.\n  Old value: "${oldDisplay}"\n  New value: "${newDisplay}"`

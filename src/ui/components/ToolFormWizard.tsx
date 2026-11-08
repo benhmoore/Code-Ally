@@ -16,6 +16,7 @@ import { ChickAnimation } from './ChickAnimation.js';
 import { InteractiveSurface } from './InteractiveSurface.js';
 import { SelectionIndicator } from './SelectionIndicator.js';
 import { TextInput } from './TextInput.js';
+import { useContentWidth } from '../hooks/useContentWidth.js';
 import { UI_COLORS } from '../constants/colors.js';
 
 interface ToolFormWizardProps {
@@ -44,6 +45,7 @@ export const ToolFormWizard: React.FC<ToolFormWizardProps> = ({
   onCancel,
 }) => {
   const { schema } = request;
+  const compactFooter = useContentWidth() < 60;
   const fields = schema.fields;
   const currentField = fields[fieldIndex];
 
@@ -528,10 +530,12 @@ export const ToolFormWizard: React.FC<ToolFormWizardProps> = ({
         ) : (
           /* Other fields: standard label + description */
           <>
-            <Box marginBottom={1}>
-              <Text bold>{currentField.label || currentField.name}</Text>
-              {currentField.required && <Text color="red"> *</Text>}
-            </Box>
+            {(fields.length !== 1 || (currentField.label || currentField.name) !== schema.title) && (
+              <Box marginBottom={1}>
+                <Text bold>{currentField.label || currentField.name}</Text>
+                {currentField.required && <Text color="red"> *</Text>}
+              </Box>
+            )}
             {currentField.description && (
               <Box marginBottom={1}>
                 <Text dimColor>{currentField.description}</Text>
@@ -620,7 +624,6 @@ export const ToolFormWizard: React.FC<ToolFormWizardProps> = ({
         ) : (
           <Box marginBottom={1}>
             <TextInput
-              label={`${currentField.name} (${currentField.type}):`}
               value={inputBuffer}
               onValueChange={setInputBuffer}
               cursorPosition={inputCursor}
@@ -643,7 +646,7 @@ export const ToolFormWizard: React.FC<ToolFormWizardProps> = ({
   const queueIndicator = queueLength > 1 ? ` (${queueLength} pending)` : '';
 
   return (
-    <InteractiveSurface>
+    <InteractiveSurface scrollable>
         <Box width="100%" flexDirection="column">
           {/* Tab bar for multi-field forms */}
           {renderTabBar()}
@@ -661,7 +664,7 @@ export const ToolFormWizard: React.FC<ToolFormWizardProps> = ({
           )}
 
           {/* Description (only for single-field forms without choice/label type) */}
-          {schema.description && fields.length === 1 && currentField?.type !== 'choice' && currentField?.type !== 'label' && (
+          {schema.description && schema.description !== currentField?.description && fields.length === 1 && currentField?.type !== 'choice' && currentField?.type !== 'label' && (
             <Box marginBottom={1}>
               <Text>{schema.description}</Text>
             </Box>
@@ -673,7 +676,11 @@ export const ToolFormWizard: React.FC<ToolFormWizardProps> = ({
           {/* Footer */}
           <Box marginTop={1} borderTop borderColor="gray" paddingTop={1}>
             <Text dimColor>
-              {currentField?.type === 'label'
+              {compactFooter
+                ? currentField?.type === 'choice' && currentField.multiSelect
+                  ? 'space toggle · enter done · esc cancel'
+                  : 'enter next · tab move · esc cancel'
+                : currentField?.type === 'label'
                 ? 'Enter to continue • Tab/Arrow keys to navigate • Esc to cancel'
                 : currentField?.type === 'choice' && currentField.multiSelect
                   ? 'Space to toggle • Enter to confirm • Arrow keys to navigate • Esc to cancel'

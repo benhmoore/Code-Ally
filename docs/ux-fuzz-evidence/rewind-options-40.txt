@@ -1,0 +1,11 @@
+
+  ────────────────────────────────────
+  Rewind options
+  Rewind to “UX:permission REWIND-40”
+  Saved sessions keep the previous
+  pgup/pgdn inspect
+  > Conversation only (keep files)
+    Conversation + tracked files (1)
+    Cancel
+
+  ↑↓ move · enter select · esc cancel

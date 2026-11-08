@@ -16,10 +16,10 @@ import * as fs from 'fs/promises';
 import * as path from 'path';
 import { getProjectInstructionsFile } from '../../config/paths.js';
 import { UI_COLORS } from '../constants/colors.js';
-import { ChickAnimation } from './ChickAnimation.js';
 import { InteractiveSurface } from './InteractiveSurface.js';
 import { SelectionIndicator } from './SelectionIndicator.js';
 import { TextInput } from './TextInput.js';
+import { ChickAnimation } from './ChickAnimation.js';
 
 enum WizardStep {
   WELCOME,
@@ -139,8 +139,9 @@ export const ProjectWizardView: React.FC<ProjectWizardViewProps> = ({ onComplete
 
   // Handle keyboard input for non-text-input steps
   useInput((input, key) => {
-    // ESC - always exit
-    if (key.escape) {
+    // TextInput owns Escape while an editor is active.
+    if (key.eventType === 'release') return;
+    if (key.escape && !isTextInputStep) {
       if (onSkip) {
         onSkip();
       }
@@ -242,19 +243,13 @@ This file provides project-specific guidance to Code Ally when working with this
   };
 
   return (
-    <InteractiveSurface>
+    <InteractiveSurface scrollable title="Project Configuration" meta={WizardStep[step].toLowerCase().replaceAll('_', ' ')}
+      footer={<Text dimColor>enter continue · esc cancel</Text>}>
         <Box width="100%" flexDirection="column">
       {step === WizardStep.WELCOME && (
         <>
           {/* Header with ChickAnimation */}
-          <Box marginBottom={1} flexDirection="row" gap={1}>
-            <Text bold>
-              <ChickAnimation />
-            </Text>
-            <Text color={UI_COLORS.TEXT_DEFAULT} bold>
-              Project Configuration
-            </Text>
-          </Box>
+
 
           {/* Main description */}
           <Box marginBottom={1}>
@@ -295,14 +290,7 @@ This file provides project-specific guidance to Code Ally when working with this
 
       {step === WizardStep.PROJECT_NAME && (
         <>
-          <Box marginBottom={1} flexDirection="row" gap={1}>
-            <Text bold>
-              <ChickAnimation />
-            </Text>
-            <Text color={UI_COLORS.TEXT_DEFAULT} bold>
-              Step 1: Project Name
-            </Text>
-          </Box>
+
           <Box marginBottom={1}>
             <Text>
               Enter a name for your project
@@ -331,14 +319,7 @@ This file provides project-specific guidance to Code Ally when working with this
 
       {step === WizardStep.DESCRIPTION && (
         <>
-          <Box marginBottom={1} flexDirection="row" gap={1}>
-            <Text bold>
-              <ChickAnimation />
-            </Text>
-            <Text color={UI_COLORS.TEXT_DEFAULT} bold>
-              Step 2: Description
-            </Text>
-          </Box>
+
           <Box marginBottom={1}>
             <Text>
               Enter a brief project description (optional)
@@ -367,14 +348,7 @@ This file provides project-specific guidance to Code Ally when working with this
 
       {step === WizardStep.LANGUAGE && (
         <>
-          <Box marginBottom={1} flexDirection="row" gap={1}>
-            <Text bold>
-              <ChickAnimation />
-            </Text>
-            <Text color={UI_COLORS.TEXT_DEFAULT} bold>
-              Step 3: Primary Language
-            </Text>
-          </Box>
+
           <Box marginBottom={1}>
             <Text>
               Enter the primary programming language used in this project
@@ -403,14 +377,7 @@ This file provides project-specific guidance to Code Ally when working with this
 
       {step === WizardStep.SETUP_COMMANDS && (
         <>
-          <Box marginBottom={1} flexDirection="row" gap={1}>
-            <Text bold>
-              <ChickAnimation />
-            </Text>
-            <Text color={UI_COLORS.TEXT_DEFAULT} bold>
-              Step 4: Environment Setup
-            </Text>
-          </Box>
+
           <Box marginBottom={1}>
             <Text>
               Add commands to set up the development environment (e.g., npm install, pip install -r requirements.txt)
@@ -449,14 +416,7 @@ This file provides project-specific guidance to Code Ally when working with this
 
       {step === WizardStep.BUILD_COMMANDS && (
         <>
-          <Box marginBottom={1} flexDirection="row" gap={1}>
-            <Text bold>
-              <ChickAnimation />
-            </Text>
-            <Text color={UI_COLORS.TEXT_DEFAULT} bold>
-              Step 5: Build Commands
-            </Text>
-          </Box>
+
           <Box marginBottom={1}>
             <Text>
               Add commands to build the project (e.g., npm run build, make)
@@ -495,14 +455,7 @@ This file provides project-specific guidance to Code Ally when working with this
 
       {step === WizardStep.TEST_COMMANDS && (
         <>
-          <Box marginBottom={1} flexDirection="row" gap={1}>
-            <Text bold>
-              <ChickAnimation />
-            </Text>
-            <Text color={UI_COLORS.TEXT_DEFAULT} bold>
-              Step 6: Test Commands
-            </Text>
-          </Box>
+
           <Box marginBottom={1}>
             <Text>
               Add commands to run tests (e.g., npm test, pytest)
@@ -541,14 +494,7 @@ This file provides project-specific guidance to Code Ally when working with this
 
       {step === WizardStep.FORMATTER && (
         <>
-          <Box marginBottom={1} flexDirection="row" gap={1}>
-            <Text bold>
-              <ChickAnimation />
-            </Text>
-            <Text color={UI_COLORS.TEXT_DEFAULT} bold>
-              Step 7: Code Formatter
-            </Text>
-          </Box>
+
           <Box marginBottom={1}>
             <Text>
               Enter the code formatter used in this project (e.g., prettier, black)
@@ -577,14 +523,7 @@ This file provides project-specific guidance to Code Ally when working with this
 
       {step === WizardStep.LINTER && (
         <>
-          <Box marginBottom={1} flexDirection="row" gap={1}>
-            <Text bold>
-              <ChickAnimation />
-            </Text>
-            <Text color={UI_COLORS.TEXT_DEFAULT} bold>
-              Step 8: Linter
-            </Text>
-          </Box>
+
           <Box marginBottom={1}>
             <Text>
               Enter the linter used in this project (e.g., eslint, ruff)
@@ -614,14 +553,7 @@ This file provides project-specific guidance to Code Ally when working with this
       {step === WizardStep.GENERATING && (
         <>
           {/* Header with ChickAnimation */}
-          <Box marginBottom={1} flexDirection="row" gap={1}>
-            <Text bold>
-              <ChickAnimation />
-            </Text>
-            <Text color={UI_COLORS.TEXT_DEFAULT} bold>
-              Generating ALLY.md...
-            </Text>
-          </Box>
+
 
           {/* Status message */}
           <Box marginBottom={1}>

@@ -1,0 +1,29 @@
+> Reply with exactly: UX REAL MODEL READY. Do not use tools.
+
+  ∴ Thought for 356ms
+
+  UX REAL MODEL READY.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    Ready · ally
+ ╭────────────────────────────────────────────────────────────────────────────────────────────────╮
+ │ > Type a message...                                                                            │
+ ╰────────────────────────────────────────────────────────────────────────────────────────────────╯
+  Manual · shift+tab
+  qwen3.8:27b-mlx

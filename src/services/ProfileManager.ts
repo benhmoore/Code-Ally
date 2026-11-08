@@ -12,7 +12,7 @@
 
 import { promises as fs } from 'fs';
 import { join } from 'path';
-import { homedir } from 'os';
+import { PROFILES_DIR } from '../config/paths.js';
 import type { IService } from '../types/index.js';
 import type { Profile, ProfileInfo, CreateProfileOptions, ProfileStats } from '../types/profile.js';
 import { logger } from './Logger.js';
@@ -41,8 +41,7 @@ export class ProfileManager implements IService {
   ] as const;
 
   constructor() {
-    const allyHome = join(homedir(), '.ally');
-    this.profilesDir = join(allyHome, 'profiles');
+    this.profilesDir = PROFILES_DIR;
   }
 
   /**
@@ -58,9 +57,12 @@ export class ProfileManager implements IService {
 
     // Create default profile if it doesn't exist
     if (!(await this.profileExists('default'))) {
-      await this.createProfile('default', {
-        description: 'Default profile',
-      });
+      // Configuration can precede metadata (manual setup or interrupted startup).
+      // Complete the default profile without replacing its existing contents.
+      await this.ensureProfileDirectories('default');
+      const now = new Date().toISOString();
+      await this.saveProfile({ name: 'default', description: 'Default profile',
+        created_at: now, updated_at: now, metadata: { color: 'yellow' } });
       logger.info('[PROFILE] Created default profile');
     } else {
       // Ensure existing default profile has yellow color set

@@ -77,8 +77,15 @@ export async function runFleetDelegation(p: FleetDelegationParams): Promise<Flee
     let status: BackgroundAgentStatus = 'done';
     try {
       await execution;
+      const outcome = p.subAgent.getTurnSnapshot?.();
+      if (outcome?.state === 'failed') {
+        status = 'error';
+        task.error = outcome.error || 'Agent turn failed';
+      } else if (outcome?.state === 'interrupted') {
+        status = 'cancelled';
+      }
       const content = task.result?.split('\n\nIMPORTANT:')[0]?.trim();
-      if (content === PERMISSION_MESSAGES.USER_FACING_INTERRUPTION) {
+      if (status === 'done' && content === PERMISSION_MESSAGES.USER_FACING_INTERRUPTION) {
         status = 'cancelled';
       }
     } catch (error) {
@@ -118,9 +125,12 @@ export async function runFleetDelegation(p: FleetDelegationParams): Promise<Flee
           timestamp: Date.now(),
           data: {
             agentName: p.agentType,
-            result: task.result ?? task.error ?? '',
+            result: task.error ?? task.result ?? '',
             duration,
             ...(p.buildEndData?.(task.result ?? '', duration) ?? {}),
+            status: task.status,
+            error: task.error,
+            interrupted: task.status === 'cancelled',
           },
         });
         p.activityStream.emit({

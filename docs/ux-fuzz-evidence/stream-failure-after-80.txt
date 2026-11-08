@@ -1,0 +1,23 @@
+> UX:partial-error
+
+  Partial fixture response retained before connection loss.
+
+  Partial fixture response retained before connection loss.
+
+  Model stream failed after one recovery attempt: Response interrupted:
+  terminated
+
+
+
+
+
+
+
+
+    Ready · ally
+ ╭────────────────────────────────────────────────────────────────────────────╮
+ │ > Type a message...                                                        │
+ ╰────────────────────────────────────────────────────────────────────────────╯
+  Auto → Manual · shift+tab
+  No local decision model found. Configure reviewer_model and reviewer_endpoin…
+  ux-fuzz:latest

@@ -204,12 +204,12 @@ function extractSubtext(toolCall: ToolCallState, toolName: string, isAgentTool: 
   return subtext;
 }
 
-/** Physical prompt-preview rows shared with the live-region height budget. */
+/** Physical prompt-preview rows, bounded while an agent is active. */
 export function agentPreviewLines(toolCall: ToolCallTreeNode, width: number, level = 0): string[] {
   if (!isAgentDelegationTool(toolCall.toolName)) return [];
   const subtext = extractSubtext(toolCall, toolCall.toolName, true);
   if (!subtext) return [];
-  const running = toolCall.status === 'pending' || toolCall.status === 'executing';
+  const running = toolCall.status === 'pending' || toolCall.status === 'validating' || toolCall.status === 'executing';
   const lines = subtext.split('\n');
   const limit = running && toolCall.expanded === true && !(toolCall.children?.length) ? 5 : 1;
   return lines.slice(0, limit).map((line, index) => truncateAnsiToWidth(
@@ -251,7 +251,7 @@ const ToolCallDisplayComponent: React.FC<ToolCallDisplayProps> = ({
   onToggle,
 }) => {
   const contentWidth = useContentWidth();
-  const isRunning = toolCall.status === 'executing' || toolCall.status === 'pending';
+  const isRunning = toolCall.status === 'executing' || toolCall.status === 'pending' || toolCall.status === 'validating';
   const permissionAudit = permissionDecisionText(toolCall.permissionDecision);
   const visibility = resolveToolVisibility(toolCall, config);
 
@@ -398,7 +398,7 @@ const ToolCallDisplayComponent: React.FC<ToolCallDisplayProps> = ({
         </Box>
       )}
 
-      {/* Prompt previews use physical rows; the live-region budget shares this projection. */}
+      {/* Prompt previews use bounded physical rows. */}
       {isAgentDelegation && agentPreviewLines(toolCall, width ?? contentWidth, level).map((line, index) => (
         <Box key={index} flexShrink={0}>
           <Text>{indent}    </Text>

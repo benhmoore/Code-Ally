@@ -1,0 +1,11 @@
+  ────────────────────────────────────
+  Plan ready for review
+  ux-fixture-plan.md
+
+  # Fixture plan
+  Lines 1–1/6 · PgUp/PgDn inspect
+  > Approve
+    Approve + compact context
+    Provide feedback...
+
+  ↑↓ move · enter confirm · esc cancel

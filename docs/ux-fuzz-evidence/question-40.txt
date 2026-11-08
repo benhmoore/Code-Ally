@@ -1,0 +1,11 @@
+  ◟ Awaiting input · 0s · esc interrupt
+  ────────────────────────────────────
+  ( o)>  Fixture text
+
+  What fixture label should I use?
+
+
+
+
+
+  enter next · tab move · esc cancel

@@ -14,7 +14,7 @@ import { SelectionIndicator } from './SelectionIndicator.js';
 import { Clickable } from './Clickable.js';
 import { KeyboardHintFooter } from './KeyboardHintFooter.js';
 import { UI_COLORS } from '../constants/colors.js';
-import { formatDiffStats, truncatePath } from '../utils/formatters.js';
+import { formatDiffStats } from '../utils/formatters.js';
 import { formatRelativeTime } from '../utils/timeUtils.js';
 import { InteractiveSurface } from './InteractiveSurface.js';
 import { useTerminalRows } from '../hooks/useTerminalRows.js';
@@ -50,7 +50,7 @@ export const UndoFileList: React.FC<UndoFileListProps> = ({
   const window = centeredWindow(fileList, selectedIndex, visibleCount);
 
   return (
-    <InteractiveSurface title="Undo operations" tone={UI_COLORS.PRIMARY} meta={`${fileList.length}`} footer={<KeyboardHintFooter action="select" />}>
+    <InteractiveSurface scrollable title="Undo operations" tone={UI_COLORS.PRIMARY} meta={`${fileList.length}`} footer={<KeyboardHintFooter action="select" />}>
       {window.above > 0 && <Text dimColor>  ↑ {window.above} more</Text>}
       {fileList.length > 0 ? (
         <Box flexDirection="column">
@@ -59,7 +59,7 @@ export const UndoFileList: React.FC<UndoFileListProps> = ({
             const isSelected = actualIndex === selectedIndex;
             const diffStats = formatDiffStats(fileEntry.stats);
             const timestamp = formatRelativeTime(fileEntry.timestamp);
-            const filePath = truncatePath(fileEntry.file_path);
+            const filePath = fileEntry.file_path;
 
             return (
               <Clickable key={fileEntry.file_path} flexDirection="column" onPress={onOptionPress && (() => onOptionPress(actualIndex))}>

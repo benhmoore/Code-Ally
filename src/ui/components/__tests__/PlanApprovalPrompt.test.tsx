@@ -41,3 +41,22 @@ it('allows the complete plan to be reviewed, including wrapped lines beyond the 
     expect(stdout.frames.at(-1)).toContain('Step 1:');
   } finally { instance.unmount(); }
 });
+
+it('keeps a long plan path, title and all approval controls within a 40 by 12 terminal', async () => {
+  const stdout = new Stdout();
+  stdout.columns = 40;
+  stdout.rows = 12;
+  const stdin = new Stdin();
+  const instance = render(<PlanApprovalPrompt request={{ planFilePath: `/tmp/${'long-directory/'.repeat(12)}${'long-plan-name-'.repeat(8)}.md`, planContent: '# Fixture plan\n\nStep one\nStep two' }} selectedIndex={0} feedbackText="" onFeedbackTextChange={() => {}} cursorPosition={0} onCursorChange={() => {}} />, { stdout: stdout as unknown as NodeJS.WriteStream, stdin: stdin as unknown as NodeJS.ReadStream, debug: true, exitOnCtrlC: false, patchConsole: false });
+  try {
+    await settle();
+    const frame = stdout.frames.at(-1)!.replace(/\x1b\[[0-9;?]*[A-Za-z]/g, '');
+    expect(frame).toContain('Plan ready for review');
+    expect(frame).toContain('# Fixture plan');
+    expect(frame).toContain('Approve + compact context');
+    expect(frame).toContain('Provide feedback...');
+    expect(frame).toContain('esc cancel');
+    expect(frame.trimEnd().split('\n').length).toBeLessThanOrEqual(12);
+    expect(frame).not.toContain('long-directory');
+  } finally { instance.unmount(); }
+});

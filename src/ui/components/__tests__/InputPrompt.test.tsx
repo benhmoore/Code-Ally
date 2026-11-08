@@ -29,6 +29,26 @@ class FakeStdin extends PassThrough {
 const stripAnsi = (value: string): string => value.replace(/\x1b\[[0-9;?]*[A-Za-z]/g, '');
 const settle = () => new Promise(resolve => setTimeout(resolve, 20));
 
+test('Escape cancels quit confirmation before another Ctrl+C', async () => {
+  const stdout = new FakeStdout();
+  const stdin = new FakeStdin();
+  const changed = vi.fn();
+  const mounted = render(<InputPrompt onSubmit={vi.fn()} onExitConfirmationChange={changed} />, {
+    stdout: stdout as unknown as NodeJS.WriteStream,
+    stdin: stdin as unknown as NodeJS.ReadStream,
+    debug: true, patchConsole: false, exitOnCtrlC: false,
+  });
+  try {
+    await settle();
+    stdin.write('\x03');
+    await vi.waitFor(() => expect(changed).toHaveBeenLastCalledWith(true));
+    stdin.write('\x1b');
+    await vi.waitFor(() => expect(changed).toHaveBeenLastCalledWith(false));
+    stdin.write('\x03');
+    await vi.waitFor(() => expect(changed).toHaveBeenLastCalledWith(true));
+  } finally { mounted.unmount(); }
+});
+
 const ControlledPrompt: React.FC = () => {
   const [draft, setDraft] = useState(EMPTY_DRAFT);
   return <InputPrompt onSubmit={() => {}} draft={draft} onDraftChange={setDraft} />;

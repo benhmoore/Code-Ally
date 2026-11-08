@@ -1,0 +1,11 @@
+ ( o)> Ally v0.3.0 · ux-fuzz:latest
+ /private/tmp/ally-ux-config/work
+
+
+
+    Ready · ally
+ ╭────────────────────────────────────╮
+ │ > Type a message...                │
+ ╰────────────────────────────────────╯
+  Manual · shift+tab
+  ux-fuzz:latest

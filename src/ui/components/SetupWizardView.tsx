@@ -453,7 +453,7 @@ export const SetupWizardView: React.FC<Props> = ({ onComplete, onSkip }) => {
               { key: 'ctrl+c', label: 'leave' },
             ];
   return (
-    <InteractiveSurface
+    <InteractiveSurface scrollable
       title="Setup"
       meta={titles[step]}
       footer={

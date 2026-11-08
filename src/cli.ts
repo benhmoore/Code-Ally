@@ -8,6 +8,9 @@ import { PermissionPolicyService } from './services/PermissionPolicyService.js';
  */
 
 import { formatConfigValue } from './config/metadata.js';
+import { DEFAULT_CONFIG } from './config/defaults.js';
+import { IntegrationStore } from './services/IntegrationStore.js';
+import { isSearchConfigField, readSearchConfiguration, updateSearchConfiguration, updateSearchConfigurationFromString } from './services/SearchConfiguration.js';
 import React from 'react';
 import { render } from 'ink';
 import readline from 'readline';
@@ -246,6 +249,15 @@ async function handleConfigCommands(
   options: CLIOptions,
   configManager: ConfigManager
 ): Promise<boolean> {
+  let searchStore: IntegrationStore | undefined;
+  const getSearchStore = async () => {
+    if (!searchStore) {
+      searchStore = new IntegrationStore();
+      await searchStore.initialize();
+    }
+    return searchStore;
+  };
+
   // --init starts the normal UI and requests the same wizard as /init.
   if (options.init) {
     return false;
@@ -274,11 +286,17 @@ async function handleConfigCommands(
         process.exit(1);
       }
 
-      const value = configManager.getDisplayValue(field as any);
+      let value = configManager.getDisplayValue(field as any);
+      if (isSearchConfigField(field)) {
+        const search = await readSearchConfiguration(await getSearchStore());
+        value = field === 'search_api_key' && search[field] ? '[REDACTED]' : search[field];
+      }
       console.log(`\n${field}: ${JSON.stringify(value, null, 2)}\n`);
     } else {
       // Show entire config
-      console.log('\n' + JSON.stringify(configManager.getRedactedConfig(), null, 2) + '\n');
+      const search = await readSearchConfiguration(await getSearchStore());
+      console.log('\n' + JSON.stringify({ ...configManager.getRedactedConfig(), ...search,
+        search_api_key: search.search_api_key ? '[REDACTED]' : null }, null, 2) + '\n');
     }
 
     return true;
@@ -298,7 +316,10 @@ async function handleConfigCommands(
     }
 
     try {
-      const result = await configManager.setFromString(kvInput);
+      const parsed = configManager.parseKeyValue(kvInput);
+      const result = parsed && isSearchConfigField(parsed.key)
+        ? await updateSearchConfigurationFromString(await getSearchStore(), parsed.key, parsed.valueString)
+        : await configManager.setFromString(kvInput);
       console.log(`\n✓ Configuration updated: ${result.key}`);
       console.log(`  Old value: ${formatConfigValue(result.key as keyof import('./types/index.js').Config, result.oldValue)}`);
       console.log(`  New value: ${formatConfigValue(result.key as keyof import('./types/index.js').Config, result.newValue)}\n`);
@@ -328,7 +349,9 @@ async function handleConfigCommands(
       }
 
       try {
-        const result = await configManager.resetField(field as any);
+        const result = isSearchConfigField(field)
+          ? await updateSearchConfiguration(await getSearchStore(), field, DEFAULT_CONFIG[field])
+          : await configManager.resetField(field as any);
         console.log(`\n✓ Reset ${result.key} to default`);
         console.log(`  Old value: ${formatConfigValue(result.key as keyof import('./types/index.js').Config, result.oldValue)}`);
         console.log(`  New value: ${formatConfigValue(result.key as keyof import('./types/index.js').Config, result.newValue)}\n`);
@@ -345,6 +368,7 @@ async function handleConfigCommands(
         console.log('\nConfiguration is already at default values.\n');
       } else {
         console.log(`\n✓ Configuration reset to defaults (${changedKeys.length} settings changed)\n`);
+        console.log('Search integration settings are retained; reset search_provider or search_api_key by name.');
       }
     }
 

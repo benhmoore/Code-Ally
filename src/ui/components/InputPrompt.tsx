@@ -575,6 +575,12 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
   );
 
   const handlePromptEscape = () => {
+    if (isWaitingForExitConfirmation) {
+      if (exitConfirmationTimerRef.current) clearTimeout(exitConfirmationTimerRef.current);
+      exitConfirmationTimerRef.current = null;
+      setIsWaitingForExitConfirmation(false);
+      return;
+    }
     // Dismissal is local and non-destructive. It never interrupts a running
     // agent on the same keypress.
     if (showCompletions) {

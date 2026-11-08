@@ -167,3 +167,25 @@ describe('command background and prompt submission', () => {
     expect(submit).toHaveBeenCalledWith('next instruction',expect.objectContaining({mode:'follow_up',execute:expect.any(Function)}));
   });
 });
+
+
+it('executes credential assignments unchanged while redacting the submitted command echo', async () => {
+  const input = '/config set api_key=UX-FAKE-CANARY=tail';
+  const agent = { getInstanceId: () => 'main', getMessages: () => [] } as any;
+  const stream = new ActivityStream(); const addMessage = vi.fn();
+  const handleCommand = vi.fn(async () => ({ handled: true, response: `Saved securely: ${input}` }));
+  let completion: Promise<void> | undefined;
+  const actions = { addMessage } as unknown as AppActions;
+  function Harness() {
+    const { handleInput } = useInputHandlers({ handleCommand } as any,
+      { id: 'main', kind: 'primary', agent, activityStream: stream, isAvailable: () => true }, actions);
+    useEffect(() => { completion = handleInput(input); }, [handleInput]);
+    return null;
+  }
+  mounted.push(render(<Harness />, { stdout: new FakeStdout() as unknown as NodeJS.WriteStream,
+    debug: true, exitOnCtrlC: false, patchConsole: false }));
+  await new Promise(resolve => setTimeout(resolve, 0)); await completion;
+  expect(handleCommand).toHaveBeenCalledWith(input, [], expect.anything());
+  expect(addMessage).toHaveBeenCalledWith({ role: 'user', content: '/config set api_key=[REDACTED]' });
+  expect(JSON.stringify(addMessage.mock.calls)).not.toContain('UX-FAKE-CANARY');
+});

@@ -323,8 +323,9 @@ export const AgentWizardView: React.FC<AgentWizardViewProps> = ({
 
   // Handle keyboard input
   useInput((input, key) => {
-    // ESC - always cancel
-    if (key.escape) {
+    // The active editor owns Escape; navigation and non-editor steps own it here.
+    if (key.eventType === 'release') return;
+    if (key.escape && (!isTextInputStep || inNavigationMode)) {
       onCancel();
       return;
     }
@@ -365,32 +366,43 @@ export const AgentWizardView: React.FC<AgentWizardViewProps> = ({
       }
       // Any letter/number - go back to typing mode and process the key
       if (input && !key.ctrl && !key.meta) {
+        // TextInput was inactive when this event began, so it cannot consume
+        // the chunk that returns focus to the editor. Apply that chunk once.
+        const insert = (value: string, cursor: number, change: (value: string) => void, move: (cursor: number) => void) => {
+          const text = input.replace(/\r\n?/g, '\n').replace(/\t/g, '    ').replace(/[\x00-\x08\x0b-\x1f\x7f]/g, '');
+          change(value.slice(0, cursor) + text + value.slice(cursor));
+          move(cursor + text.length);
+        };
+        if (step === ConfigStep.DESCRIPTION) insert(descriptionBuffer, descriptionCursor, setDescriptionBuffer, setDescriptionCursor);
+        else if (step === ConfigStep.CUSTOMIZE_PROMPT) insert(promptBuffer, promptCursor, setPromptBuffer, setPromptCursor);
+        else if (step === ConfigStep.CUSTOMIZE_DESCRIPTION) insert(descRefinementBuffer, descRefinementCursor, setDescRefinementBuffer, setDescRefinementCursor);
+        else if (step === ConfigStep.CUSTOMIZE_NAME) insert(nameBuffer, nameCursor, setNameBuffer, setNameCursor);
         setInNavigationMode(false);
-        // Fall through to handle the input
+        return;
       }
     }
 
     if (step === ConfigStep.DESCRIPTION && !inNavigationMode) {
-      if (key.return || key.downArrow) {
-        // Enter or Down arrow switches to navigation mode
+      if (key.downArrow) {
+        // The editor owns Enter; Down switches to navigation mode.
         setInNavigationMode(true);
         setActionIndex(0); // Default to Continue
       }
     } else if (step === ConfigStep.CUSTOMIZE_PROMPT && !inNavigationMode) {
-      if (key.return || key.tab) {
-        // Enter or Tab switches to navigation mode
+      if (key.tab) {
+        // The editor owns Enter; Tab switches to navigation mode.
         setInNavigationMode(true);
         setActionIndex(0);
       }
     } else if (step === ConfigStep.CUSTOMIZE_DESCRIPTION && !inNavigationMode) {
-      if (key.return || key.downArrow) {
-        // Enter or Down arrow switches to navigation mode
+      if (key.downArrow) {
+        // The editor owns Enter; Down switches to navigation mode.
         setInNavigationMode(true);
         setActionIndex(0);
       }
     } else if (step === ConfigStep.CUSTOMIZE_NAME && !inNavigationMode) {
-      if (key.return || key.downArrow) {
-        // Enter or Down arrow switches to navigation mode
+      if (key.downArrow) {
+        // The editor owns Enter; Down switches to navigation mode.
         setInNavigationMode(true);
         setActionIndex(0);
       }
@@ -513,13 +525,8 @@ export const AgentWizardView: React.FC<AgentWizardViewProps> = ({
   });
 
   return (
-    <InteractiveSurface>
+    <InteractiveSurface scrollable title="Create Agent" description={error ? <Text color={UI_COLORS.ERROR}>{error}</Text> : undefined} footer={<Text dimColor>{step === ConfigStep.TOOL_SELECTION_CUSTOM ? '↑↓ move · space toggle · enter confirm · esc cancel' : step === ConfigStep.CONFIRM ? '↑↓ move · enter create · esc cancel' : '↑↓ move · enter continue · esc cancel'}</Text>}>
         <Box flexDirection="column" width="100%">
-        <Box marginBottom={1}>
-          <Text color={UI_COLORS.TEXT_DEFAULT} bold>
-            Create Agent
-          </Text>
-        </Box>
 
         {step === ConfigStep.DESCRIPTION && (
           <Box flexDirection="column">
@@ -543,7 +550,7 @@ export const AgentWizardView: React.FC<AgentWizardViewProps> = ({
             {/* Always show navigation options */}
             <Box marginTop={1} flexDirection="column">
               {!inNavigationMode && (
-                <Text dimColor>Shift+Enter for newline • ↓ or Enter to navigate</Text>
+                <Text dimColor>Shift+Enter for newline • ↓ navigate • Enter continue</Text>
               )}
               {inNavigationMode && <Text dimColor>Select an option:</Text>}
               <Box marginTop={1} marginLeft={2} flexDirection="column">
@@ -566,12 +573,6 @@ export const AgentWizardView: React.FC<AgentWizardViewProps> = ({
                 </Box>
               )}
             </Box>
-
-            {error && (
-              <Box marginTop={1}>
-                <Text color={UI_COLORS.ERROR}>{error}</Text>
-              </Box>
-            )}
           </Box>
         )}
 
@@ -581,11 +582,6 @@ export const AgentWizardView: React.FC<AgentWizardViewProps> = ({
               <Text color={UI_COLORS.PRIMARY}>Generating agent configuration...</Text>
             </Box>
             <Text dimColor>Ally is creating name, description, and system prompt</Text>
-            {error && (
-              <Box marginTop={1}>
-                <Text color={UI_COLORS.ERROR}>{error}</Text>
-              </Box>
-            )}
           </Box>
         )}
 
@@ -611,7 +607,7 @@ export const AgentWizardView: React.FC<AgentWizardViewProps> = ({
             {/* Always show navigation options */}
             <Box marginTop={1} flexDirection="column">
               {!inNavigationMode && (
-                <Text dimColor>↑↓ to scroll, Shift+Enter for newline • Tab or Enter to navigate</Text>
+                <Text dimColor>↑↓ to scroll, Shift+Enter for newline • Tab navigate • Enter continue</Text>
               )}
               {inNavigationMode && <Text dimColor>Select an option:</Text>}
               <Box marginTop={1} marginLeft={2} flexDirection="column">
@@ -634,12 +630,6 @@ export const AgentWizardView: React.FC<AgentWizardViewProps> = ({
                 </Box>
               )}
             </Box>
-
-            {error && (
-              <Box marginTop={1}>
-                <Text color={UI_COLORS.ERROR}>{error}</Text>
-              </Box>
-            )}
           </Box>
         )}
 
@@ -665,7 +655,7 @@ export const AgentWizardView: React.FC<AgentWizardViewProps> = ({
             {/* Always show navigation options */}
             <Box marginTop={1} flexDirection="column">
               {!inNavigationMode && (
-                <Text dimColor>Brief description shown in listings • ↓ or Enter to navigate</Text>
+                <Text dimColor>Brief description shown in listings • ↓ navigate • Enter continue</Text>
               )}
               {inNavigationMode && <Text dimColor>Select an option:</Text>}
               <Box marginTop={1} marginLeft={2} flexDirection="column">
@@ -688,12 +678,6 @@ export const AgentWizardView: React.FC<AgentWizardViewProps> = ({
                 </Box>
               )}
             </Box>
-
-            {error && (
-              <Box marginTop={1}>
-                <Text color={UI_COLORS.ERROR}>{error}</Text>
-              </Box>
-            )}
           </Box>
         )}
 
@@ -719,7 +703,7 @@ export const AgentWizardView: React.FC<AgentWizardViewProps> = ({
             {/* Always show navigation options */}
             <Box marginTop={1} flexDirection="column">
               {!inNavigationMode && (
-                <Text dimColor>Use lowercase, numbers, hyphens (e.g., code-reviewer) • ↓ or Enter to navigate</Text>
+                <Text dimColor>Use lowercase, numbers, hyphens (e.g., code-reviewer) • ↓ navigate • Enter continue</Text>
               )}
               {inNavigationMode && <Text dimColor>Select an option:</Text>}
               <Box marginTop={1} marginLeft={2} flexDirection="column">
@@ -742,12 +726,6 @@ export const AgentWizardView: React.FC<AgentWizardViewProps> = ({
                 </Box>
               )}
             </Box>
-
-            {error && (
-              <Box marginTop={1}>
-                <Text color={UI_COLORS.ERROR}>{error}</Text>
-              </Box>
-            )}
           </Box>
         )}
 
@@ -782,11 +760,6 @@ export const AgentWizardView: React.FC<AgentWizardViewProps> = ({
                 <Text dimColor>↑↓ navigate • Enter select</Text>
               </Box>
             </Box>
-            {error && (
-              <Box marginTop={1}>
-                <Text color={UI_COLORS.ERROR}>{error}</Text>
-              </Box>
-            )}
           </Box>
         )}
 
@@ -816,11 +789,6 @@ export const AgentWizardView: React.FC<AgentWizardViewProps> = ({
             <Box marginTop={1}>
               <Text dimColor>↑↓ navigate • Enter select</Text>
             </Box>
-            {error && (
-              <Box marginTop={1}>
-                <Text color={UI_COLORS.ERROR}>{error}</Text>
-              </Box>
-            )}
           </Box>
         )}
 
@@ -830,11 +798,6 @@ export const AgentWizardView: React.FC<AgentWizardViewProps> = ({
             <Box marginTop={1}>
               <Text dimColor>Testing tool-calling support for {selectedModel}</Text>
             </Box>
-            {error && (
-              <Box marginTop={1}>
-                <Text color={UI_COLORS.ERROR}>{error}</Text>
-              </Box>
-            )}
           </Box>
         )}
 
@@ -965,10 +928,6 @@ export const AgentWizardView: React.FC<AgentWizardViewProps> = ({
           </Box>
         )}
 
-        {/* Footer */}
-        <Box marginTop={1} borderTop borderColor="gray" paddingTop={1}>
-          <Text dimColor>Esc cancel</Text>
-        </Box>
         </Box>
     </InteractiveSurface>
   );

@@ -32,6 +32,25 @@ describe('CommandHistory', () => {
     }
   });
 
+  it('omits credential assignments from append, import and loaded recall while preserving normal commands', async () => {
+    const sensitive = ['api_key', 'search_api_key', 'reviewer_api_key'].map(key => ({ command: `/config set ${key} = "UX-FAKE-CANARY=tail"`, timestamp: 1 }));
+    const normal = { command: '/config set context_size=131072', timestamp: 2 };
+    const history = new CommandHistory({ storagePath: historyPath });
+    for (const entry of sensitive) history.addCommand(entry.command);
+    history.addCommand(normal.command);
+    await history.save();
+    expect(history.getCommands()).toEqual([normal.command]);
+    expect(await fs.readFile(historyPath, 'utf8')).not.toContain('UX-FAKE-CANARY');
+    history.import(JSON.stringify([...sensitive, normal]));
+    await history.save();
+    expect(history.getCommands()).toEqual([normal.command]);
+    await fs.writeFile(historyPath, JSON.stringify([...sensitive, normal]));
+    const reloaded = new CommandHistory({ storagePath: historyPath });
+    await reloaded.load();
+    expect(reloaded.getCommands()).toEqual([normal.command]);
+    expect(await fs.readFile(historyPath, 'utf8')).not.toContain('UX-FAKE-CANARY');
+  });
+
   describe('initialization and loading', () => {
     it('should initialize with empty history', () => {
       const history = new CommandHistory({ storagePath: historyPath });
