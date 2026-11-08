@@ -30,6 +30,7 @@ export const CORE_TOOL_NAMES: readonly string[] = [
   'grep',
   'glob',
   'todo-write',
+  'send-message',
   // Sub-agent protocol tools: excluded at runtime for root agents, but never
   // deferred when present, since a delegated agent must be able to report.
   'complete-objective',

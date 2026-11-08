@@ -28,33 +28,83 @@ afterEach(() => {
 });
 
 describe('ConversationView terminal stability', () => {
-  test.each(['user', 'assistant'] as const)('committed %s messages retain full width beside a narrow live region', async role => {
+  test.each(['pending', 'executing'] as const)('three %s parallel agents retain headers before and after the first completion', async status => {
     const stdout = new FakeStdout();
-    stdout.columns = 120;
-    stdout.rows = 24;
-    const content = 'Review storage, restart, and concurrent identifiers without modifying any project files.';
-    const instance = render(
-      <Box flexDirection="column" width={120} padding={1}>
-        <Box width={118}>
-          <ConversationView
-            messages={[{ id: 'review-request', role, content }]}
-            activeToolCalls={[]}
-            compactionNotices={[]}
-            rewindNotices={[]}
-            statusMessages={[]}
-            staticRemountKey={0}
-            streamingContent="working"
-            config={{ show_thinking_in_chat: false }}
-          />
-        </Box>
-      </Box>,
-      { stdout: stdout as unknown as NodeJS.WriteStream, debug: true,
-        exitOnCtrlC: false, patchConsole: false },
+    stdout.rows = 30;
+    const calls: ToolCallState[] = ['explore', 'plan', 'task'].map((agent_type, index) => ({
+      id: `agent-${index}`,
+      toolName: 'agent',
+      arguments: { agent_type, task_prompt: ('Inspect the workspace carefully. '.repeat(12) + '\n').repeat(5) },
+      status,
+      startTime: Date.now(),
+    }));
+    const view = (activeToolCalls: ToolCallState[]) => (
+      <ConversationView
+        messages={[]}
+        activeToolCalls={activeToolCalls}
+        compactionNotices={[]}
+        rewindNotices={[]}
+        statusMessages={[]}
+        staticRemountKey={0}
+        isThinking
+        config={{ show_thinking_in_chat: false }}
+      />
     );
+    const instance = render(view(calls), {
+      stdout: stdout as unknown as NodeJS.WriteStream,
+      debug: true,
+      exitOnCtrlC: false,
+      patchConsole: false,
+    });
     mounted.push(instance);
     await waitForInk();
-    expect(stdout.frames.join('')).toContain(content);
+    const initial = stdout.frames.at(-1) ?? '';
+    expect(initial).toContain('Explore');
+    expect(initial).toContain('Plan');
+    expect(initial).toContain('Task');
+    instance.rerender(
+      view(
+        calls.map((call, index) =>
+          index === 0 ? { ...call, status: 'success', endTime: Date.now(), output: 'Done' } : call
+        )
+      )
+    );
+    await waitForInk();
+    const settled = stdout.frames.at(-1) ?? '';
+    expect(settled).toContain('Explore');
+    expect(settled).toContain('Plan');
+    expect(settled).toContain('Task');
   });
+
+  test.each(['user', 'assistant'] as const)(
+    'committed %s messages retain full width beside a narrow live region',
+    async role => {
+      const stdout = new FakeStdout();
+      stdout.columns = 120;
+      stdout.rows = 24;
+      const content = 'Review storage, restart, and concurrent identifiers without modifying any project files.';
+      const instance = render(
+        <Box flexDirection="column" width={120} padding={1}>
+          <Box width={118}>
+            <ConversationView
+              messages={[{ id: 'review-request', role, content }]}
+              activeToolCalls={[]}
+              compactionNotices={[]}
+              rewindNotices={[]}
+              statusMessages={[]}
+              staticRemountKey={0}
+              streamingContent="working"
+              config={{ show_thinking_in_chat: false }}
+            />
+          </Box>
+        </Box>,
+        { stdout: stdout as unknown as NodeJS.WriteStream, debug: true, exitOnCtrlC: false, patchConsole: false }
+      );
+      mounted.push(instance);
+      await waitForInk();
+      expect(stdout.frames.join('')).toContain(content);
+    }
+  );
 
   test('streaming updates do not clear and repaint committed scrollback', async () => {
     const messages: Message[] = Array.from({ length: 20 }, (_, index) => ({
@@ -121,7 +171,7 @@ describe('ConversationView terminal stability', () => {
         debug: true,
         exitOnCtrlC: false,
         patchConsole: false,
-      },
+      }
     );
     mounted.push(instance);
     await waitForInk();
@@ -143,15 +193,12 @@ describe('MessageDisplay thinking visibility', () => {
 
   test('shows only a collapsed thinking indicator when the setting is false', () => {
     const stdout = new FakeStdout();
-    const instance = render(
-      <MessageDisplay message={message} config={{ show_thinking_in_chat: false }} />,
-      {
-        stdout: stdout as unknown as NodeJS.WriteStream,
-        debug: true,
-        exitOnCtrlC: false,
-        patchConsole: false,
-      },
-    );
+    const instance = render(<MessageDisplay message={message} config={{ show_thinking_in_chat: false }} />, {
+      stdout: stdout as unknown as NodeJS.WriteStream,
+      debug: true,
+      exitOnCtrlC: false,
+      patchConsole: false,
+    });
     mounted.push(instance);
     const output = stdout.frames.join('');
     expect(output).toContain('Final answer');
@@ -161,15 +208,12 @@ describe('MessageDisplay thinking visibility', () => {
 
   test('shows thinking when explicitly enabled', () => {
     const stdout = new FakeStdout();
-    const instance = render(
-      <MessageDisplay message={message} config={{ show_thinking_in_chat: true }} />,
-      {
-        stdout: stdout as unknown as NodeJS.WriteStream,
-        debug: true,
-        exitOnCtrlC: false,
-        patchConsole: false,
-      },
-    );
+    const instance = render(<MessageDisplay message={message} config={{ show_thinking_in_chat: true }} />, {
+      stdout: stdout as unknown as NodeJS.WriteStream,
+      debug: true,
+      exitOnCtrlC: false,
+      patchConsole: false,
+    });
     mounted.push(instance);
     expect(stdout.frames.join('')).toContain('private reasoning content');
   });

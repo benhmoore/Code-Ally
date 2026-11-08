@@ -22,7 +22,7 @@ function makeTask(id: string, overrides: Partial<BackgroundAgentTask> = {}): Bac
     id,
     agentType: 'explore',
     taskPrompt: 'map the repo',
-    mode: 'background',
+    acceptingMessages: true,
     status: 'running',
     result: null,
     error: null,
@@ -34,8 +34,6 @@ function makeTask(id: string, overrides: Partial<BackgroundAgentTask> = {}): Bac
     subAgent: fakeAgent(),
     pooledAgent: null,
     callId: `call-${id}`,
-    detachPromise: Promise.resolve(),
-    detach: () => {},
     ...overrides,
   };
 }
@@ -123,39 +121,30 @@ describe('BackgroundAgentManager', () => {
     expect(manager.cancelTask('nope')).toBe(false);
   });
 
-  it('createTask wires a detach that flips foreground → background', () => {
-    const task = manager.createTask({
-      agentType: 'explore', taskPrompt: 'x', description: 'Map handlers', mode: 'foreground',
-      subAgent: fakeAgent(), pooledAgent: null, callId: 'c1',
-    });
-    expect(task.mode).toBe('foreground');
+  it('creates asynchronous tasks with a message admission barrier', () => {
+    const task = manager.createTask({ agentType: 'explore', taskPrompt: 'x', description: 'Map handlers', subAgent: fakeAgent(), pooledAgent: null, callId: 'c1' });
     expect(task.description).toBe('Map handlers');
-    task.detach();
-    expect(task.mode).toBe('background');
+    expect(task.acceptingMessages).toBe(true);
+    expect(task).not.toHaveProperty('mode');
+    expect(task).not.toHaveProperty('detach');
   });
 
-  it('foreground runs do not count against the background cap', () => {
-    manager.addTask(makeTask('f1', { mode: 'foreground' }));
-    manager.addTask(makeTask('f2', { mode: 'foreground' }));
-    manager.addTask(makeTask('f3', { mode: 'foreground' }));
-    manager.addTask(makeTask('f4', { mode: 'foreground' }));
-    // 4 foreground + 1 background still allowed (cap is on background only).
-    expect(() => manager.addTask(makeTask('b1', { mode: 'background' }))).not.toThrow();
-    expect(manager.getBackgroundRunningCount()).toBe(1);
+  it('delivers only the requesting owner results and acknowledges each once', () => {
+    manager.addTask(makeTask('root-task', { ownerId: 'root', status: 'done' }));
+    manager.addTask(makeTask('child-task', { ownerId: 'child', status: 'done' }));
+    expect(manager.drainCompletedResults('root').map(task => task.id)).toEqual(['root-task']);
+    expect(manager.getTask('child-task')?.consumed).toBe(false);
+    expect(manager.drainCompletedResults('child').map(task => task.id)).toEqual(['child-task']);
+    expect(manager.drainCompletedResults('root')).toEqual([]);
   });
 
-  it('requestDetachAll backgrounds running foreground runs only', () => {
-    const fg = manager.createTask({ agentType: 'explore', taskPrompt: 'x', mode: 'foreground', subAgent: fakeAgent(), pooledAgent: null, callId: 'c1' });
-    manager.addTask(fg);
-    manager.addTask(makeTask('b1', { mode: 'background' }));
-    const n = manager.requestDetachAll();
-    expect(n).toBe(1);
-    expect(fg.mode).toBe('background');
-  });
-
-  it('does not drain foreground results (only background)', () => {
-    manager.addTask(makeTask('f1', { mode: 'foreground', status: 'done', endTime: 2_000, result: 'fg' }));
-    expect(manager.drainCompletedResults()).toHaveLength(0);
+  it('scopes model reminders to the owning parent without leaking sibling tasks', () => {
+    manager.addTask(makeTask('root-child', { ownerId: 'root' }));
+    manager.addTask(makeTask('nested-child', { ownerId: 'child' }));
+    expect(manager.getStatusReminders('root').join(' ')).toContain('root-child');
+    expect(manager.getStatusReminders('root').join(' ')).not.toContain('nested-child');
+    expect(manager.getStatusReminders('child').join(' ')).not.toContain('root-child');
+    expect(manager.getStatusReminders()).toHaveLength(2);
   });
 
   it('shutdown interrupts running agents and clears tracking', async () => {

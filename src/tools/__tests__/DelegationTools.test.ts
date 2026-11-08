@@ -12,6 +12,7 @@
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { ExploreTool } from '@tools/ExploreTool.js';
+import { BackgroundAgentManager } from '@services/BackgroundAgentManager.js';
 import { ActivityStream } from '@services/ActivityStream.js';
 import { ServiceRegistry } from '@services/ServiceRegistry.js';
 
@@ -76,13 +77,13 @@ describe('BaseDelegationTool (via ExploreTool)', () => {
     registry.registerInstance('agent_pool', {
       acquire: vi.fn().mockResolvedValue(makePooledAgent('Exploration found the relevant handler in src/foo.ts.')),
     });
-    // Intentionally NOT registering 'background_agent_manager' -> base uses its
-    // synchronous foreground path, which is what we want to characterize.
+    registry.registerInstance('background_agent_manager', new BackgroundAgentManager());
 
     tool = new ExploreTool(activityStream);
   });
 
   afterEach(async () => {
+    await registry.get('background_agent_manager')?.shutdown();
     await registry.shutdown();
   });
 
@@ -121,20 +122,24 @@ describe('BaseDelegationTool (via ExploreTool)', () => {
     });
   });
 
-  describe('delegation (base.executeDelegation foreground path)', () => {
+  describe('asynchronous delegation', () => {
     it('runs the agent and returns a formatted success result', async () => {
       const result = await tool.execute({ task_prompt: 'Find the error handler', thoroughness: 'quick' }, 'call-1');
 
       expect(result.success).toBe(true);
       expect(result.agent_used).toBe('explore');
       expect(typeof result.duration_seconds).toBe('number');
-      expect(result.content).toContain('Exploration found the relevant handler');
+      expect(result.content).toContain('Running concurrently');
+      const task = registry.get('background_agent_manager')!.listTasks()[0]!;
+      await task.promise;
+      expect(task.result).toContain('Exploration found the relevant handler');
       // Pooled agents always surface their id for reuse.
       expect(result.agent_id).toBe('explore-agent-id');
       const pool = registry.get('agent_pool') as any;
       const resolvedClient = pool.acquire.mock.calls[0][2];
       expect(resolvedClient).toBeDefined();
       expect(resolvedClient.modelName).toBe('test-model');
+      expect(pool.acquire.mock.calls[0][0].allowedTools).toContain('send-message');
     });
 
     it('emits AGENT_START and AGENT_END events', async () => {
@@ -143,6 +148,7 @@ describe('BaseDelegationTool (via ExploreTool)', () => {
 
       await tool.execute({ task_prompt: 'Find the error handler' }, 'call-1');
 
+      await registry.get('background_agent_manager')!.listTasks()[0]!.promise;
       expect(events.some((e) => e.type === 'agent_start')).toBe(true);
       expect(events.some((e) => e.type === 'agent_end')).toBe(true);
     });
@@ -165,7 +171,8 @@ describe('BaseDelegationTool (via ExploreTool)', () => {
 
       const result = await tool.execute({ task_prompt: 'Find nothing' }, 'call-1');
       expect(result.success).toBe(true);
-      expect(result.content).toContain('Exploration completed but no summary was provided');
+      await registry.get('background_agent_manager')!.listTasks()[0]!.promise;
+      expect(registry.get('background_agent_manager')!.listTasks()[0]!.result).toContain('Exploration completed but no summary was provided');
     });
   });
 

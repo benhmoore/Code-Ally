@@ -159,7 +159,7 @@ export class ToolOrchestrator {
 
   /**
    * Update the parent call ID for nested tool calls
-   * Used by agent-ask to temporarily reparent tool calls under the current call
+   * Used to attach persistent-agent follow-ups to their current invocation
    *
    * @param parentCallId - New parent call ID
    */
@@ -264,17 +264,18 @@ export class ToolOrchestrator {
   private injectRuntimeStatusReminder(): void {
     const registry = ServiceRegistry.getInstance();
     const reminderParts: string[] = [];
+    const ownerId = this.agent.getInstanceId?.();
     const processManager = registry.get('bash_process_manager');
-    if (processManager) reminderParts.push(...processManager.getStatusReminders());
+    if (processManager && ownerId) reminderParts.push(...processManager.getStatusReminders(ownerId));
 
     // Completed agent results are delivered durably by Agent immediately before
     // the next model request. This batch hook only contributes volatile status;
     // injecting durable evidence here would split assistant tool calls from
     // their required tool results.
-    if (!this.config.isSpecializedAgent) {
+    {
       const bgManager = registry.get('background_agent_manager');
-      if (bgManager) {
-        reminderParts.push(...bgManager.getStatusReminders());
+      if (bgManager && ownerId) {
+        reminderParts.push(...bgManager.getStatusReminders(ownerId));
       }
     }
 

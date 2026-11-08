@@ -125,7 +125,8 @@ describe('BashTool', () => {
 
       expect(properties.command?.description).toContain('stdin is closed');
       expect(properties.command?.description).not.toContain('idle');
-      expect(properties.timeout?.description).toContain('Overall deadline');
+      expect(properties.timeout?.description).toContain('Foreground wait');
+      expect(properties.timeout?.description).toContain('same command continues');
       expect(properties.timeout?.description).toContain('default 120');
     });
 

@@ -36,7 +36,7 @@ export function getRuntimeToolEligibilityExclusions(context: RuntimeToolSelectio
   const tasks = context.backgroundTasks ?? [];
 
   if (!context.planModeActive) exclusions.push('write-plan', 'exit-plan-mode');
-  if (!context.hasPersistentAgent) exclusions.push('agent-ask');
+  if (!context.hasPersistentAgent) exclusions.push('send-message');
   if (!context.hasToolResults) exclusions.push('cleanup-call');
   if (!context.hasCheckpoint) exclusions.push('read-checkpoint', 'read-history');
 

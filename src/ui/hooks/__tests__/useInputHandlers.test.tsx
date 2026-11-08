@@ -147,3 +147,23 @@ describe('useInputHandlers interjection routing', () => {
     }));
   });
 });
+
+describe('command background and prompt submission', () => {
+  it('detaches only selected conversation commands before normal session admission', async () => {
+    const order: string[] = [];
+    const backgroundForeground = vi.fn((owner: string) => {order.push(owner); return 1;});
+    const submit = vi.fn(async (text: string) => {order.push(text); return {kind:'completed'};});
+    const childAgent = {getInstanceId:()=> 'selected-child-owner', getSession:()=>({submit})} as any;
+    ServiceRegistry.getInstance().registerInstance('bash_process_manager',{backgroundForeground} as any);
+    let handlers!: ReturnType<typeof useInputHandlers>;
+    function Harness() {
+      handlers=useInputHandlers(null,{id:'child',kind:'child',agent:childAgent,activityStream:new ActivityStream('child'),isAvailable:()=>true},{addMessage:vi.fn()} as any);
+      return null;
+    }
+    mounted.push(render(<Harness/>,{stdout:new FakeStdout() as unknown as NodeJS.WriteStream,debug:true,exitOnCtrlC:false,patchConsole:false}));
+    await vi.waitFor(()=>expect(handlers).toBeDefined());
+    await handlers.handleBackgroundAndSubmit('next instruction');
+    expect(order).toEqual(['selected-child-owner','next instruction']);
+    expect(submit).toHaveBeenCalledWith('next instruction',expect.objectContaining({mode:'follow_up',execute:expect.any(Function)}));
+  });
+});

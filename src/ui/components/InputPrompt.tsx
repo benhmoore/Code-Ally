@@ -45,6 +45,8 @@ interface InputPromptProps {
   /** Callback when user interjections (submits mid-response) */
   onInterjection?: (message: string) => void;
   onFollowUp?: InputPromptProps['onSubmit'];
+  /** Background the current shell command and submit this prompt normally. */
+  onBackgroundAndSubmit?: InputPromptProps['onSubmit'];
   onRecallFollowUp?: () => string | undefined;
   conversationReadOnly?: boolean;
   /** Whether input is currently active/enabled */
@@ -69,8 +71,8 @@ interface InputPromptProps {
   onExitFleet?: () => void;
   /** Exit an entered background agent back to the main conversation */
   onExitAgent?: () => void;
-  /** Background all running foreground agents (Ctrl+B) */
-  onBackgroundAgents?: () => void;
+  /** Background running foreground shell commands (Ctrl+B) */
+  onBackgroundCommand?: () => void;
   /** Open or close every tool call in the live region (Ctrl+O) */
   onToggleToolOutput?: () => void;
   /** Kill the selected fleet agent (index over [main, ...agents]; excludes main) */
@@ -118,6 +120,7 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
   prominent = false,
   onInterjection,
   onFollowUp,
+  onBackgroundAndSubmit,
   onRecallFollowUp,
   conversationReadOnly = false,
   isActive = true,
@@ -130,7 +133,7 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
   onEnterAgent,
   onExitFleet,
   onExitAgent,
-  onBackgroundAgents,
+  onBackgroundCommand,
   onToggleToolOutput,
   onKillAgent,
   placeholder = 'Type a message...',
@@ -446,7 +449,7 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
     dismissCompletions(false);
   };
 
-  const handleSubmit = (inputValue = buffer, followUp = false) => {
+  const handleSubmit = (inputValue = buffer, followUp = false, background = false) => {
     if (conversationReadOnly) return;
     const trimmed = inputValue.trim();
     if (!trimmed) return;
@@ -481,7 +484,7 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
       ...(extractedFiles.length > 0 && { files: extractedFiles }),
       ...(extractedImages.length > 0 && { images: extractedImages }),
     };
-    (followUp && onFollowUp ? onFollowUp : onSubmit)(trimmed, Object.keys(mentions).length > 0 ? mentions : undefined);
+    (background && onBackgroundAndSubmit ? onBackgroundAndSubmit : followUp && onFollowUp ? onFollowUp : onSubmit)(trimmed, Object.keys(mentions).length > 0 ? mentions : undefined);
   };
 
   const textInputActive = isActive && !fleetFocused;
@@ -641,6 +644,14 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
    * TextInput will not also move its cursor or mutate its buffer for this key.
    */
   const handleEditorKeyCapture = (_input: string, key: Key): boolean => {
+    if (key.ctrl && _input === 'b' && onBackgroundCommand) {
+      onBackgroundCommand();
+      return true;
+    }
+    if (key.ctrl && key.return && onBackgroundAndSubmit) {
+      handleSubmit(bufferRef.current, false, true);
+      return true;
+    }
     // Ink 4 strips the ESC prefix from Alt+Enter but leaves return=false.
     if ((key.meta && key.return) || (_input === '\r' && !key.return)) {
       if (onFollowUp) handleSubmit(bufferRef.current, true);
@@ -722,6 +733,11 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
     (input, key) => {
       if (!isActive || key.eventType === 'release') return;
 
+      if (fleetFocused && key.ctrl && input === 'b') {
+        onBackgroundCommand?.();
+        return;
+      }
+
       // ===== Background Agent Fleet Navigation =====
       // A focus region (NOT a modal) that coexists with the live prompt.
       if (fleetFocused && onFleetNavigate) {
@@ -752,12 +768,6 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
           return;
         }
         return; // block other keys while the fleet has focus
-      }
-
-      // ===== Ctrl+B: background all running foreground agents =====
-      if (key.ctrl && input === 'b' && onBackgroundAgents) {
-        onBackgroundAgents();
-        return;
       }
 
       // ===== Ctrl+O: open or close the tool calls in the live region =====

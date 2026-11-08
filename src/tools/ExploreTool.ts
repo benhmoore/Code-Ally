@@ -18,7 +18,7 @@ import { ActivityStream } from '../services/ActivityStream.js';
 import { AGENT_TYPES, THOROUGHNESS_LEVELS, VALID_THOROUGHNESS } from '../config/constants.js';
 import type { Config } from '../types/index.js';
 
-const EXPLORATION_TOOLS = ['read', 'glob', 'grep', 'ls', 'tree', 'write-temp'];
+const EXPLORATION_TOOLS = ['read', 'glob', 'grep', 'ls', 'tree', 'write-temp', 'send-message'];
 
 /**
  * Generate exploration base prompt with temp directory

@@ -30,13 +30,6 @@ const isOwnCall = (call: ToolCallState, parentId?: string) => !call.parentId || 
 
 export function foregroundWorkLabel(toolCalls: ToolCallState[], parentId?: string): string | undefined {
   const executing = toolCalls.filter(call => isOwnCall(call, parentId) && call.status === 'executing');
-  if (
-    executing.some(
-      call =>
-        call.toolName === 'agent-ask' || (call.toolName === 'agent' && call.arguments?.run_in_background === false)
-    )
-  )
-    return 'Waiting for agent';
   const wait = executing.find(call => call.toolName === 'wait');
   if (wait) {
     const ids: unknown = wait.arguments?.task_ids;

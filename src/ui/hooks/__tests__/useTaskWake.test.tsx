@@ -28,7 +28,7 @@ afterEach(() => {
 function setup() {
   const task = {
     id: 'agent-review', agentType: 'review', mode: 'background', status: 'done',
-    startTime: 1, endTime: 2, result: 'important findings', error: null, consumed: false,
+    startTime: 1, endTime: 2, result: 'important findings', error: null, consumed: false, ownerId: undefined as string | undefined,
   };
   const manager = {
     listTasks: () => [task],
@@ -67,6 +67,25 @@ function setup() {
 }
 
 describe('useTaskWake', () => {
+  it('wakes on the shell completion event carrying shellId', async () => {
+    const { activityStream, submit, task } = setup();
+    activityStream.emit({ id: 'shell-complete', type: ActivityEventType.BACKGROUND_PROCESS_EXIT,
+      timestamp: Date.now(), data: { shellId: task.id } });
+    await vi.waitFor(() => expect(submit).toHaveBeenCalledOnce());
+    expect(task.consumed).toBe(true);
+  });
+
+  it('does not deliver or acknowledge another agent\'s watched completion', async () => {
+    const { activityStream, manager, submit, task } = setup();
+    task.ownerId = 'nested-owner';
+    activityStream.emit({ id: 'complete', type: ActivityEventType.AGENT_BACKGROUND_COMPLETE,
+      timestamp: Date.now(), data: { taskId: task.id } });
+    await new Promise(resolve => setTimeout(resolve, 100));
+    expect(submit).not.toHaveBeenCalled();
+    expect(manager.acknowledgeCompletedResults).not.toHaveBeenCalled();
+    expect(task.consumed).toBe(false);
+  });
+
   it('coalesces duplicate completion events and acknowledges actual delivery', async () => {
     const { activityStream, manager, submit, task, taskRegistry } = setup();
     await new Promise((resolve) => setTimeout(resolve, 0));

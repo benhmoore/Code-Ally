@@ -150,6 +150,13 @@ The agent has access to these built-in tools:
 - `bash-output` — Read output from background processes
 - `kill-shell` — Terminate background processes
 
+Press Ctrl+B to background running foreground commands. Ctrl+Enter backgrounds
+the running commands and submits your prompt immediately. The same processes
+continue with their buffered output and completion notifications. Commands can
+also start in the background or move there when their foreground timeout expires.
+Ctrl+Enter requires a terminal that distinguishes it from Enter using CSI-u/Kitty
+or modifyOtherKeys; otherwise use Ctrl+B followed by Enter.
+
 **Planning**
 - `todo-write` — Manage task list
 - `explore` — Delegate exploration to specialized agent
@@ -158,6 +165,12 @@ The agent has access to these built-in tools:
 ## Agents
 
 Agents are specialized assistants with focused capabilities.
+
+Delegated agents always run in the background. Ally receives task IDs immediately
+and can continue working while they run. Use `send-message` to communicate with
+`main`, `parent`, a task ID, or a persistent agent ID. Messages are delivered
+through the recipient's queue; sending does not wait for a reply. Explicit `wait`
+remains available when results are needed before continuing.
 
 **Using agents:**
 ```

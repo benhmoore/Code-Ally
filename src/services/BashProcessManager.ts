@@ -116,6 +116,8 @@ export class CircularBuffer {
  * Information about a managed process
  */
 export interface ProcessInfo {
+  /** Conversation that admitted this command; completion stays with that owner. */
+  ownerId?: string;
   /** Unique identifier: shell-{timestamp}-{random} */
   id: string;
   /** Process ID from operating system */
@@ -154,6 +156,25 @@ export class BashProcessManager {
   private readonly acknowledgedResults = new Set<string>();
   private readonly maxProcesses: number;
   private shutdownPromise?: Promise<void>;
+  private readonly foreground = new Map<string, { ownerId?: string; detach: () => boolean }>();
+
+  registerForeground(id: string, ownerId: string | undefined, detach: () => boolean): () => void {
+    if (this.shutdownPromise) throw new Error('Background process manager is shutting down');
+    const entry = { ownerId, detach };
+    this.foreground.set(id, entry);
+    return () => { if (this.foreground.get(id) === entry) this.foreground.delete(id); };
+  }
+
+  /** Transfer running commands to supervision; never signal or restart them. */
+  backgroundForeground(ownerId?: string): number {
+    if (this.shutdownPromise) return 0;
+    let count = 0;
+    for (const entry of [...this.foreground.values()]) {
+      if (ownerId !== undefined && entry.ownerId !== ownerId) continue;
+      if (entry.detach()) count++;
+    }
+    return count;
+  }
 
   constructor(maxProcesses: number = 10) {
     this.maxProcesses = maxProcesses;
@@ -311,12 +332,13 @@ export class BashProcessManager {
    *
    * @returns Array of reminder strings
    */
-  getStatusReminders(): string[] {
+  getStatusReminders(ownerId?: string): string[] {
     const now = Date.now();
     const fiveMinutesAgo = now - 5 * 60 * 1000;
     const reminders: string[] = [];
 
     for (const info of this.processes.values()) {
+      if (ownerId !== undefined && info.ownerId !== ownerId) continue;
       const elapsed = formatDuration(now - info.startTime);
 
       if (info.status === 'running') {

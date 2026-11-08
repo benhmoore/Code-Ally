@@ -58,7 +58,8 @@ export function useTaskWake({ isThinking, activeAgentId, submit }: UseTaskWakePa
 
     const tasks = ids.flatMap((id) => {
       const t = taskRegistry.getResult(id);
-      return t ? [t] : [];
+      const rootId = registry.get('agent')?.getInstanceId();
+      return t && (!t.ownerId || t.ownerId === rootId) && t.resultPending ? [t] : [];
     });
     const sections = tasks.map((t) => {
       const body = t.result ?? t.error ?? '(no output)';
@@ -67,9 +68,9 @@ export function useTaskWake({ isThinking, activeAgentId, submit }: UseTaskWakePa
     if (sections.length === 0) return;
 
     wakingRef.current = true;
-    const noun = ids.length === 1 ? 'task' : 'tasks';
+    const noun = tasks.length === 1 ? 'task' : 'tasks';
     submit(
-      `[Background watch] ${ids.length} ${noun} you were watching completed:\n\n` +
+      `[Background watch] ${tasks.length} ${noun} you were watching completed:\n\n` +
       `${sections.join('\n\n')}\n\nReview the result(s) and continue as appropriate.`
     );
     taskRegistry.acknowledgeResults(tasks);
@@ -85,7 +86,7 @@ export function useTaskWake({ isThinking, activeAgentId, submit }: UseTaskWakePa
 
   useEffect(() => {
     const onComplete = (event: ActivityEvent) => {
-      const taskId = event.data?.taskId;
+      const taskId = event.data?.taskId ?? event.data?.shellId;
       if (!taskId) return;
       const registry = ServiceRegistry.getInstance();
       const taskRegistry = registry.get('background_task_registry');
@@ -98,6 +99,7 @@ export function useTaskWake({ isThinking, activeAgentId, submit }: UseTaskWakePa
     const unsubs = [
       ActivityEventType.AGENT_BACKGROUND_COMPLETE,
       ActivityEventType.BACKGROUND_TASK_COMPLETE,
+      ActivityEventType.BACKGROUND_PROCESS_EXIT,
     ].map((type) => activityStream.subscribe(type, onComplete));
     return () => unsubs.forEach((u) => u());
   }, [activityStream]);

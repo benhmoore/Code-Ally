@@ -1,7 +1,7 @@
 /**
  * CancelAgentTool - Cancel a backgrounded agent run
  *
- * Cancels agents started with agent(run_in_background=true). Signals the
+ * Cancels delegated agents. Signals the
  * sub-agent to stop (graceful cancel via InterruptionManager + tool abort
  * signal); the detached run unwinds and releases its pooled agent itself.
  *
@@ -17,7 +17,7 @@ import { formatDuration } from '../ui/utils/timeUtils.js';
 
 export class CancelAgentTool extends BaseTool {
   readonly name = 'cancel-agent';
-  readonly description = 'Cancel a background agent started with agent(run_in_background=true)';
+  readonly description = 'Cancel a delegated agent task';
   readonly capabilities = [ToolCapability.ProcessControl] as const;
   readonly hideOutput = false;
 
@@ -36,7 +36,7 @@ export class CancelAgentTool extends BaseTool {
           properties: {
             agent_id: {
               type: 'string',
-              description: 'Agent id returned from agent(run_in_background=true), e.g. "agent-1234567890-abc123"',
+              description: 'Task ID returned by agent, explore, or plan, e.g. "agent-1234567890-abc123"',
             },
           },
           required: ['agent_id'],

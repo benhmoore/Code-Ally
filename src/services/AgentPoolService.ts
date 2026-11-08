@@ -48,6 +48,9 @@ export interface AgentMetadata {
   useCount: number;
   /** Whether agent is currently in use */
   inUse: boolean;
+  /** Stable conversation identity; changes only when an unaddressed slot is reset. */
+  contextGeneration: number;
+  retainConversation?: boolean;
   /** Agent configuration used for creation */
   config: AgentConfig;
 }
@@ -197,6 +200,7 @@ export class AgentPoolService implements IService {
         reserved.metadata.inUse = true;
         reserved.metadata.lastAccessedAt = Date.now();
         reserved.metadata.useCount++;
+        reserved.metadata.contextGeneration++;
 
         // CRITICAL: Reset agent state before reusing from pool
         // Encapsulated in Agent.resetForReuse() to maintain single source of truth
@@ -300,6 +304,7 @@ export class AgentPoolService implements IService {
       lastAccessedAt: Date.now(),
       useCount: 1,
       inUse: true,
+      contextGeneration: 0,
       config: agentConfig,
     };
 
@@ -350,7 +355,7 @@ export class AgentPoolService implements IService {
   private findAndReserveAgent(agentConfig: AgentConfig): { metadata: AgentMetadata } | null {
     for (const metadata of this.pool.values()) {
       // Skip if agent is in use or currently being acquired
-      if (metadata.inUse || this.acquiringAgents.has(metadata.agentId)) {
+      if (metadata.inUse || metadata.retainConversation || this.acquiringAgents.has(metadata.agentId)) {
         continue;
       }
 
@@ -550,6 +555,25 @@ export class AgentPoolService implements IService {
    * @param agentId - ID of the agent to check
    * @returns True if agent exists in pool
    */
+  /** An advertised address must never silently become a different conversation. */
+  retainConversation(agentId: string): void {
+    const metadata = this.pool.get(agentId);
+    if (!metadata) throw new Error(`Agent not found: ${agentId}`);
+    metadata.retainConversation = true;
+  }
+
+  /** Reserve a persistent conversation synchronously so reuse/eviction cannot race a follow-up. */
+  reserveById(agentId: string): PooledAgent {
+    this.assertAdmissionOpen();
+    const metadata = this.pool.get(agentId);
+    if (!metadata) throw new Error(`Agent not found: ${agentId}`);
+    if (metadata.inUse || this.acquiringAgents.has(agentId)) throw new Error(`Agent ${agentId} is still settling another task`);
+    metadata.inUse = true;
+    metadata.lastAccessedAt = Date.now();
+    metadata.useCount++;
+    return { agent: metadata.agent, agentId, release: () => this.release(agentId) };
+  }
+
   hasAgent(agentId: string): boolean {
     return this.pool.has(agentId);
   }

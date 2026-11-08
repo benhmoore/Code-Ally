@@ -29,7 +29,6 @@ import { getThoroughnessDuration, getThoroughnessMaxTokens } from '../ui/utils/t
 import { createAgentPersistenceReminder } from '../utils/messageUtils.js';
 import { getModelClientForAgent } from '../utils/modelClientUtils.js';
 import {
-  appendAgentResponseSuffix,
   resolveSubstantiveResponse,
   registerDelegation,
   completeDelegation,
@@ -175,7 +174,9 @@ export abstract class BaseDelegationTool extends BaseTool {
     try {
       // Resolve + validate the services every delegation needs (shared with AgentTool).
       const { registry, mainModelClient, toolManager, configManager, permissionManager, appConfig } =
-        resolveDelegationServices(this.name);
+        resolveDelegationServices(this.name, this.getExecutionRegistry());
+      const manager = registry.get('background_agent_manager');
+      if (!manager) throw new Error('Asynchronous agent execution is unavailable. No agent was started.');
 
       // Perform any additional setup (e.g., fetching available models)
       const additionalContext = await this.performAdditionalSetup(appConfig);
@@ -239,6 +240,9 @@ export abstract class BaseDelegationTool extends BaseTool {
         newDepth,
       });
 
+      const scopedRegistry = new ScopedServiceRegistryProxy(registry);
+      agentConfig._scopedRegistry = scopedRegistry;
+
       // Always use pooled agent for persistence
       let delegationAgent: Agent;
       let pooledAgent: PooledAgent | null = null;
@@ -282,7 +286,6 @@ export abstract class BaseDelegationTool extends BaseTool {
 
       // Create scoped registry for this delegation
       // This ensures nested tool calls get correct parent without global mutation
-      const scopedRegistry = new ScopedServiceRegistryProxy(registry);
       scopedRegistry.registerInstance('agent', delegationAgent);
 
       // Cleanup: release the agent + finalize delegation. Called exactly once.
@@ -306,6 +309,7 @@ export abstract class BaseDelegationTool extends BaseTool {
         const taskMessage = this.formatTaskMessage(taskPrompt);
         const response = await delegationAgent.sendMessage(taskMessage, {
           parentCallId: callId,
+          agentMessage: { messageId: callId, sender: parentAgent?.getInstanceId() ?? 'parent' },
           maxDuration,
           thoroughness,
         });
@@ -335,30 +339,6 @@ export abstract class BaseDelegationTool extends BaseTool {
         return successResponse;
       };
 
-      const emitForegroundEnd = (finalResponse: string, durationSec: number) => {
-        this.emitEvent({
-          id: callId,
-          type: ActivityEventType.AGENT_END,
-          timestamp: Date.now(),
-          data: { agentName: config.agentType, result: finalResponse, duration: durationSec, contextUsage: capturedContextUsage, toolUseCount: capturedToolUseCount },
-        });
-      };
-
-      const manager = registry.get('background_agent_manager');
-
-      // Defensive legacy path if the manager is unavailable.
-      if (!manager) {
-        try {
-          const finalResponse = await run();
-          const duration = (Date.now() - startTime) / 1000;
-          emitForegroundEnd(finalResponse, duration);
-          return this.formatSuccessResponse(buildSuccess(appendAgentResponseSuffix(finalResponse), duration));
-        } finally {
-          await cleanup();
-        }
-      }
-
-      // Register in the fleet (foreground): visible, enterable, Ctrl+B-able.
       const outcome = await runFleetDelegation({
         manager,
         activityStream: this.activityStream,
@@ -366,28 +346,19 @@ export abstract class BaseDelegationTool extends BaseTool {
         taskPrompt,
         callId,
         subAgent: delegationAgent,
+        parentAgent: parentAgent ?? undefined,
+        agentId,
+        messaging: registry.get('agent_messaging') ?? undefined,
         pooledAgent,
-        runInBackground: false,
         run,
         cleanup,
         buildEndData: () => ({ contextUsage: capturedContextUsage, toolUseCount: capturedToolUseCount }),
       });
 
-      if (outcome.backgrounded) {
-        return this.formatSuccessResponse(buildSuccess(
-          backgroundedMessage(outcome.taskId, config.agentType, 'moved to background'),
-          (Date.now() - startTime) / 1000,
-        ));
-      }
-
-      if (outcome.status === 'error' && outcome.error) {
-        throw new Error(outcome.error);
-      }
-
-      const finalResponse = outcome.result;
-      const duration = (Date.now() - startTime) / 1000;
-      emitForegroundEnd(finalResponse, duration);
-      return this.formatSuccessResponse(buildSuccess(appendAgentResponseSuffix(finalResponse), duration));
+      return this.formatSuccessResponse(buildSuccess(
+        backgroundedMessage(outcome.taskId, config.agentType, 'started'),
+        (Date.now() - startTime) / 1000,
+      ));
     } catch (error) {
       const errorType = (error as any)?.error_type || 'execution_error';
       return this.formatErrorResponse(
@@ -466,8 +437,7 @@ export abstract class BaseDelegationTool extends BaseTool {
         agent.interrupt();
       }
     }
-    // A delegation promoted to the background (Ctrl+B) is detached from the
-    // foreground activeDelegations above, so cancel running background agents too.
+    // Include asynchronous runs tracked by the fleet manager.
     cancelRunningBackgroundAgents();
   }
 

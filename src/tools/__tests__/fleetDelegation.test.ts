@@ -7,14 +7,13 @@ import { ActivityEventType } from '../../types/index.js';
 function fixture(): FleetDelegationParams {
   return { manager: new BackgroundAgentManager(), activityStream: new ActivityStream(),
     agentType: 'test', taskPrompt: 'work', callId: 'call', subAgent: { interrupt: vi.fn() } as any,
-    pooledAgent: null, runInBackground: false, run: vi.fn(async () => 'verified'), cleanup: vi.fn(async () => {}) };
+    pooledAgent: null, run: vi.fn(async () => 'verified'), cleanup: vi.fn(async () => {}) };
 }
 
 describe('delegation settlement ownership', () => {
-  it.each([false, true])('keeps ownership through slow cleanup (background: %s)', async background => {
+  it('returns immediately while retaining ownership through slow cleanup', async () => {
     vi.useFakeTimers();
     const params = fixture();
-    params.runInBackground = background;
     let finish!: () => void;
     let entered!: () => void;
     const ready = new Promise<void>(resolve => { entered = resolve; });
@@ -37,7 +36,7 @@ describe('delegation settlement ownership', () => {
     } finally { finish(); vi.useRealTimers(); }
   });
 
-  it('detaches during cleanup without duplicating cleanup or completion publication', async () => {
+  it('publishes completion once after asynchronous cleanup', async () => {
     const params = fixture();
     const emit = vi.spyOn(params.activityStream, 'emit');
     let finish!: () => void;
@@ -47,8 +46,7 @@ describe('delegation settlement ownership', () => {
     const operation = runFleetDelegation(params);
     await ready;
     const task = params.manager.listTasks()[0];
-    task.detach();
-    expect((await operation).backgrounded).toBe(true);
+    expect((await operation).taskId).toBe(task.id);
     finish();
     await task.promise;
     expect(params.cleanup).toHaveBeenCalledOnce();
@@ -58,7 +56,6 @@ describe('delegation settlement ownership', () => {
 
   it('retains and reports detached cleanup failure through shutdown', async () => {
     const params = fixture();
-    params.runInBackground = true;
     params.cleanup = vi.fn(async () => { throw new Error('release failed'); });
     await runFleetDelegation(params);
     const task = params.manager.listTasks()[0];
@@ -81,7 +78,6 @@ describe('delegation settlement ownership', () => {
   it('does not evict a consumed finalization failure under retention pressure', async () => {
     const params = fixture();
     params.manager = new BackgroundAgentManager(1);
-    params.runInBackground = true;
     params.cleanup = vi.fn(async () => { throw new Error('release failed'); });
     await runFleetDelegation(params);
     const failed = params.manager.listTasks()[0];
@@ -92,7 +88,6 @@ describe('delegation settlement ownership', () => {
     params.cleanup = vi.fn(async () => {});
     for (let index = 0; index < 3; index++) {
       const outcome = await runFleetDelegation(params);
-      if (!outcome.backgrounded) throw new Error('Expected background task');
       await params.manager.getTask(outcome.taskId)!.promise;
       params.manager.acknowledgeCompletedResults([outcome.taskId]);
     }
@@ -102,7 +97,6 @@ describe('delegation settlement ownership', () => {
 
   it('allows removal of ordinary model errors after successful finalization', async () => {
     const params = fixture();
-    params.runInBackground = true;
     params.run = vi.fn(async () => { throw new Error('model failed'); });
     await runFleetDelegation(params);
     const task = params.manager.listTasks()[0];
@@ -118,11 +112,11 @@ describe('delegation settlement ownership', () => {
 it('captures a completed view before release can reset a pooled agent', async () => {
   const params = fixture();
   const view = { messages: [{ role: 'assistant', content: 'original result' }], activeToolCalls: [], isThinking: false, isCompacting: false, contextUsage: 7, statusMessages: [], compactionNotices: [] };
-  const close = vi.fn();
-  params.subAgent = { getConversationView: () => ({ getSnapshot: () => view }), getInputQueue: () => ({ close }) } as any;
+  params.subAgent = { getConversationView: () => ({ getSnapshot: () => view }) } as any;
   params.cleanup = vi.fn(async () => { view.messages[0]!.content = 'reused conversation'; });
   await runFleetDelegation(params);
   const task = params.manager.listTasks()[0]!;
-  expect(close).toHaveBeenCalledOnce();
+  await task.promise;
+  expect(task.acceptingMessages).toBe(false);
   expect(task.completedView?.messages[0]?.content).toBe('original result');
 });

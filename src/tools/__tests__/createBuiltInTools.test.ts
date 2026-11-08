@@ -13,7 +13,7 @@ describe('createBuiltInTools', () => {
       'complete-objective', 'objective-state', 'block-objective', 'reconcile-effect', 'read', 'read-checkpoint', 'read-history', 'write',
       'write-agent', 'edit-agent', 'delete-agent', 'list-agents', 'write-temp',
       'apply-patch', 'glob', 'grep', 'ls', 'tool-search', 'tree', 'agent', 'manage-agents',
-      'explore', 'plan', 'agent-ask', 'cleanup-call', 'todo-write', 'sessions',
+      'explore', 'plan', 'send-message', 'cleanup-call', 'todo-write', 'sessions',
       'lint', 'format', 'ask-user-question', 'web-fetch', 'web-search', 'research',
       'skill', 'memory', 'scheduled-tasks', 'enter-plan-mode', 'exit-plan-mode',
       'write-plan',

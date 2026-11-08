@@ -35,6 +35,7 @@ export class MissingBackgroundTasksError extends Error {
 export interface BackgroundTask {
   id: string;
   kind: BackgroundTaskKind;
+  ownerId?: string;
   /** Human-readable label: agent type / shell command / watcher description */
   label: string;
   status: BackgroundTaskStatus;
@@ -128,6 +129,7 @@ export class BackgroundTaskRegistry {
       tasks.push({
         id: t.id,
         kind: 'agent',
+        ownerId: t.ownerId,
         label: t.agentType,
         status: t.status,
         startTime: t.startTime,
@@ -136,7 +138,7 @@ export class BackgroundTaskRegistry {
         error: t.error,
         watched: this.watchedIds.has(t.id),
         blocksCompletion: true,
-        resultPending: t.status !== 'running' && !t.consumed,
+        resultPending: t.status !== 'running' && !t.consumed && !t.deliveryPending,
       });
     }
 
@@ -144,6 +146,7 @@ export class BackgroundTaskRegistry {
       tasks.push({
         id: p.id,
         kind: 'shell',
+        ownerId: p.ownerId,
         label: p.command,
         status: shellStatus(p),
         startTime: p.startTime,
@@ -221,8 +224,8 @@ export class BackgroundTaskRegistry {
    * a stale UI wake remains queued, which could otherwise race durable
    * completion and restart an already-completed objective.
    */
-  drainCompletedAgentResults(): BackgroundAgentTask[] {
-    const tasks = this.agentManager.drainCompletedResults();
+  drainCompletedAgentResults(ownerId?: string): BackgroundAgentTask[] {
+    const tasks = this.agentManager.drainCompletedResults(ownerId);
     for (const task of tasks) this.clearWatched(task.id);
     return tasks;
   }

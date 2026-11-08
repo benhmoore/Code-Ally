@@ -172,13 +172,11 @@ describe('selected conversation work status', () => {
       await see('Waiting for agent');
       instance.rerender(view([call('read', {}, 'child-call')]));
       await see('Thinking');
-      instance.rerender(view([call('agent', { run_in_background: false })]));
-      await see('Waiting for agent');
+      instance.rerender(view([call('agent')]));
+      await see('Running tools');
       instance.rerender(view([call('wait', { task_ids: ['shell-one'] })]));
       await see('Waiting');
       expect(stripAnsi(stdout.frames.at(-1) ?? '')).not.toContain('Waiting for agent');
-      instance.rerender(view([call('agent', { run_in_background: true })]));
-      await see('Running tools');
       instance.rerender(view([]));
       await see('Thinking');
       const childStream = new ActivityStream('outer-delegation');

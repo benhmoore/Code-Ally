@@ -224,14 +224,14 @@ describe('Agent - Interruption Handling', () => {
     } finally { registry.registerInstance('hook_runner', previous as any); }
   });
 
-  it('releases parent monitoring and idle admission when turn-start persistence fails', async () => {
+  it('releases idle admission without changing parent monitoring when turn-start persistence fails', async () => {
     const parent = { pauseActivityMonitoring: vi.fn(), resumeActivityMonitoring: vi.fn() };
     (agent as any).parentAgent = parent;
     vi.spyOn((agent as any).sessionPersistence, 'commitTurnStart').mockRejectedValue(new Error('disk full'));
     const inactive = vi.spyOn((agent as any).lifecycleHandler, 'notifyOllamaInactive');
     await expect(agent.sendMessage('Persist before execution')).rejects.toThrow('disk full');
-    expect(parent.pauseActivityMonitoring).toHaveBeenCalledOnce();
-    expect(parent.resumeActivityMonitoring).toHaveBeenCalledExactlyOnceWith(false);
+    expect(parent.pauseActivityMonitoring).not.toHaveBeenCalled();
+    expect(parent.resumeActivityMonitoring).not.toHaveBeenCalled();
     expect(inactive).toHaveBeenCalledOnce();
     expect(mockModelClient.send).not.toHaveBeenCalled();
     expect(agent.isProcessing()).toBe(false);

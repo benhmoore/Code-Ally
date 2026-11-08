@@ -7,12 +7,11 @@
 import { consumeAutoReadCommand, spawnReadCommand, type ReadCommandPlan } from '../security/ReadCommandPlan.js';
 import { BaseTool } from './BaseTool.js';
 import { ToolCapability } from './ToolCapability.js';
-import { ToolResult, FunctionDefinition, Config } from '../types/index.js';
+import { ToolResult, FunctionDefinition, Config, ActivityEventType } from '../types/index.js';
 import { ActivityStream } from '../services/ActivityStream.js';
 import { ChildProcess } from 'child_process';
 import { TIMEOUT_LIMITS, TOOL_OUTPUT_ESTIMATES } from '../config/toolDefaults.js';
 import { formatError } from '../utils/errorUtils.js';
-import { ServiceRegistry } from '../services/ServiceRegistry.js';
 import { CircularBuffer } from '../services/BashProcessManager.js';
 import { spawnBashCommand, waitForBashClose, waitForBashSpawn } from '../utils/bashProcess.js';
 
@@ -53,6 +52,8 @@ class BoundedOutputBuffer {
   private bytes = 0;
 
   constructor(private readonly maxBytes: number = MAX_CAPTURE_BYTES) {}
+
+  clear(): void { this.chunks = []; this.head = 0; this.bytes = 0; }
 
   append(value: string): void {
     if (!value) return;
@@ -255,7 +256,7 @@ export class BashTool extends BaseTool {
             },
             timeout: {
               type: 'integer',
-              description: `Overall deadline in seconds (default ${defaultTimeoutSeconds}, max ${TIMEOUT_LIMITS.MAX / 1000}, -1 disables).`,
+              description: `Foreground wait in seconds (default ${defaultTimeoutSeconds}, max ${TIMEOUT_LIMITS.MAX / 1000}, -1 disables). On expiry the same command continues supervised in the background.`,
             },
             output_mode: {
               type: 'string',
@@ -329,7 +330,7 @@ export class BashTool extends BaseTool {
 
     // Branch on execution mode
     if (runInBackground) {
-      return this.spawnBackground(command, workingDir, blocksCompletion);
+      return this.executeCommand(command, workingDir, Infinity, outputMode, this.currentAbortSignal, readPlan, true, blocksCompletion);
     } else {
       // Existing foreground execution
       try {
@@ -428,139 +429,6 @@ export class BashTool extends BaseTool {
   }
 
   /**
-   * Spawn a background process and return immediately with shell_id
-   *
-   * Creates a detached process that runs independently, with output buffered
-   * in a CircularBuffer for later retrieval via bash-output tool.
-   *
-   * @param command - Shell command to execute in background
-   * @param workingDir - Working directory for command execution
-   * @returns ToolResult with shell_id, pid, message, and command
-   */
-  private async spawnBackground(
-    command: string,
-    workingDir: string,
-    blocksCompletion: boolean
-  ): Promise<ToolResult> {
-    // Get process manager from registry
-    const registry = ServiceRegistry.getInstance();
-    const processManager = registry.get('bash_process_manager');
-
-    if (!processManager) {
-      return this.formatErrorResponse(
-        'BashProcessManager not available',
-        'system_error',
-        'Background execution requires BashProcessManager to be registered'
-      );
-    }
-
-    // Generate unique shell ID
-    const shellId = `shell-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
-
-    // Create circular buffer for output
-    const outputBuffer = new CircularBuffer(10000, MAX_CAPTURE_BYTES);
-
-    // Spawn detached process
-    // Note: env is filtered to prevent leaking sensitive environment variables
-    const child: ChildProcess = spawnBashCommand(command, {
-      cwd: workingDir,
-      stdio: ['ignore', 'pipe', 'pipe'],
-      detached: process.platform !== 'win32', // Create process group on Unix
-      env: this.getSafeEnvironment(),
-    });
-
-    // Pipe stdout to circular buffer
-    if (child.stdout) {
-      child.stdout.on('data', (data: Buffer) => {
-        outputBuffer.append(data.toString());
-      });
-    }
-
-    // Pipe stderr to circular buffer
-    if (child.stderr) {
-      child.stderr.on('data', (data: Buffer) => {
-        outputBuffer.append(data.toString());
-      });
-    }
-
-    try {
-      await waitForBashSpawn(child);
-    } catch (error) {
-      return this.formatErrorResponse(`Failed to spawn background process: ${formatError(error)}`, 'system_error');
-    }
-
-    // Register only a successfully spawned process with the manager.
-    const processInfo = {
-      id: shellId,
-      pid: child.pid!,
-      command,
-      process: child,
-      outputBuffer,
-      startTime: Date.now(),
-      status: 'running' as const,
-      exitCode: null,
-      exitSignal: null,
-      terminationSignal: null,
-      blocksCompletion,
-      exitTime: null,
-    };
-
-    try {
-      processManager.addProcess(processInfo);
-    } catch (error) {
-      // Rejected admission does not transfer ownership. Reap the child before
-      // returning the failure; do not leave untracked work executing.
-      const cancellation = new AbortController();
-      cancellation.abort();
-      try {
-        await waitForBashClose(child, cancellation.signal, TIMEOUT_LIMITS.GRACEFUL_SHUTDOWN_DELAY);
-      } catch (cleanupError) {
-        return this.formatErrorResponse(
-          `${formatError(error)}; process cleanup failed: ${formatError(cleanupError)}`,
-          'system_error',
-        );
-      }
-      return this.formatErrorResponse(
-        formatError(error),
-        'system_error'
-      );
-    }
-
-    // Publish completion only after the child and its output streams close.
-    child.on('close', (code: number | null, signal: NodeJS.Signals | null) => {
-      const info = processManager.getProcess(shellId);
-      if (info) {
-        info.status = 'exited';
-        info.exitCode = code;
-        info.exitSignal = signal;
-        info.exitTime = Date.now();
-
-        // Emit event so UI can update
-        this.activityStream.emit({
-          id: `bg-exit-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`,
-          type: 'background_process_exit' as any, // Cast needed until types are rebuilt
-          timestamp: Date.now(),
-          data: {
-            shellId,
-            exitCode: code,
-            exitSignal: signal,
-            command,
-          },
-        });
-      }
-    });
-
-    // Return immediately with shell_id and pid
-    return this.formatSuccessResponse({
-      shell_id: shellId,
-      pid: child.pid,
-      message: `Background shell started: ${shellId}`,
-      command,
-      blocks_completion: blocksCompletion,
-    });
-  }
-
-  /**
    * Check if command is likely interactive (pre-execution)
    */
   private checkInteractiveCommand(command: string): { isInteractive: boolean; suggestion?: string } {
@@ -591,11 +459,20 @@ export class BashTool extends BaseTool {
     outputMode: string = 'full',
     abortSignal?: AbortSignal,
     readPlan?: ReadCommandPlan,
+    initiallyBackground = false,
+    blocksCompletion = false,
   ): Promise<ToolResult> {
     const stdoutBuffer = new BoundedOutputBuffer();
     const stderrBuffer = new BoundedOutputBuffer();
     let returnCode: number | null = null;
     let timedOut = false;
+    const registry = this.getExecutionRegistry();
+    const processManager = registry.get('bash_process_manager');
+    const ownerId = this.currentExecutionContext?.agentId;
+    const activityStream = this.currentExecutionContext?.activityStream ?? this.activityStream;
+    const backgroundOutput = new CircularBuffer(10000, MAX_CAPTURE_BYTES);
+    const shellId = `shell-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+    const startTime = Date.now();
 
     // Check for known interactive patterns
     const interactiveCheck = this.checkInteractiveCommand(command);
@@ -624,6 +501,30 @@ export class BashTool extends BaseTool {
 
       const cancellation = new AbortController();
       const abortHandler = () => cancellation.abort();
+      let backgrounded = false;
+      let closed = false;
+      let unregisterForeground: (() => void) | undefined;
+      let admissionError: string | undefined;
+      let timeoutHandle: NodeJS.Timeout | null = null;
+      const detach = (): boolean => {
+        if (backgrounded || closed || !child.pid || child.exitCode !== null || child.signalCode !== null
+          || cancellation.signal.aborted || abortSignal?.aborted || !processManager) return false;
+        try {
+          processManager.addProcess({ id: shellId, ownerId, pid: child.pid, command, process: child,
+            outputBuffer: backgroundOutput, startTime, status: 'running', exitCode: null,
+            exitSignal: null, terminationSignal: null, blocksCompletion, exitTime: null });
+        } catch (error) { admissionError = formatError(error); throw error; }
+        backgrounded = true;
+        stdoutBuffer.clear();
+        stderrBuffer.clear();
+        if (timeoutHandle) clearTimeout(timeoutHandle);
+        abortSignal?.removeEventListener('abort', abortHandler);
+        unregisterForeground?.();
+        registry.get('background_task_registry')?.markWatched(shellId);
+        resolve(this.formatSuccessResponse({ shell_id: shellId, pid: child.pid, command,
+          message: `Command continues in background: ${shellId}`, blocks_completion: blocksCompletion }));
+        return true;
+      };
 
       if (abortSignal) {
         if (abortSignal.aborted) {
@@ -635,10 +536,12 @@ export class BashTool extends BaseTool {
         }
       }
 
-      // A foreground timeout is terminal. Background execution must be an
-      // explicit, supervised choice; a timeout must never silently detach work.
-      const timeoutHandle: NodeJS.Timeout | null = Number.isFinite(timeout)
+      // The timeout releases the foreground wait; the existing process remains supervised.
+      timeoutHandle = Number.isFinite(timeout)
         ? setTimeout(() => {
+            if (child.exitCode !== null || child.signalCode !== null) return;
+            try { if (detach()) return; }
+            catch { /* The original deadline remains authoritative if supervision is full. */ }
             timedOut = true;
             cancellation.abort();
           }, timeout)
@@ -648,6 +551,8 @@ export class BashTool extends BaseTool {
       if (child.stdout) {
         child.stdout.on('data', (data: Buffer) => {
           const chunk = data.toString();
+          backgroundOutput.append(chunk);
+          if (backgrounded) return;
           stdoutBuffer.append(chunk);
           this.emitOutputChunk(Buffer.byteLength(chunk) > MAX_STREAM_CHUNK_BYTES
             ? Buffer.from(chunk).subarray(-MAX_STREAM_CHUNK_BYTES).toString('utf8')
@@ -659,6 +564,8 @@ export class BashTool extends BaseTool {
       if (child.stderr) {
         child.stderr.on('data', (data: Buffer) => {
           const chunk = data.toString();
+          backgroundOutput.append(chunk);
+          if (backgrounded) return;
           stderrBuffer.append(chunk);
           this.emitOutputChunk(Buffer.byteLength(chunk) > MAX_STREAM_CHUNK_BYTES
             ? Buffer.from(chunk).subarray(-MAX_STREAM_CHUNK_BYTES).toString('utf8')
@@ -668,11 +575,44 @@ export class BashTool extends BaseTool {
 
       // Handle process exit
       const cleanup = () => {
+        closed = true;
+        unregisterForeground?.();
         if (timeoutHandle) clearTimeout(timeoutHandle);
         abortSignal?.removeEventListener('abort', abortHandler);
       };
+      const completeBackground = (code: number | null): void => {
+        const info = processManager?.getProcess(shellId);
+        if (!info || info.status === 'exited') return;
+        info.status = 'exited';
+        info.exitCode = code;
+        info.exitSignal = child.signalCode;
+        info.exitTime = Date.now();
+        activityStream.emit({ id: `bg-exit-${shellId}`, type: ActivityEventType.BACKGROUND_PROCESS_EXIT,
+          timestamp: Date.now(), data: { shellId, exitCode: code, exitSignal: child.signalCode, command } });
+      };
+      void waitForBashSpawn(child).then(() => {
+        if (closed || cancellation.signal.aborted || abortSignal?.aborted) return;
+        if (initiallyBackground) {
+          try {
+            if (detach()) return;
+            admissionError ??= 'Background process supervision is unavailable';
+          } catch { /* Admission failure still owns and reaps the untracked child. */ }
+          cancellation.abort();
+        } else if (processManager) {
+          try { unregisterForeground = processManager.registerForeground(shellId, ownerId, detach); }
+          catch { /* Shutdown will cancel this still-foreground operation through its owner. */ }
+        }
+      }, () => {});
       void waitForBashClose(child, cancellation.signal, TIMEOUT_LIMITS.GRACEFUL_SHUTDOWN_DELAY).then((code) => {
         cleanup();
+        if (backgrounded) {
+          completeBackground(code);
+          return;
+        }
+        if (admissionError && initiallyBackground) {
+          resolve(this.formatErrorResponse(admissionError, 'system_error'));
+          return;
+        }
 
         returnCode = code;
 
@@ -757,6 +697,11 @@ export class BashTool extends BaseTool {
         }
       }, (error: Error) => {
         cleanup();
+        if (backgrounded) {
+          backgroundOutput.append(`Process error: ${error.message}`);
+          completeBackground(child.exitCode);
+          return;
+        }
         resolve(
           this.formatErrorResponse(
             `Failed to execute command: ${error.message}`,

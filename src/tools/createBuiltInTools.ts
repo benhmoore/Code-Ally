@@ -2,7 +2,7 @@ import { ObjectiveStateTool } from './ObjectiveStateTool.js';
 import type { Config } from '../types/index.js';
 import type { ActivityStream } from '../services/ActivityStream.js';
 import type { BaseTool } from './BaseTool.js';
-import { AgentAskTool } from './AgentAskTool.js';
+import { SendMessageTool } from './SendMessageTool.js';
 import { AgentTool } from './AgentTool.js';
 import { AskUserQuestionTool } from './AskUserQuestionTool.js';
 import { BashOutputTool } from './BashOutputTool.js';
@@ -88,7 +88,7 @@ export function createBuiltInTools(
     new ManageAgentsTool(activityStream),
     new ExploreTool(activityStream),
     new PlanTool(activityStream),
-    new AgentAskTool(activityStream),
+    new SendMessageTool(activityStream),
     new CleanupCallTool(activityStream),
     new TodoWriteTool(activityStream),
     new SessionsTool(activityStream),

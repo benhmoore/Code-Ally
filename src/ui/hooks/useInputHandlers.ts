@@ -39,6 +39,7 @@ export interface InputHandlers {
   handleInput: (input: string, mentions?: { files?: string[]; images?: string[]; directories?: string[] }) => Promise<void>;
   /** Handle user interjection (submitting message mid-response) */
   handleInterjection: (message: string) => Promise<void>;
+  handleBackgroundAndSubmit: InputHandlers['handleInput'];
   handleFollowUp: (input: string, mentions?: { files?: string[]; images?: string[]; directories?: string[] }) => Promise<void>;
 }
 
@@ -412,8 +413,15 @@ export const useInputHandlers = (
     });
   }, [ensureRouteAvailable, route, handleFollowUp]);
 
+  const handleBackgroundAndSubmit = useCallback((input: string, mentions?: { files?: string[]; images?: string[]; directories?: string[] }) => {
+    if (!ensureRouteAvailable()) return Promise.resolve();
+    ServiceRegistry.getInstance().get('bash_process_manager')?.backgroundForeground(route.agent.getInstanceId());
+    return handleInput(input, mentions);
+  }, [ensureRouteAvailable, route, handleInput]);
+
   return {
     handleInput,
+    handleBackgroundAndSubmit,
     handleInterjection,
     handleFollowUp,
   };

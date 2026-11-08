@@ -7,6 +7,7 @@ import type { ServiceRegistry } from './ServiceRegistry.js';
  */
 export async function shutdownApplication(registry: ServiceRegistry): Promise<Error[]> {
   const failures: Error[] = [];
+  registry.get('agent_messaging')?.stopAdmission();
   const attempt = async (label: string, operation: () => void | Promise<void>) => {
     try { await operation(); }
     catch (cause) { failures.push(new Error(`Shutdown failed for ${label}`, { cause })); }

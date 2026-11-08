@@ -20,7 +20,7 @@ import { ModelClient } from '../llm/ModelClient.js';
 import { logger } from '../services/Logger.js';
 import { ToolManager } from './ToolManager.js';
 import { formatError } from '../utils/errorUtils.js';
-import { BUFFER_SIZES, TEXT_LIMITS, FORMATTING, ID_GENERATION, AGENT_CONFIG, PERMISSION_MESSAGES, AGENT_TYPES, THOROUGHNESS_LEVELS, VALID_THOROUGHNESS, CONTEXT_SIZES, TOKEN_MANAGEMENT } from '../config/constants.js';
+import { BUFFER_SIZES, TEXT_LIMITS, ID_GENERATION, AGENT_CONFIG, PERMISSION_MESSAGES, AGENT_TYPES, THOROUGHNESS_LEVELS, VALID_THOROUGHNESS, CONTEXT_SIZES, TOKEN_MANAGEMENT } from '../config/constants.js';
 import { ModelCapabilitiesIndex } from '../services/ModelCapabilitiesIndex.js';
 import { fileToBase64 } from '../utils/imageUtils.js';
 import { PooledAgent } from '../services/AgentPoolService.js';
@@ -31,7 +31,6 @@ import { getModelClientForAgent } from '../utils/modelClientUtils.js';
 import { extractSummaryFromConversation } from '../utils/agentUtils.js';
 import { tokenCounter } from '../services/TokenCounter.js';
 import {
-  appendAgentResponseSuffix,
   registerDelegation,
   completeDelegation,
   resolveDelegationServices,
@@ -51,8 +50,6 @@ interface AgentExecutionParams {
   parentAgentName?: string;
   initialMessages?: Message[];
   contextImages?: string[];
-  /** Run the agent detached/non-blocking (default true). false = blocking. */
-  runInBackground?: boolean;
   /** Auto-wake the idle main agent when this background run completes (default false). */
   notifyWhenDone?: boolean;
 }
@@ -77,9 +74,9 @@ export class AgentTool extends BaseTool {
 Complex tasks requiring specialized expertise or distinct workflows.
 NOT for: Exploration (use explore), planning (use plan).
 
-**Foreground vs background:** Agents run in the background by default (non-blocking).
+**Delegation is asynchronous:** Agents run concurrently and report completion automatically.
 Spawn them and keep working — results are delivered to you automatically when ready.
-Only set run_in_background=false when your very next step depends on the result.`;
+Continue independent work after launching an agent; use wait only when you need a result.`;
 
   private agentManager: AgentManager | null = null;
   private activeDelegations: Map<string, any> = new Map();
@@ -165,10 +162,6 @@ Only set run_in_background=false when your very next step depends on the result.
                 format: 'local-path',
               },
             },
-            run_in_background: {
-              type: 'boolean',
-              description: 'Default true. Set false only when the next step requires the result.',
-            },
             notify_when_done: {
               type: 'boolean',
               description: 'Wake on background completion (default false).',
@@ -189,8 +182,6 @@ Only set run_in_background=false when your very next step depends on the result.
     const thoroughness = args.thoroughness ?? THOROUGHNESS_LEVELS.UNCAPPED;
     const contextFiles = args.context_files;
     const contextImages = args.context_images;
-    // Background by default; the model opts into blocking with run_in_background=false.
-    const runInBackground = args.run_in_background !== false;
     // Auto-wake on completion is opt-in for model-chosen background runs.
     const notifyWhenDone = args.notify_when_done === true;
 
@@ -300,7 +291,7 @@ Only set run_in_background=false when your very next step depends on the result.
     }
 
     // Extract current agent depth and validate nesting limit
-    const registry = ServiceRegistry.getInstance();
+    const registry = this.getExecutionRegistry();
     const currentAgent = registry.get('agent');
     const currentDepth = currentAgent?.getAgentDepth?.() ?? 0;
     const newDepth = currentDepth + 1;
@@ -464,7 +455,6 @@ Only set run_in_background=false when your very next step depends on the result.
       parentAgentName: currentAgentName,
       initialMessages,
       contextImages,
-      runInBackground,
       notifyWhenDone,
     });
   }
@@ -491,7 +481,7 @@ Only set run_in_background=false when your very next step depends on the result.
         // Always include agent_id when available (with explicit persistence flags)
         if (result.agent_id) {
           successResponse.agent_id = result.agent_id;
-          // PERSIST: false - Ephemeral: Coaching about agent-ask for follow-ups
+          // PERSIST: false - Ephemeral: Coaching about send-message for follow-ups
           // Cleaned up after turn since agent should integrate advice, not need constant reminding
           const reminder = createAgentPersistenceReminder(result.agent_id);
           Object.assign(successResponse, reminder);
@@ -532,10 +522,9 @@ Only set run_in_background=false when your very next step depends on the result.
    * Agents always persist in the agent pool for reuse.
    */
   private async executeSingleAgent(params: AgentExecutionParams): Promise<any> {
-    const { agentType, taskPrompt, description, thoroughness, callId, depth, parentAgentName, initialMessages, contextImages, runInBackground, notifyWhenDone } = params;
+    const { agentType, taskPrompt, description, thoroughness, callId, depth, parentAgentName, initialMessages, contextImages, notifyWhenDone } = params;
 
-    logger.debug('[AGENT_TOOL] executeSingleAgent START:', agentType, 'callId:', callId, 'thoroughness:', thoroughness, 'background:', runInBackground);
-    const startTime = Date.now();
+    logger.debug('[AGENT_TOOL] executeSingleAgent START:', agentType, 'callId:', callId, 'thoroughness:', thoroughness);
 
     try {
       // Get agent manager
@@ -589,7 +578,7 @@ Only set run_in_background=false when your very next step depends on the result.
 
       // Determine the model that will be used for this agent
       // Need to get config to resolve the fallback model
-      const registry = ServiceRegistry.getInstance();
+      const registry = this.getExecutionRegistry();
       const configManager = registry.get('config_manager');
       const config = configManager?.getConfig();
       const agentModel = agentData.model || config?.model || 'unknown';
@@ -619,81 +608,19 @@ Only set run_in_background=false when your very next step depends on the result.
         parentAgentName,
         initialMessages,
         contextImages,
-        runInBackground,
-        notifyWhenDone,
+          notifyWhenDone,
       });
       logger.debug('[AGENT_TOOL] Agent task completed. Result length:', taskResult.result?.length || 0);
 
-      // Background OR detached-mid-run (Ctrl+B): the detached run owns AGENT_END
-      // / AGENT_BACKGROUND_COMPLETE when the agent truly finishes, so do NOT
-      // emit AGENT_END or run the interruption/permission check here. Return the
-      // spawn/handoff confirmation now.
-      if (runInBackground || (taskResult as any).backgrounded) {
-        const bgResponse: any = {
-          success: true,
-          result: taskResult.result,
-          agent_used: agentType,
-          duration_seconds: 0,
-          _agentModel: agentModel,
-          _backgrounded: true,
-        };
-        if (taskResult.agent_id) {
-          bgResponse.agent_id = taskResult.agent_id;
-        }
-        return bgResponse;
-      }
-
-      const duration = (Date.now() - startTime) / 1000;
-
-      // Emit agent end event
-      this.emitEvent({
-        id: callId,
-        type: ActivityEventType.AGENT_END,
-        timestamp: Date.now(),
-        data: {
-          agentName: agentType,
-          result: taskResult.result,
-          duration,
-          toolUseCount: taskResult.toolUseCount ?? 0,
-        },
-      });
-
-      // Check if the result indicates permission denial or interruption
-      // Strip the appended "IMPORTANT" note to check the actual response
-      const resultContent = taskResult.result?.split('\n\nIMPORTANT:')[0]?.trim();
-      if (
-        resultContent === PERMISSION_MESSAGES.USER_FACING_DENIAL ||
-        resultContent === PERMISSION_MESSAGES.USER_FACING_INTERRUPTION
-      ) {
-        logger.debug('[AGENT_TOOL] Agent was interrupted or permission denied:', resultContent);
-        return {
-          success: false,
-          error: resultContent,
-          error_type: 'permission_denied',
-          agent_used: agentType,
-        };
-      }
-
-      const response: any = {
+      return {
         success: true,
         result: taskResult.result,
         agent_used: agentType,
-        duration_seconds: Math.round(duration * Math.pow(10, FORMATTING.DURATION_DECIMAL_PLACES)) / Math.pow(10, FORMATTING.DURATION_DECIMAL_PLACES),
-        // Store agent model for session persistence (enables model tracking on resume)
+        duration_seconds: 0,
         _agentModel: agentModel,
+        _backgrounded: true,
+        ...(taskResult.agent_id ? { agent_id: taskResult.agent_id } : {}),
       };
-
-      // Include agent_id if available
-      if (taskResult.agent_id) {
-        response.agent_id = taskResult.agent_id;
-      }
-
-      // Flag linked plugin agents for UI behavior (no collapse, expanded tool limit)
-      if (agentData._isLinked) {
-        response._isLinkedPluginAgent = true;
-      }
-
-      return response;
     } catch (error) {
       const errorType = (error as any)?.error_type || 'system_error';
       const result = this.formatErrorResponse(
@@ -710,7 +637,7 @@ Only set run_in_background=false when your very next step depends on the result.
    * Validate all required services are available
    */
   private validateRequiredServices(): {
-    registry: ServiceRegistry;
+    registry: Pick<ServiceRegistry, 'get'>;
     mainModelClient: ModelClient;
     toolManager: ToolManager;
     config: any;
@@ -721,7 +648,7 @@ Only set run_in_background=false when your very next step depends on the result.
     // Shared resolver (also used by BaseDelegationTool). Map appConfig -> config
     // to preserve this method's existing return shape for its caller.
     const { registry, mainModelClient, toolManager, configManager, permissionManager, appConfig } =
-      resolveDelegationServices('agent');
+      resolveDelegationServices('agent', this.getExecutionRegistry());
     logger.debug('[AGENT_TOOL] All required services available');
     return { registry, mainModelClient, toolManager, config: appConfig, configManager, permissionManager };
   }
@@ -753,7 +680,7 @@ Only set run_in_background=false when your very next step depends on the result.
     } = params;
 
     // Build updated agent call stack for circular delegation detection
-    const registry = ServiceRegistry.getInstance();
+    const registry = this.getExecutionRegistry();
     const currentAgent = registry.get('agent');
     const currentCallStack = currentAgent?.getAgentCallStack?.() ?? [];
     const newCallStack = parentAgentName ? [...currentCallStack, parentAgentName] : currentCallStack;
@@ -794,7 +721,7 @@ Only set run_in_background=false when your very next step depends on the result.
     const { agentConfig, toolManager, modelClient, configManager, permissionManager, agentType } =
       params;
 
-    const registry = ServiceRegistry.getInstance();
+    const registry = this.getExecutionRegistry();
     const agentPoolService = registry.get('agent_pool');
 
     if (!agentPoolService) {
@@ -835,6 +762,7 @@ Only set run_in_background=false when your very next step depends on the result.
       `Execute this task: ${taskPrompt}`,
       {
         parentCallId: callId,
+        agentMessage: { messageId: callId, sender: this.getExecutionRegistry().get('agent')?.getInstanceId() ?? 'parent' },
         maxDuration,
         thoroughness,
       },
@@ -862,6 +790,7 @@ Only set run_in_background=false when your very next step depends on the result.
           'Please provide a concise summary of what you accomplished, found, or determined while working on this task.',
           {
             parentCallId: callId,
+            agentMessage: { messageId: `${callId}:summary`, sender: 'parent' },
             maxDuration,
             thoroughness,
           }
@@ -902,26 +831,6 @@ Only set run_in_background=false when your very next step depends on the result.
   /**
    * Format execution response with agent metadata
    */
-  private formatExecutionResponse(params: {
-    finalResponse: string;
-    agentId: string | null;
-    toolUseCount?: number;
-  }): { result: string; agent_id?: string; toolUseCount?: number } {
-    const { finalResponse, agentId, toolUseCount } = params;
-
-    // Append note to all agent responses
-    const result = appendAgentResponseSuffix(finalResponse);
-
-    // Return result with agent_id (always returned since agents always persist)
-    const returnValue: { result: string; agent_id?: string; toolUseCount?: number } = { result };
-    if (agentId) {
-      returnValue.agent_id = agentId;
-    }
-    if (toolUseCount !== undefined) {
-      returnValue.toolUseCount = toolUseCount;
-    }
-    return returnValue;
-  }
 
   /**
    * Cleanup and release agent resources
@@ -951,13 +860,15 @@ Only set run_in_background=false when your very next step depends on the result.
    * Agents always persist in the agent pool for reuse.
    */
   private async executeAgentTask(params: AgentTaskExecutionParams): Promise<{ result: string; agent_id?: string; backgrounded?: boolean; toolUseCount?: number }> {
-    const { agentData, agentType, taskPrompt, description, thoroughness, callId, depth, initialMessages, contextImages, runInBackground, notifyWhenDone } = params;
+    const { agentData, agentType, taskPrompt, description, thoroughness, callId, depth, initialMessages, contextImages, notifyWhenDone } = params;
 
     logger.debug('[AGENT_TOOL] executeAgentTask START for callId:', callId, 'thoroughness:', thoroughness);
 
     // 1. Validate services
     const services = this.validateRequiredServices();
     const { registry, mainModelClient, toolManager, config, configManager, permissionManager } = services;
+    const manager = registry.get('background_agent_manager');
+    if (!manager) throw new Error('Asynchronous agent execution is unavailable. No agent was started.');
 
     logger.debug('[AGENT_TOOL] Agent depth:', depth);
 
@@ -986,6 +897,11 @@ Only set run_in_background=false when your very next step depends on the result.
     }
 
     const baseConfig = agentManager.buildBaseConfig(agentData, agentType, toolManager, depth);
+    // Collaboration is an internal conversation capability, including for leaf/read-only agents.
+    if (baseConfig.allowedTools && toolManager.getAllTools().some(tool => tool.name === 'send-message')
+      && !baseConfig.allowedTools.includes('send-message')) {
+      baseConfig.allowedTools = [...baseConfig.allowedTools, 'send-message'];
+    }
 
     if (baseConfig.allowedTools !== undefined) {
       logger.debug('[AGENT_TOOL] Agent has access to', baseConfig.allowedTools.length, 'tools');
@@ -1086,21 +1002,6 @@ Only set run_in_background=false when your very next step depends on the result.
       }
     }
 
-    // 11. Register this run with the BackgroundAgentManager so it appears in the
-    // fleet (foreground AND background), can be entered, and — for foreground —
-    // can be promoted to background via Ctrl+B. If the manager is unavailable,
-    // fall back to the legacy blocking path.
-    const manager = registry.get('background_agent_manager');
-    if (!manager) {
-      try {
-        const finalResponse = await this.executeAgent({ agent: subAgent, agentType, taskPrompt, callId, maxDuration, thoroughness, images: processedImages });
-        return this.formatExecutionResponse({ finalResponse, agentId, toolUseCount: subAgent.getToolUseCount() });
-      } finally {
-        this.activeDelegations.delete(callId);
-        await this.releaseAgent({ pooledAgent, subAgent, callId });
-      }
-    }
-
     const cleanup = async () => {
       this.activeDelegations.delete(callId);
       await this.releaseAgent({ pooledAgent, subAgent, callId });
@@ -1114,32 +1015,21 @@ Only set run_in_background=false when your very next step depends on the result.
       description,
       callId,
       subAgent,
+      parentAgent: registry.get('agent') ?? undefined,
+      agentId,
+      messaging: registry.get('agent_messaging') ?? undefined,
       pooledAgent: pooledAgent ?? null,
-      runInBackground: runInBackground ?? false,
       run: () => this.executeAgent({ agent: subAgent, agentType, taskPrompt, callId, maxDuration, thoroughness, images: processedImages }),
       cleanup,
       buildEndData: () => ({ toolUseCount: subAgent.getToolUseCount() }),
     });
 
-    if (outcome.backgrounded) {
-      // Auto-wake on completion when the user backgrounded it via Ctrl+B (they
-      // clearly want to be told), or when the model opted in with notify_when_done.
-      const detachedByUser = !runInBackground; // foreground run promoted via Ctrl+B
-      if (detachedByUser || notifyWhenDone) {
-        registry.get('background_task_registry')?.markWatched(outcome.taskId);
-      }
-      const verb = runInBackground ? 'started in background' : 'moved to background';
-      return {
-        result: backgroundedMessage(outcome.taskId, agentType, verb),
-        agent_id: agentId ?? undefined,
-        backgrounded: true,
-      };
-    }
-
-    if (outcome.status === 'error' && outcome.error) {
-      throw new Error(outcome.error);
-    }
-    return this.formatExecutionResponse({ finalResponse: outcome.result, agentId, toolUseCount: subAgent.getToolUseCount() });
+    if (notifyWhenDone) registry.get('background_task_registry')?.markWatched(outcome.taskId);
+    return {
+      result: backgroundedMessage(outcome.taskId, agentType, 'started'),
+      agent_id: agentId ?? undefined,
+      backgrounded: true,
+    };
   }
 
   /**
@@ -1147,7 +1037,7 @@ Only set run_in_background=false when your very next step depends on the result.
    */
   private getAgentManager(): AgentManager {
     if (!this.agentManager) {
-      const registry = ServiceRegistry.getInstance();
+      const registry = this.getExecutionRegistry();
       const agentManager = registry.get('agent_manager');
       if (!agentManager) {
         throw new Error('AgentManager not registered in ServiceRegistry');
@@ -1178,8 +1068,7 @@ Only set run_in_background=false when your very next step depends on the result.
       }
     }
 
-    // Also cancel any running background agents (their runs are detached from
-    // activeDelegations' foreground lifecycle, so cover them explicitly).
+    // Cancellation covers every asynchronous run owned by the fleet manager.
     cancelRunningBackgroundAgents();
   }
 

@@ -26,6 +26,17 @@ function processInfo(overrides: Partial<ProcessInfo> = {}): ProcessInfo {
 }
 
 describe('BashProcessManager lifecycle', () => {
+  it('scopes implicit reminders to their exact owner while preserving global inspection', () => {
+    const manager = new BashProcessManager();
+    manager.addProcess(processInfo({ id: 'first-running', ownerId: 'first' }));
+    manager.addProcess(processInfo({ id: 'second-exited', ownerId: 'second', status: 'exited', exitCode: 0, exitTime: Date.now() }));
+    manager.addProcess(processInfo({ id: 'legacy-unowned' }));
+    expect(manager.getStatusReminders('first')).toEqual([expect.stringContaining('first-running')]);
+    expect(manager.getStatusReminders('second')).toEqual([expect.stringContaining('second-exited')]);
+    expect(manager.getStatusReminders('unknown')).toEqual([]);
+    expect(manager.getStatusReminders()).toHaveLength(3);
+  });
+
   it.skipIf(process.platform === 'win32')('awaits a real SIGTERM-resistant child during shutdown', async () => {
     const child = spawnBashCommand("trap '' TERM; printf ready; while :; do sleep 1; done", {
       detached: true, stdio: ['ignore', 'pipe', 'ignore'],

@@ -1,3 +1,4 @@
+import type { AgentMessagingService } from './AgentMessagingService.js';
 import type { PermissionPolicyService } from './PermissionPolicyService.js';
 /**
  * ServiceMap - The registry's key/type contract
@@ -77,6 +78,7 @@ export interface ServiceMap {
   agent_pool: AgentPoolService;
   agent_generation_service: AgentGenerationService;
   background_agent_manager: BackgroundAgentManager;
+  agent_messaging: AgentMessagingService;
   background_task_registry: BackgroundTaskRegistry;
 
   // --- Model clients ---

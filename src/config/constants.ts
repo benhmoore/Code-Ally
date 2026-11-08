@@ -1017,7 +1017,7 @@ export const RESPONSE_LOOP_DETECTOR = {
  * Used by ToolCallDisplay and ConversationView to identify agent delegations
  * Also used to determine when nested tool outputs should be hidden
  */
-export const AGENT_DELEGATION_TOOLS = ['agent', 'manage-agents', 'explore', 'plan', 'sessions', 'agent-ask', 'research'] as const;
+export const AGENT_DELEGATION_TOOLS = ['agent', 'manage-agents', 'explore', 'plan', 'sessions', 'research'] as const;
 
 /** Set form of {@link AGENT_DELEGATION_TOOLS} for O(1) membership checks. */
 export const AGENT_DELEGATION_TOOL_SET: ReadonlySet<string> = new Set(AGENT_DELEGATION_TOOLS);

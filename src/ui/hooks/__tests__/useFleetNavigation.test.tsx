@@ -17,7 +17,7 @@ afterEach(() => { mounted.splice(0).forEach(item => item.unmount()); vi.restoreA
 function agent(name: string) {
   const source = frozenConversation({ ...EMPTY_CONVERSATION, messages: [{ id: name, role: 'user', content: name }] });
   const controls = { ...source, setToolCallsExpanded: vi.fn(), toggleToolCallExpanded: vi.fn() };
-  return { getSession: () => controls, getTokenManager: () => ({ getCurrentTokenCount: () => 10 }) } as unknown as Agent;
+  return { isProcessing: () => true, getSession: () => controls, getTokenManager: () => ({ getCurrentTokenCount: () => 10 }) } as unknown as Agent;
 }
 
 describe('fleet conversation ownership', () => {
@@ -61,6 +61,29 @@ describe('fleet conversation ownership', () => {
     stream.emit({ id: 'removed', type: ActivityEventType.AGENT_BACKGROUND_COMPLETE, timestamp: Date.now() });
     await vi.waitFor(() => expect(fleet.isChildSelected).toBe(false));
     expect(fleet.conversationSource).toBe(main.getSession());
+  });
+
+  it('Ctrl+B backgrounds only shell commands owned by the selected conversation', async () => {
+    const main = agent('root'); const child = agent('child');
+    child.getInstanceId = () => 'selected-child-owner';
+    const backgroundForeground = vi.fn(() => 2);
+    const task = {id:'agent-child',status:'running',subAgent:child};
+    const manager = {listTasks:()=>[task]};
+    const stream = new ActivityStream();
+    vi.spyOn(ServiceRegistry.getInstance(),'get').mockImplementation(name => name==='background_agent_manager' ? manager as any : name==='bash_process_manager' ? {backgroundForeground} as any : null);
+    let fleet!: ReturnType<typeof useFleetNavigation>;
+    function Harness() { fleet=useFleetNavigation({activeAgentId:'agent-child',primaryAgent:main,foregroundAgent:child,foregroundAgentId:'agent-child',actions:{setActiveAgentId:vi.fn(),repaintConversationSurface:vi.fn()},selectForegroundConversation:vi.fn(),returnToPrimaryConversation:vi.fn()}); return null; }
+    mounted.push(render(<ActivityProvider activityStream={stream}><Harness/></ActivityProvider>,{stdout:new Stdout() as unknown as NodeJS.WriteStream,debug:true,exitOnCtrlC:false,patchConsole:false}));
+    await vi.waitFor(()=>expect(fleet).toBeDefined());
+    fleet.handleBackgroundCommand();
+    expect(backgroundForeground).toHaveBeenCalledWith('selected-child-owner');
+    await vi.waitFor(()=>expect(fleet.backgroundStatus).toBe('Backgrounded 2 commands.'));
+    expect(fleet.isChildSelected).toBe(true);
+    task.status='done';
+    stream.emit({id:'complete',type:ActivityEventType.AGENT_BACKGROUND_COMPLETE,timestamp:Date.now()});
+    await vi.waitFor(()=>expect(fleet.completedChild).toBe(true));
+    fleet.handleBackgroundCommand();
+    expect(backgroundForeground).toHaveBeenCalledOnce();
   });
 
   it('never displays the pooled agent or root history when a completed snapshot is unavailable', async () => {

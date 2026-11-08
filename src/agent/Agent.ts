@@ -86,21 +86,12 @@ import { TurnController, type TurnSnapshot } from './TurnController.js';
 /**
  * Minimal interface for parent agent references
  *
- * Used by specialized agents to pause/resume their parent's activity monitoring
- * during delegated work execution. This prevents false timeout triggers while
- * the child agent is actively working.
+ * Keeps delegation identity and depth without coupling independent execution
+ * lifecycles or activity watchdogs.
  */
 export interface IParentAgent {
   /** Unique instance identifier for debugging */
   readonly instanceId: string;
-  /** Pause the agent's activity monitoring timer */
-  pauseActivityMonitoring(): void;
-  /**
-   * Resume the agent's activity monitoring timer
-   * @param operationCompleted Whether the delegated operation completed and
-   * earns progress credit (default: true)
-   */
-  resumeActivityMonitoring(operationCompleted?: boolean): void;
   /** Get the agent's nesting depth (optional, for debugging) */
   getAgentDepth?(): number;
 }
@@ -115,7 +106,11 @@ export interface IParentAgent {
  * @property maxDuration - Maximum duration in minutes for this invocation
  * @property thoroughness - Thoroughness level: 'quick' | 'medium' | 'very thorough' | 'uncapped'
  */
+export interface AgentMessageSource { messageId: string; sender: string; }
+
 export interface AgentExecutionContext {
+  agentMessage?: AgentMessageSource;
+  onMessageAdmitted?: () => void;
   parentCallId?: string;
   maxDuration?: number;
   thoroughness?: string;
@@ -194,7 +189,7 @@ export class Agent {
   private activityStream: ActivityStream;
   private readonly conversationView: ConversationViewStore;
   private sessionRuntime?: SessionRuntime;
-  private inputQueue = new ConversationInputQueue(() => !!this.config?.isSpecializedAgent || this.isProcessing());
+  private inputQueue = new ConversationInputQueue(() => this.isProcessing());
   private toolOrchestrator: ToolOrchestrator;
   private config: AgentConfig;
   private readonly appConfig: Config; // Unwrapped application config for cleaner access
@@ -656,7 +651,7 @@ export class Agent {
   }
 
   /**
-   * Get the tool orchestrator (used by agent-ask to update parent call ID)
+   * Get the tool orchestrator (used when routing persistent-agent follow-ups)
    */
   getToolOrchestrator(): ToolOrchestrator {
     return this.toolOrchestrator;
@@ -884,7 +879,7 @@ export class Agent {
     ServiceRegistry.getInstance().get('tool_activation_registry')?.clear(this.instanceId);
     this.sessionRuntime = undefined;
     this.inputQueue.close();
-    this.inputQueue = new ConversationInputQueue(() => !!this.config?.isSpecializedAgent || this.isProcessing());
+    this.inputQueue = new ConversationInputQueue(() => this.isProcessing());
     // Clear conversation history (includes checkpoint tracking and token count)
     this.clearConversationHistory();
 
@@ -926,8 +921,7 @@ export class Agent {
    * Pause activity monitoring
    *
    * Temporarily pauses the activity watchdog timer while preserving the last activity time.
-   * This should be used when waiting for delegated work (e.g., nested agent execution) to
-   * prevent false timeout triggers while the delegated agent is actively working.
+   * Used for this agent's admitted tool operations and context reduction.
    *
    * Safe to call multiple times - subsequent calls are ignored if already paused.
    */
@@ -938,9 +932,7 @@ export class Agent {
   /**
    * Resume activity monitoring
    *
-   * Resumes the activity watchdog timer after delegated work completes.
-   * This should be called when delegated work finishes to continue monitoring
-   * the parent agent for activity timeouts.
+   * Resumes this agent's watchdog after its paused operation settles.
    *
    * Safe to call multiple times - subsequent calls are ignored if already running.
    *
@@ -1135,20 +1127,9 @@ export class Agent {
 
     // Capture parent reference at turn start to ensure paired pause/resume use same reference
     // This prevents count corruption if parentAgent changes during sendMessage execution
-    const parentAgentRef = this.parentAgent;
 
     let delegationSucceeded = true;
     try {
-      // Preparation owns the parent pause and idle-model lease too. A failed
-      // turn-start save must unwind them just like a failed model request.
-      // Pause parent agent's activity monitoring before sub-agent execution
-      // This prevents false timeout triggers while the sub-agent is actively working
-      if (parentAgentRef) {
-        parentAgentRef.pauseActivityMonitoring();
-        logger.debug('[AGENT]', this.instanceId,
-          `Pausing parent agent activity monitoring (parent: ${parentAgentRef.instanceId})`);
-      }
-
       // Start activity monitoring for specialized agents
       this.startActivityMonitoring();
 
@@ -1192,9 +1173,10 @@ export class Agent {
         content: message,
         timestamp: Date.now(),
         images,
-        ...(submittedContent === message ? {} : { metadata: { submittedContent } }),
+        metadata: { ...(submittedContent === message ? {} : { submittedContent }), ...(executionContext?.agentMessage ? { agentMessage: executionContext.agentMessage, source: 'agent' } : {}) },
       };
       this.conversationManager.addMessage(userMessage);
+      executionContext?.onMessageAdmitted?.();
       if (objectiveReminder) this.conversationManager.addMessage(objectiveReminder);
 
       // If the previous request was interrupted, add a system reminder
@@ -1351,18 +1333,6 @@ export class Agent {
       this.emitAgentEnd(!delegationSucceeded);
 
       this.cleanupRequestState();
-
-      // Resume parent agent's activity monitoring after sub-agent completes
-      // This must be in finally block to guarantee execution even if sendMessage throws
-      // Pass delegationSucceeded to conditionally record progress:
-      // - true (default): child completed successfully, parent should record progress
-      // - false: child threw error, parent should NOT record progress
-      // Use parentAgentRef captured at turn start to ensure paired pause/resume use same reference
-      if (parentAgentRef) {
-        parentAgentRef.resumeActivityMonitoring(delegationSucceeded);
-        logger.debug('[AGENT]', this.instanceId,
-          `Resuming parent agent activity monitoring (parent: ${parentAgentRef.instanceId}, succeeded: ${delegationSucceeded})`);
-      }
     }
   }
 
@@ -1450,13 +1420,13 @@ export class Agent {
    * Add user interjection message
    * Called when user submits message mid-response
    */
-  addUserInterjection(message: string): void {
+  addUserInterjection(message: string, agentMessage?: AgentMessageSource): void {
     this.turnController.acceptDirection();
     this.conversationManager.addMessage({
       role: 'user',
       content: message,
       timestamp: Date.now(),
-      metadata: { isInterjection: true },
+      metadata: { isInterjection: true, ...(agentMessage ? { agentMessage, source: 'agent' } : {}) },
     });
 
     // An interjection is new external evidence, just like the user input that
@@ -1471,6 +1441,26 @@ export class Agent {
     this.loopDetector.resetTextDetectors();
 
     logger.debug('[AGENT_INTERJECTION]', this.instanceId, 'User interjection added:', message.substring(0, 50));
+  }
+
+  /** Agent communication uses the same serialized owner as human input, with explicit provenance. */
+  receiveAgentMessage(message: string, source: AgentMessageSource): {
+    kind: 'delivered' | 'queued'; admitted: Promise<boolean>; completion: Promise<import('../services/SessionRuntime.js').SubmissionResult<string>>;
+  } {
+    if (this.canAcceptSteering()) {
+      this.addUserInterjection(message, source);
+      this.interrupt({ kind: 'user_interjection' });
+      return { kind: 'delivered', admitted: Promise.resolve(true), completion: Promise.resolve({ kind: 'steered' }) };
+    }
+    let acknowledge!: (accepted: boolean) => void;
+    const admitted = new Promise<boolean>(resolve => { acknowledge = resolve; });
+    const completion = this.getSession().submit(message, {
+      mode: 'follow_up', execute: text => this.sendMessage(text, {
+        agentMessage: source, onMessageAdmitted: () => acknowledge(true),
+      }),
+    });
+    void completion.then(() => acknowledge(false), () => acknowledge(false));
+    return { kind: 'queued', admitted, completion };
   }
 
   /** Re-arm per-turn safeguards before processing queued user direction. */
@@ -1574,7 +1564,7 @@ export class Agent {
       planModeActive: planModeManager?.isActive() ?? false,
       latestUserText,
       backgroundTasks: runtimeRegistry.get('background_task_registry')?.list() ?? [],
-      hasPersistentAgent: (runtimeRegistry.get('agent_pool')?.getAgentIds().length ?? 0) > 0,
+      hasPersistentAgent: !!this.parentAgent || (runtimeRegistry.get('agent_pool')?.getAgentIds().length ?? 0) > 0,
       hasToolResults: conversationMessages.some(message => message.role === 'tool'),
       hasCheckpoint: this.conversationManager.hasCheckpoint(),
     };
@@ -1654,10 +1644,10 @@ export class Agent {
     // Headless runs do not have the React wake hook. Drain completed delegated
     // work before every model request so results are delivered exactly once even
     // when the parent is otherwise idle or only producing progress prose.
-    if (!this.config.isSpecializedAgent) {
+    {
       const completed = ServiceRegistry.getInstance()
         .get('background_task_registry')
-        ?.drainCompletedAgentResults() ?? [];
+        ?.drainCompletedAgentResults(this.instanceId) ?? [];
       if (completed.length > 0) {
         const report = completed.map((task) => {
           const body = task.status === 'done'
@@ -2446,6 +2436,7 @@ export class Agent {
     });
     return this.sessionRuntime;
   }
+
 
   getInputQueue(): ConversationInputQueue {
     return this.inputQueue;

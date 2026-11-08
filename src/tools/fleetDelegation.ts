@@ -1,16 +1,7 @@
 /**
- * runFleetDelegation - shared foreground/background run lifecycle for delegations
- *
- * Both AgentTool (the `agent` tool) and BaseDelegationTool (`explore`/`plan`)
- * register their runs here so every agent — foreground or background — appears
- * in the fleet, can be entered, and can be promoted to background via Ctrl+B.
- *
- * Lifecycle:
- * - Registers a task with the BackgroundAgentManager (background runs are
- *   capped; this function owns cleanup even when admission fails).
- * - One task promise covers execution, cleanup, and terminal publication.
- * - Detached completion emits AGENT_END / AGENT_BACKGROUND_COMPLETE here.
- * - Foreground callers receive the settled result and emit their own AGENT_END.
+ * One asynchronous delegation lifecycle owns execution, queued messages, pool
+ * release, immutable inspection state and exactly-once completion publication.
+ * Launch returns after admission; only an explicit wait joins the child run.
  */
 
 import { BackgroundAgentManager, BackgroundAgentStatus, type BackgroundAgentTask } from '../services/BackgroundAgentManager.js';
@@ -20,6 +11,7 @@ import { ActivityStream } from '../services/ActivityStream.js';
 import { ActivityEventType } from '../types/index.js';
 import { PERMISSION_MESSAGES } from '../config/constants.js';
 import { formatError } from '../utils/errorUtils.js';
+import type { AgentMessagingService } from '../services/AgentMessagingService.js';
 import { logger } from '../services/Logger.js';
 
 export interface FleetDelegationParams {
@@ -31,46 +23,61 @@ export interface FleetDelegationParams {
   description?: string;
   callId: string;
   subAgent: Agent;
+  parentAgent?: Agent;
+  agentId?: string | null;
+  messaging?: AgentMessagingService;
+  publishCompletion?: boolean;
   pooledAgent: PooledAgent | null;
-  runInBackground: boolean;
   /** Execute the agent and return its final response text. */
   run: () => Promise<string>;
   /** Release the agent + finalize delegation. Called exactly once when settled. */
   cleanup: () => Promise<void> | void;
-  /** Extra AGENT_END data for detached completion (e.g. contextUsage). */
+  /** Extra AGENT_END data for completion (e.g. contextUsage). */
   buildEndData?: (result: string, durationSec: number) => Record<string, any>;
 }
 
-export type FleetDelegationOutcome =
-  | { backgrounded: true; taskId: string }
-  | { backgrounded: false; status: BackgroundAgentStatus; result: string; error: string | null };
+export interface FleetDelegationOutcome { taskId: string; }
 
 export async function runFleetDelegation(p: FleetDelegationParams): Promise<FleetDelegationOutcome> {
   let task: BackgroundAgentTask;
+  let admittedTask: BackgroundAgentTask | undefined;
   try {
     task = p.manager.createTask({
       agentType: p.agentType,
       taskPrompt: p.taskPrompt,
       description: p.description,
-      mode: p.runInBackground ? 'background' : 'foreground',
       subAgent: p.subAgent,
       pooledAgent: p.pooledAgent,
       callId: p.callId,
     });
+    task.ownerId = p.parentAgent?.getInstanceId();
     p.manager.addTask(task);
+    admittedTask = task;
+    task.contextGeneration = p.messaging?.register(p.subAgent, p.agentId ?? task.id, p.parentAgent, !!p.pooledAgent);
   } catch (error) {
     try { await p.cleanup(); }
     catch (cleanupError) { throw new AggregateError([error, cleanupError], 'Delegation admission and cleanup failed', { cause: cleanupError }); }
+    if (admittedTask) {
+      admittedTask.status = 'error';
+      admittedTask.acceptingMessages = false;
+      admittedTask.error = formatError(error);
+      admittedTask.endTime = Date.now();
+      admittedTask.consumed = true;
+      p.manager.removeTask(admittedTask.id);
+    }
     throw error;
   }
 
   // Defer execution until the complete settlement promise has been installed.
+  const execute = async () => { task.result = await p.run(); };
+  const execution = task.inputQueue
+    ? task.inputQueue.enqueue(p.taskPrompt, execute)
+    : Promise.resolve().then(execute);
   task.promise = Promise.resolve().then(async () => {
     let status: BackgroundAgentStatus = 'done';
     try {
-      const res = await p.run();
-      task.result = res;
-      const content = res?.split('\n\nIMPORTANT:')[0]?.trim();
+      await execution;
+      const content = task.result?.split('\n\nIMPORTANT:')[0]?.trim();
       if (content === PERMISSION_MESSAGES.USER_FACING_INTERRUPTION) {
         status = 'cancelled';
       }
@@ -78,9 +85,11 @@ export async function runFleetDelegation(p: FleetDelegationParams): Promise<Flee
       task.error = formatError(error);
       status = 'error';
     }
+    task.acceptingMessages = false;
+    await task.inputQueue?.whenIdle();
+    if (task.cancellationRequested) status = 'cancelled';
     // Freeze the completed conversation before a pooled agent can be reused.
     // Pending follow-ups remain visible as unsent and can be recalled by the user.
-    task.inputQueue?.close();
     const view = p.subAgent.getConversationView?.().getSnapshot();
     if (view) task.completedView = structuredClone(view);
     task.completedModel = p.subAgent.getModelClient?.().modelName;
@@ -97,8 +106,11 @@ export async function runFleetDelegation(p: FleetDelegationParams): Promise<Flee
     }
     task.status = status;
     task.endTime = Date.now();
+    if (p.publishCompletion !== false && p.parentAgent && p.messaging) {
+      p.messaging.publishCompletion(task, p.parentAgent);
+    }
     try {
-      if (task.mode === 'background') {
+      {
         const duration = (task.endTime - task.startTime) / 1000;
         p.activityStream.emit({
           id: p.callId,
@@ -126,28 +138,10 @@ export async function runFleetDelegation(p: FleetDelegationParams): Promise<Flee
     }
     if (task.finalizationError) throw task.finalizationError;
   });
-  // Observe detached rejection without replacing the authoritative promise.
+  // Observe asynchronous rejection without replacing the authoritative promise.
   void task.promise.catch(error => logger.error(`[fleetDelegation] Finalization failed for ${task.id}:`, error));
 
-  if (p.runInBackground) {
-    return { backgrounded: true, taskId: task.id };
-  }
-
-  // FOREGROUND: await completion, but let Ctrl+B detach the run mid-flight.
-  const detached = await Promise.race([
-    task.promise.then(() => false, () => false),
-    task.detachPromise.then(() => true),
-  ]);
-
-  if (detached) {
-    return { backgrounded: true, taskId: task.id };
-  }
-
-  // Foreground ownership may be dropped only after complete finalization.
-  await task.promise;
-  // The foreground caller consumes the result; retain the bounded task for inspection.
-  task.consumed = true;
-  return { backgrounded: false, status: task.status, result: task.result ?? '', error: task.error };
+  return { taskId: task.id };
 }
 
 /** Standard message returned to the model when a run is backgrounded. */

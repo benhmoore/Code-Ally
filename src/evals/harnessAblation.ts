@@ -132,7 +132,7 @@ const DISTRACTORS: FunctionDefinition[] = [
   tool('todo-write', 'Create or update the task list.', { todos: { type: 'array', items: { type: 'object' } } }, ['todos']),
   tool('web-search', 'Search the public web.', { query: { type: 'string' } }, ['query']),
   tool('memory', 'Save or recall durable project memory.', { action: { type: 'string' }, query: { type: 'string' } }, ['action']),
-  tool('agent', 'Delegate an independent task.', { task_prompt: { type: 'string' }, run_in_background: { type: 'boolean' } }, ['task_prompt']),
+  tool('agent', 'Delegate an independent task in the background.', { task_prompt: { type: 'string' } }, ['task_prompt']),
   tool('skill', 'Load reusable workflow instructions.', { name: { type: 'string' } }, ['name']),
   tool('format', 'Format source files.', { file_paths: { type: 'array', items: { type: 'string' } } }, ['file_paths']),
   tool('lint', 'Run source-file lint checks.', { file_paths: { type: 'array', items: { type: 'string' } } }, ['file_paths']),

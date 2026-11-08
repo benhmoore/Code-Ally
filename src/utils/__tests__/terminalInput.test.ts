@@ -41,6 +41,20 @@ describe('parseCursorReport', () => {
 });
 
 describe('TerminalInputStream', () => {
+  it('normalizes complete and fragmented modifyOtherKeys Ctrl+Enter without changing legacy Enter', async () => {
+    const sequence = '\x1b[27;5;13~';
+    for (let split = 0; split <= sequence.length; split++) {
+      const source = new FakeStdin();
+      const stream = new TerminalInputStream(source as unknown as NodeJS.ReadStream);
+      const chunks = collect(stream);
+      source.emit('data', sequence.slice(0, split));
+      source.emit('data', sequence.slice(split) + '\r');
+      await flushed();
+      expect(chunks.join('')).toBe('\x1b[13;5u\r');
+      stream.destroy();
+    }
+  });
+
   it('publishes mouse reports and passes keys through untouched', async () => {
     const source = new FakeStdin();
     const stream = new TerminalInputStream(source as unknown as NodeJS.ReadStream);

@@ -167,6 +167,13 @@ export class TerminalInputStream extends Readable {
       passthrough += text.slice(index, escape);
       const rest = text.slice(escape);
 
+      // xterm modifyOtherKeys encodes Ctrl+Enter differently from CSI-u.
+      // Normalize only this unambiguous chord; a legacy CR stays ordinary Enter.
+      if (rest.startsWith('\x1b[27;5;13~')) {
+        passthrough += '\x1b[13;5u';
+        index = escape + '\x1b[27;5;13~'.length;
+        continue;
+      }
       const sgr = SGR_MOUSE_PATTERN.exec(rest);
       if (sgr) {
         const event = parseSgrMouseReport(sgr[0]);

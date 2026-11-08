@@ -31,13 +31,7 @@ const settle = () => new Promise(resolve => setTimeout(resolve, 20));
 
 const ControlledPrompt: React.FC = () => {
   const [draft, setDraft] = useState(EMPTY_DRAFT);
-  return (
-    <InputPrompt
-      onSubmit={() => {}}
-      draft={draft}
-      onDraftChange={setDraft}
-    />
-  );
+  return <InputPrompt onSubmit={() => {}} draft={draft} onDraftChange={setDraft} />;
 };
 
 describe('InputPrompt controlled buffer', () => {
@@ -50,7 +44,12 @@ describe('InputPrompt controlled buffer', () => {
       save: vi.fn(() => new Promise<void>(() => {})),
     } as unknown as CommandHistory;
     const instance = render(
-      <InputPrompt commandHistory={history} onSubmit={value => { submitted.push(value); }} />,
+      <InputPrompt
+        commandHistory={history}
+        onSubmit={value => {
+          submitted.push(value);
+        }}
+      />,
       {
         stdout: stdout as unknown as NodeJS.WriteStream,
         stdin: stdin as unknown as NodeJS.ReadStream,
@@ -81,7 +80,11 @@ describe('InputPrompt controlled buffer', () => {
     const stdin = new FakeStdin();
     const submitted: string[] = [];
     const instance = render(
-      <InputPrompt onSubmit={value => { submitted.push(value); }} />,
+      <InputPrompt
+        onSubmit={value => {
+          submitted.push(value);
+        }}
+      />,
       {
         stdout: stdout as unknown as NodeJS.WriteStream,
         stdin: stdin as unknown as NodeJS.ReadStream,
@@ -160,16 +163,13 @@ describe('InputPrompt controlled buffer', () => {
         ];
       }),
     } as unknown as CompletionProvider;
-    const instance = render(
-      <InputPrompt onSubmit={() => {}} completionProvider={completionProvider} />,
-      {
-        stdout: stdout as unknown as NodeJS.WriteStream,
-        stdin: stdin as unknown as NodeJS.ReadStream,
-        debug: true,
-        exitOnCtrlC: false,
-        patchConsole: false,
-      }
-    );
+    const instance = render(<InputPrompt onSubmit={() => {}} completionProvider={completionProvider} />, {
+      stdout: stdout as unknown as NodeJS.WriteStream,
+      stdin: stdin as unknown as NodeJS.ReadStream,
+      debug: true,
+      exitOnCtrlC: false,
+      patchConsole: false,
+    });
 
     stdin.write('/config set ');
     await new Promise(resolve => setTimeout(resolve, 200));
@@ -189,15 +189,22 @@ describe('InputPrompt controlled buffer', () => {
       getCompletions: vi.fn(async (input: string) => {
         const match = input.match(/context_size=(\d*)$/);
         if (!match) return [];
-        return ['32768'].filter(value => value.startsWith(match[1])).map(value => ({
-          value,
-          type: 'option' as const,
-          insertText: `context_size=${value}`,
-        }));
+        return ['32768']
+          .filter(value => value.startsWith(match[1]))
+          .map(value => ({
+            value,
+            type: 'option' as const,
+            insertText: `context_size=${value}`,
+          }));
       }),
     } as unknown as CompletionProvider;
     const instance = render(
-      <InputPrompt onSubmit={value => { submitted.push(value); }} completionProvider={completionProvider} />,
+      <InputPrompt
+        onSubmit={value => {
+          submitted.push(value);
+        }}
+        completionProvider={completionProvider}
+      />,
       {
         stdout: stdout as unknown as NodeJS.WriteStream,
         stdin: stdin as unknown as NodeJS.ReadStream,
@@ -220,24 +227,23 @@ describe('InputPrompt controlled buffer', () => {
     const stdout = new FakeStdout();
     const stdin = new FakeStdin();
     const completionProvider = {
-      getCompletions: vi.fn(async (input: string) => [{
-        value: input === '/co' ? 'config' : 'clear',
-        type: 'command' as const,
-        insertText: input === '/co' ? '/config' : '/clear',
-        replaceStart: 0,
-        replaceEnd: input.length,
-      }]),
+      getCompletions: vi.fn(async (input: string) => [
+        {
+          value: input === '/co' ? 'config' : 'clear',
+          type: 'command' as const,
+          insertText: input === '/co' ? '/config' : '/clear',
+          replaceStart: 0,
+          replaceEnd: input.length,
+        },
+      ]),
     } as unknown as CompletionProvider;
-    const instance = render(
-      <InputPrompt onSubmit={() => {}} completionProvider={completionProvider} />,
-      {
-        stdout: stdout as unknown as NodeJS.WriteStream,
-        stdin: stdin as unknown as NodeJS.ReadStream,
-        debug: true,
-        exitOnCtrlC: false,
-        patchConsole: false,
-      }
-    );
+    const instance = render(<InputPrompt onSubmit={() => {}} completionProvider={completionProvider} />, {
+      stdout: stdout as unknown as NodeJS.WriteStream,
+      stdin: stdin as unknown as NodeJS.ReadStream,
+      debug: true,
+      exitOnCtrlC: false,
+      patchConsole: false,
+    });
 
     stdin.write('/c');
     await new Promise(resolve => setTimeout(resolve, 200));
@@ -260,14 +266,16 @@ describe('InputPrompt controlled buffer', () => {
     const stdin = new FakeStdin();
     const onBufferChange = vi.fn();
     const completionProvider = {
-      getCompletions: vi.fn(async (input: string) => [{
-        value: input === '/co' ? 'config' : 'clear',
-        type: 'command' as const,
-        insertText: input === '/co' ? '/config' : '/clear',
-        enterBehavior: 'submit' as const,
-        replaceStart: 0,
-        replaceEnd: input.length,
-      }]),
+      getCompletions: vi.fn(async (input: string) => [
+        {
+          value: input === '/co' ? 'config' : 'clear',
+          type: 'command' as const,
+          insertText: input === '/co' ? '/config' : '/clear',
+          enterBehavior: 'submit' as const,
+          replaceStart: 0,
+          replaceEnd: input.length,
+        },
+      ]),
     } as unknown as CompletionProvider;
     const instance = render(
       <InputPrompt
@@ -311,11 +319,7 @@ describe('InputPrompt controlled buffer', () => {
       getCompletions: vi.fn(async () => [{ value: 'model', type: 'option' as const }]),
     } as unknown as CompletionProvider;
     const instance = render(
-      <InputPrompt
-        onSubmit={() => {}}
-        commandHistory={commandHistory}
-        completionProvider={completionProvider}
-      />,
+      <InputPrompt onSubmit={() => {}} commandHistory={commandHistory} completionProvider={completionProvider} />,
       {
         stdout: stdout as unknown as NodeJS.WriteStream,
         stdin: stdin as unknown as NodeJS.ReadStream,
@@ -342,14 +346,16 @@ describe('InputPrompt controlled buffer', () => {
     const onSubmit = vi.fn();
     const onBufferChange = vi.fn();
     const completionProvider = {
-      getCompletions: vi.fn(async (input: string) => [{
-        value: 'example',
-        type: 'command' as const,
-        insertText: '/example',
-        enterBehavior: 'submit' as const,
-        replaceStart: 0,
-        replaceEnd: input.length,
-      }]),
+      getCompletions: vi.fn(async (input: string) => [
+        {
+          value: 'example',
+          type: 'command' as const,
+          insertText: '/example',
+          enterBehavior: 'submit' as const,
+          replaceStart: 0,
+          replaceEnd: input.length,
+        },
+      ]),
     } as unknown as CompletionProvider;
     const instance = render(
       <InputPrompt
@@ -383,14 +389,16 @@ describe('InputPrompt controlled buffer', () => {
     const onSubmit = vi.fn();
     const onBufferChange = vi.fn();
     const completionProvider = {
-      getCompletions: vi.fn(async (input: string) => [{
-        value: 'model',
-        type: 'option' as const,
-        insertText: 'model=',
-        replaceStart: '/config set '.length,
-        replaceEnd: input.length,
-        continueInput: true,
-      }]),
+      getCompletions: vi.fn(async (input: string) => [
+        {
+          value: 'model',
+          type: 'option' as const,
+          insertText: 'model=',
+          replaceStart: '/config set '.length,
+          replaceEnd: input.length,
+          continueInput: true,
+        },
+      ]),
     } as unknown as CompletionProvider;
     const instance = render(
       <InputPrompt
@@ -423,25 +431,24 @@ describe('InputPrompt controlled buffer', () => {
     const stdin = new FakeStdin();
     const onSubmit = vi.fn();
     const completionProvider = {
-      getCompletions: vi.fn(async (input: string) => [{
-        value: 'clear',
-        type: 'command' as const,
-        insertText: '/clear',
-        enterBehavior: 'submit' as const,
-        replaceStart: 0,
-        replaceEnd: input.length,
-      }]),
+      getCompletions: vi.fn(async (input: string) => [
+        {
+          value: 'clear',
+          type: 'command' as const,
+          insertText: '/clear',
+          enterBehavior: 'submit' as const,
+          replaceStart: 0,
+          replaceEnd: input.length,
+        },
+      ]),
     } as unknown as CompletionProvider;
-    const instance = render(
-      <InputPrompt onSubmit={onSubmit} completionProvider={completionProvider} />,
-      {
-        stdout: stdout as unknown as NodeJS.WriteStream,
-        stdin: stdin as unknown as NodeJS.ReadStream,
-        debug: true,
-        exitOnCtrlC: false,
-        patchConsole: false,
-      }
-    );
+    const instance = render(<InputPrompt onSubmit={onSubmit} completionProvider={completionProvider} />, {
+      stdout: stdout as unknown as NodeJS.WriteStream,
+      stdin: stdin as unknown as NodeJS.ReadStream,
+      debug: true,
+      exitOnCtrlC: false,
+      patchConsole: false,
+    });
 
     stdin.write('/cl');
     await new Promise(resolve => setTimeout(resolve, 200));
@@ -466,16 +473,13 @@ describe('InputPrompt controlled buffer', () => {
         return Promise.resolve([]);
       }),
     } as unknown as CompletionProvider;
-    const instance = render(
-      <InputPrompt onSubmit={() => {}} completionProvider={completionProvider} />,
-      {
-        stdout: stdout as unknown as NodeJS.WriteStream,
-        stdin: stdin as unknown as NodeJS.ReadStream,
-        debug: true,
-        exitOnCtrlC: false,
-        patchConsole: false,
-      }
-    );
+    const instance = render(<InputPrompt onSubmit={() => {}} completionProvider={completionProvider} />, {
+      stdout: stdout as unknown as NodeJS.WriteStream,
+      stdin: stdin as unknown as NodeJS.ReadStream,
+      debug: true,
+      exitOnCtrlC: false,
+      patchConsole: false,
+    });
 
     stdin.write('/a');
     await new Promise(resolve => setTimeout(resolve, 180));
@@ -504,11 +508,7 @@ describe('InputPrompt controlled buffer', () => {
       getCompletions: vi.fn(async () => [{ value: 'model', type: 'option' as const }]),
     } as unknown as CompletionProvider;
     const instance = render(
-      <InputPrompt
-        onSubmit={() => {}}
-        commandHistory={commandHistory}
-        completionProvider={completionProvider}
-      />,
+      <InputPrompt onSubmit={() => {}} commandHistory={commandHistory} completionProvider={completionProvider} />,
       {
         stdout: stdout as unknown as NodeJS.WriteStream,
         stdin: stdin as unknown as NodeJS.ReadStream,
@@ -541,16 +541,13 @@ describe('InputPrompt controlled buffer', () => {
     const completionProvider = {
       getCompletions: vi.fn(async () => [{ value: 'config', type: 'command' as const }]),
     } as unknown as CompletionProvider;
-    const instance = render(
-      <InputPrompt onSubmit={() => {}} completionProvider={completionProvider} agent={agent} />,
-      {
-        stdout: stdout as unknown as NodeJS.WriteStream,
-        stdin: stdin as unknown as NodeJS.ReadStream,
-        debug: true,
-        exitOnCtrlC: false,
-        patchConsole: false,
-      }
-    );
+    const instance = render(<InputPrompt onSubmit={() => {}} completionProvider={completionProvider} agent={agent} />, {
+      stdout: stdout as unknown as NodeJS.WriteStream,
+      stdin: stdin as unknown as NodeJS.ReadStream,
+      debug: true,
+      exitOnCtrlC: false,
+      patchConsole: false,
+    });
 
     stdin.write('/co');
     await new Promise(resolve => setTimeout(resolve, 200));
@@ -570,10 +567,22 @@ test('Alt+Enter queues while Enter steers, and Alt+Up recalls without submitting
   const onSubmit = vi.fn();
   const recall = vi.fn(() => 'editable follow-up');
   const agent = { isProcessing: () => true } as Agent;
-  const instance = render(<InputPrompt agent={agent} onSubmit={onSubmit} onFollowUp={onFollowUp} onInterjection={onInterjection} onRecallFollowUp={recall} />, {
-    stdout: stdout as unknown as NodeJS.WriteStream, stdin: stdin as unknown as NodeJS.ReadStream,
-    debug: true, exitOnCtrlC: false, patchConsole: false,
-  });
+  const instance = render(
+    <InputPrompt
+      agent={agent}
+      onSubmit={onSubmit}
+      onFollowUp={onFollowUp}
+      onInterjection={onInterjection}
+      onRecallFollowUp={recall}
+    />,
+    {
+      stdout: stdout as unknown as NodeJS.WriteStream,
+      stdin: stdin as unknown as NodeJS.ReadStream,
+      debug: true,
+      exitOnCtrlC: false,
+      patchConsole: false,
+    }
+  );
   try {
     await settle();
     stdin.write('later');
@@ -592,7 +601,9 @@ test('Alt+Enter queues while Enter steers, and Alt+Up recalls without submitting
     expect(recall).toHaveBeenCalledOnce();
     expect(stdout.frames.join('')).toContain('editable follow-up');
     expect(onSubmit).not.toHaveBeenCalled();
-  } finally { instance.unmount(); }
+  } finally {
+    instance.unmount();
+  }
 });
 
 test('completed conversations cannot submit or interrupt a reused agent', async () => {
@@ -600,11 +611,21 @@ test('completed conversations cannot submit or interrupt a reused agent', async 
   const interrupt = vi.fn();
   const onSubmit = vi.fn();
   const onExitAgent = vi.fn();
-  const instance = render(<InputPrompt conversationReadOnly agent={{ isProcessing: () => true, interrupt } as unknown as Agent}
-    onSubmit={onSubmit} onExitAgent={onExitAgent} />, {
-    stdout: new FakeStdout() as unknown as NodeJS.WriteStream, stdin: stdin as unknown as NodeJS.ReadStream,
-    debug: true, exitOnCtrlC: false, patchConsole: false,
-  });
+  const instance = render(
+    <InputPrompt
+      conversationReadOnly
+      agent={{ isProcessing: () => true, interrupt } as unknown as Agent}
+      onSubmit={onSubmit}
+      onExitAgent={onExitAgent}
+    />,
+    {
+      stdout: new FakeStdout() as unknown as NodeJS.WriteStream,
+      stdin: stdin as unknown as NodeJS.ReadStream,
+      debug: true,
+      exitOnCtrlC: false,
+      patchConsole: false,
+    }
+  );
   try {
     await settle();
     stdin.write('draft');
@@ -617,7 +638,9 @@ test('completed conversations cannot submit or interrupt a reused agent', async 
     expect(onSubmit).not.toHaveBeenCalled();
     expect(interrupt).not.toHaveBeenCalled();
     expect(onExitAgent).toHaveBeenCalledOnce();
-  } finally { instance.unmount(); }
+  } finally {
+    instance.unmount();
+  }
 });
 
 test('a prominent prompt keeps the cursor visible in a long draft and submits the complete text', async () => {
@@ -626,8 +649,11 @@ test('a prominent prompt keeps the cursor visible in a long draft and submits th
   const stdin = new FakeStdin();
   const onSubmit = vi.fn();
   const instance = render(<InputPrompt prominent onSubmit={onSubmit} />, {
-    stdout: stdout as unknown as NodeJS.WriteStream, stdin: stdin as unknown as NodeJS.ReadStream,
-    debug: true, exitOnCtrlC: false, patchConsole: false,
+    stdout: stdout as unknown as NodeJS.WriteStream,
+    stdin: stdin as unknown as NodeJS.ReadStream,
+    debug: true,
+    exitOnCtrlC: false,
+    patchConsole: false,
   });
   try {
     await settle();
@@ -646,25 +672,38 @@ test('a prominent prompt keeps the cursor visible in a long draft and submits th
     stdin.write('\r');
     await settle();
     expect(onSubmit).toHaveBeenCalledWith(draft, undefined);
-  } finally { instance.unmount(); }
+  } finally {
+    instance.unmount();
+  }
 });
 
- test('restores the cursor with the draft after a modal unmounts the editor', async () => {
+test('restores the cursor with the draft after a modal unmounts the editor', async () => {
   const stdout = new FakeStdout();
   const stdin = new FakeStdin();
   let draft = { text: 'abcd', cursor: 2 };
   const submitted = vi.fn();
-  const prompt = () => <InputPrompt draft={draft} onDraftChange={next => { draft = next; }} onSubmit={submitted}/>;
+  const prompt = () => (
+    <InputPrompt
+      draft={draft}
+      onDraftChange={next => {
+        draft = next;
+      }}
+      onSubmit={submitted}
+    />
+  );
   const instance = render(prompt(), {
-    stdout: stdout as unknown as NodeJS.WriteStream, stdin: stdin as unknown as NodeJS.ReadStream,
-    debug: true, exitOnCtrlC: false, patchConsole: false,
+    stdout: stdout as unknown as NodeJS.WriteStream,
+    stdin: stdin as unknown as NodeJS.ReadStream,
+    debug: true,
+    exitOnCtrlC: false,
+    patchConsole: false,
   });
   try {
     await settle();
     stdin.write('X');
     await settle();
     expect(draft).toEqual({ text: 'abXcd', cursor: 3 });
-    instance.rerender(<React.Fragment/>);
+    instance.rerender(<React.Fragment />);
     await settle();
     instance.rerender(prompt());
     await settle();
@@ -675,18 +714,31 @@ test('a prominent prompt keeps the cursor visible in a long draft and submits th
     await settle();
     expect(submitted).toHaveBeenCalledWith('abXYcd', undefined);
     expect(draft).toEqual({ text: '', cursor: 0 });
-  } finally { instance.unmount(); }
+  } finally {
+    instance.unmount();
+  }
 });
 
- test('ignores Kitty key releases instead of inserting or submitting twice', async () => {
+test('ignores Kitty key releases instead of inserting or submitting twice', async () => {
   const stdout = new FakeStdout();
   const stdin = new FakeStdin();
   const submitted = vi.fn();
   let draft = EMPTY_DRAFT;
-  const instance = render(<InputPrompt onSubmit={submitted} onDraftChange={next => { draft = next; }}/>, {
-    stdout: stdout as unknown as NodeJS.WriteStream, stdin: stdin as unknown as NodeJS.ReadStream,
-    debug: true, exitOnCtrlC: false, patchConsole: false,
-  });
+  const instance = render(
+    <InputPrompt
+      onSubmit={submitted}
+      onDraftChange={next => {
+        draft = next;
+      }}
+    />,
+    {
+      stdout: stdout as unknown as NodeJS.WriteStream,
+      stdin: stdin as unknown as NodeJS.ReadStream,
+      debug: true,
+      exitOnCtrlC: false,
+      patchConsole: false,
+    }
+  );
   try {
     await settle();
     stdin.write('\x1b[97;1:1u');
@@ -700,5 +752,22 @@ test('a prominent prompt keeps the cursor visible in a long draft and submits th
     stdin.write('\r');
     await settle();
     expect(submitted).toHaveBeenCalledExactlyOnceWith('a', undefined);
+  } finally {
+    instance.unmount();
+  }
+});
+
+test('Ctrl+Enter submits through the detach-and-submit path while plain Enter remains normal', async () => {
+  const stdout = new FakeStdout(); const stdin = new FakeStdin();
+  const submit = vi.fn(); const background = vi.fn(); const backgroundCurrent = vi.fn();
+  const instance=render(<InputPrompt onSubmit={submit} onBackgroundAndSubmit={background} onBackgroundCommand={backgroundCurrent}/>,{stdout:stdout as unknown as NodeJS.WriteStream,stdin:stdin as unknown as NodeJS.ReadStream,debug:true,exitOnCtrlC:false,patchConsole:false});
+  try {
+    await settle(); stdin.write('run build'); await settle(); stdin.write('\x1b[13;5u'); await settle();
+    expect(background).toHaveBeenCalledWith('run build',undefined);
+    expect(submit).not.toHaveBeenCalled();
+    stdin.write('next prompt'); await settle(); stdin.write('\u0002'); await settle();
+    expect(backgroundCurrent).toHaveBeenCalledOnce();
+    expect(stripAnsi(stdout.frames.at(-1) ?? '')).toContain('next prompt');
+    stdin.write('\r'); await settle(); expect(submit).toHaveBeenCalledWith('next prompt',undefined);
   } finally { instance.unmount(); }
 });

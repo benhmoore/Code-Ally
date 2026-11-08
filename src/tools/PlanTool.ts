@@ -17,7 +17,7 @@ import { REASONING_EFFORT, AGENT_TYPES, THOROUGHNESS_LEVELS, VALID_THOROUGHNESS 
 import { createPlanAcceptedReminder } from '../utils/messageUtils.js';
 import type { Config } from '../types/index.js';
 
-const PLANNING_TOOLS = ['read', 'glob', 'grep', 'ls', 'tree', 'todo-write', 'ask-user-question'];
+const PLANNING_TOOLS = ['read', 'glob', 'grep', 'ls', 'tree', 'todo-write', 'ask-user-question', 'send-message'];
 
 // Base prompt for planning (without thoroughness-specific guidelines)
 const PLANNING_BASE_PROMPT = `You are a software architect and planning specialist for Ally.

@@ -10,6 +10,8 @@
  */
 
 import React from 'react';
+import { truncateAnsiToWidth } from '@utils/terminalText.js';
+import { useContentWidth } from '../hooks/useContentWidth.js';
 import { Box, Text } from 'ink';
 import { ToolCallState } from '@shared/index.js';
 import type { ToolCallTreeNode } from '@shared/index.js';
@@ -26,7 +28,6 @@ import { defaultSubtextFilePath, type BaseTool } from '@tools/BaseTool.js';
 import { linkFileNameIn, terminalHyperlinksEnabled } from '../utils/fileLinks.js';
 import { resolveToolVisibility } from '../utils/toolVisibility.js';
 import { Clickable } from './Clickable.js';
-import { getAgentType, getAgentDisplayName } from '@utils/agentTypeUtils.js';
 import { getToolCallTiming } from '@utils/toolTiming.js';
 import { permissionDecisionText } from '../utils/permissionPresentation.js';
 
@@ -81,10 +82,7 @@ function formatArgsPreview(args: any, toolName?: string): string {
     }
 
 
-    // Special case: agent_id is shown as part of display name for agent-ask, not in subtext
-    if (toolName === 'agent-ask') {
-      paramsToFilter.add('agent_id');
-    }
+
   }
 
   // Filter out parameters shown in subtext or elsewhere
@@ -206,6 +204,21 @@ function extractSubtext(toolCall: ToolCallState, toolName: string, isAgentTool: 
   return subtext;
 }
 
+/** Physical prompt-preview rows shared with the live-region height budget. */
+export function agentPreviewLines(toolCall: ToolCallTreeNode, width: number, level = 0): string[] {
+  if (!isAgentDelegationTool(toolCall.toolName)) return [];
+  const subtext = extractSubtext(toolCall, toolCall.toolName, true);
+  if (!subtext) return [];
+  const running = toolCall.status === 'pending' || toolCall.status === 'executing';
+  const lines = subtext.split('\n');
+  const limit = running && toolCall.expanded === true && !(toolCall.children?.length) ? 5 : 1;
+  return lines.slice(0, limit).map((line, index) => truncateAnsiToWidth(
+    index === limit - 1 && lines.length > limit ? `${line} …` : line,
+    Math.max(1, width - level * 4 - 6)
+  ));
+}
+
+
 /**
  * Determine if a child tool should be shown based on parent state and config
  * Exported for testing
@@ -237,6 +250,7 @@ const ToolCallDisplayComponent: React.FC<ToolCallDisplayProps> = ({
   width,
   onToggle,
 }) => {
+  const contentWidth = useContentWidth();
   const isRunning = toolCall.status === 'executing' || toolCall.status === 'pending';
   const permissionAudit = permissionDecisionText(toolCall.permissionDecision);
   const visibility = resolveToolVisibility(toolCall, config);
@@ -254,7 +268,6 @@ const ToolCallDisplayComponent: React.FC<ToolCallDisplayProps> = ({
 
   // Determine display name:
   // 1. For agent tools: Use agent_type (foundational value) and transform to Title Case
-  // 2. For agent-ask: look up agent from pool and show "Follow Up: {AgentName}"
   // 3. For tools with custom displayName: use that
   // 4. Otherwise: auto-format the tool name
   let displayName: string;
@@ -272,28 +285,6 @@ const ToolCallDisplayComponent: React.FC<ToolCallDisplayProps> = ({
     }
 
     displayName = formatDisplayName(agentType);
-  } else if (toolCall.toolName === 'agent-ask' && toolCall.arguments?.agent_id) {
-    // Special handling for agent-ask: look up agent name from pool
-    try {
-      const registry = ServiceRegistry.getInstance();
-      const agentPoolService = registry.get('agent_pool');
-      const agentId = toolCall.arguments.agent_id;
-
-      if (agentPoolService && agentPoolService.hasAgent(agentId)) {
-        const metadata = agentPoolService.getAgentMetadata(agentId);
-        if (metadata) {
-          const agentType = getAgentType(metadata);
-          const agentName = getAgentDisplayName(agentType);
-          displayName = `Follow Up: ${agentName}`;
-        } else {
-          displayName = 'Follow Up';
-        }
-      } else {
-        displayName = 'Follow Up';
-      }
-    } catch {
-      displayName = 'Follow Up';
-    }
   } else {
     // Try to get custom displayName from tool instance
     try {
@@ -349,9 +340,9 @@ const ToolCallDisplayComponent: React.FC<ToolCallDisplayProps> = ({
   const trimmedOutput = toolCall.output?.trim();
 
   return (
-    <Box flexDirection="column" width={width}>
+    <Box flexDirection="column" width={width} flexShrink={0}>
       {/* The header row opens or closes the call when clicked */}
-      <Clickable onPress={onToggle && (() => onToggle(toolCall.id))}>
+      <Clickable flexShrink={0} onPress={onToggle && (() => onToggle(toolCall.id))}>
         {/* Indentation */}
         <Text>{indent}</Text>
 
@@ -407,60 +398,14 @@ const ToolCallDisplayComponent: React.FC<ToolCallDisplayProps> = ({
         </Box>
       )}
 
-      {/* Agent subtext - displayed on indented lines below header */}
-      {/* Once child tool calls exist, collapse to first line only */}
-      {isAgentDelegation && subtext && (
-        <Box flexDirection="column">
-          {(() => {
-            const hasChildToolCalls = (toolCall.children?.length ?? 0) > 0;
-
-            // After first tool call, show only first line (truncated to 80 chars)
-            if (hasChildToolCalls) {
-              const firstLine = subtext.split('\n')[0] ?? '';
-              const truncatedLine = firstLine.length > 77
-                ? firstLine.slice(0, 77) + '...'
-                : firstLine;
-              return (
-                <Box>
-                  <Text>{indent}    </Text>
-                  <Text color={UI_COLORS.PRIMARY}>{'> '}</Text>
-                  <Text>{truncatedLine}</Text>
-                </Box>
-              );
-            }
-
-            // No child tools yet - show full prompt (up to 5 lines)
-            // Truncate to 80 chars (77 + "...") when agent is complete
-            const displaySubtext = !isRunning && subtext.length > 80
-              ? subtext.slice(0, 77) + '...'
-              : subtext;
-
-            const lines = displaySubtext.split('\n');
-            const maxLines = 5;
-            const truncated = lines.length > maxLines;
-            const displayLines = truncated ? lines.slice(0, maxLines) : lines;
-
-            return (
-              <>
-                {displayLines.map((line, idx) => (
-                  <Box key={idx}>
-                    <Text>{indent}    </Text>
-                    {idx === 0 && <Text color={UI_COLORS.PRIMARY}>{'> '}</Text>}
-                    {idx > 0 && <Text>  </Text>}
-                    <Text>{line}</Text>
-                  </Box>
-                ))}
-                {truncated && (
-                  <Box>
-                    <Text>{indent}    </Text>
-                    <Text dimColor>  ... ({lines.length - maxLines} more line{lines.length - maxLines === 1 ? '' : 's'})</Text>
-                  </Box>
-                )}
-              </>
-            );
-          })()}
+      {/* Prompt previews use physical rows; the live-region budget shares this projection. */}
+      {isAgentDelegation && agentPreviewLines(toolCall, width ?? contentWidth, level).map((line, index) => (
+        <Box key={index} flexShrink={0}>
+          <Text>{indent}    </Text>
+          <Text color={UI_COLORS.PRIMARY}>{index === 0 ? '> ' : '  '}</Text>
+          <Text>{line}</Text>
         </Box>
-      )}
+      ))}
 
       {/* Thinking content - displayed inline for agent delegations */}
       {/* ALWAYS show truncated form for agents, regardless of config */}

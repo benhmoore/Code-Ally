@@ -156,7 +156,7 @@ const AppContentComponent: React.FC<AppContentProps> = ({
   });
   const { backgroundAgents, selectedTask, completedChild, isChildSelected, conversationSource, conversationControls,
     returnToMain, handleEnterFleet, handleFleetNavigate, handleExitFleet, handleEnterAgent,
-    handleBackgroundAgents, handleKillAgent } = fleet;
+    handleBackgroundCommand, handleKillAgent } = fleet;
   const queue = selectedTask?.inputQueue ?? foregroundAgent.getInputQueue();
   const pendingInput = React.useSyncExternalStore(queue.subscribe, queue.getSnapshot);
   const recallFollowUp = React.useCallback(() => {
@@ -231,7 +231,7 @@ const AppContentComponent: React.FC<AppContentProps> = ({
 
   // Get input handler functions. The immutable route is captured per submit,
   // so navigation cannot redirect an already-running operation.
-  const { handleInput, handleInterjection, handleFollowUp } = useInputHandlers(
+  const { handleInput, handleInterjection, handleFollowUp, handleBackgroundAndSubmit } = useInputHandlers(
     commandHandler,
     conversationRoute,
     actions,
@@ -404,10 +404,13 @@ const AppContentComponent: React.FC<AppContentProps> = ({
             </Box>
           )}
 
+          {fleet.backgroundStatus && <Box paddingLeft={1}><Text dimColor wrap="truncate-end">{fleet.backgroundStatus}</Text></Box>}
+
           {/* Input Prompt */}
           <InputPrompt
             key={state.activeAgentId}
             onSubmit={handleInput}
+            onBackgroundAndSubmit={handleBackgroundAndSubmit}
             prominent
             onInterjection={handleInterjection}
             conversationReadOnly={completedChild}
@@ -439,7 +442,7 @@ const AppContentComponent: React.FC<AppContentProps> = ({
             onEnterAgent={handleEnterAgent}
             onExitFleet={handleExitFleet}
             onExitAgent={returnToMain}
-            onBackgroundAgents={handleBackgroundAgents}
+            onBackgroundCommand={handleBackgroundCommand}
             onKillAgent={handleKillAgent}
             onToggleToolOutput={handleToggleToolOutput}
           />

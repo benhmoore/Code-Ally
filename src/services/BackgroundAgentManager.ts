@@ -3,7 +3,7 @@ import type { ConversationInputQueue } from './ConversationInputQueue.js';
 /**
  * BackgroundAgentManager - Manages backgrounded (non-blocking) agent runs
  *
- * Sub-agents spawned via the `agent` tool with run_in_background=true execute
+ * Delegated agents always execute
  * concurrently with the main conversation instead of blocking it. This manager
  * owns their lifecycle: registration, status tracking, live token/elapsed
  * reporting, cancellation, completion-result retention, and shutdown.
@@ -25,16 +25,7 @@ import { formatDuration } from '../ui/utils/timeUtils.js';
 export type BackgroundAgentStatus = 'running' | 'done' | 'error' | 'cancelled';
 
 /**
- * Execution mode of a tracked run.
- * - 'foreground': the spawning tool is still awaiting it (it blocks the main
- *   loop). Shown in the fleet so the user can enter it or background it.
- * - 'background': detached/non-blocking; its result is drained into the parent
- *   conversation when it completes.
- */
-export type BackgroundAgentMode = 'foreground' | 'background';
-
-/**
- * A single tracked agent run (foreground or background).
+ * A single asynchronous agent run.
  */
 export interface BackgroundAgentTask {
   /** Unique identifier: agent-{timestamp}-{random} */
@@ -45,8 +36,13 @@ export interface BackgroundAgentTask {
   taskPrompt: string;
   /** Optional concise, human-readable label supplied by the delegating model. */
   description?: string;
-  /** Execution mode (may flip foreground → background via detach) */
-  mode: BackgroundAgentMode;
+  /** Messages arriving during finalization wait for the next task lease. */
+  acceptingMessages: boolean;
+  cancellationRequested?: boolean;
+  deliveryPending?: boolean;
+  /** Agent instance that owns completion delivery. */
+  ownerId?: string;
+  contextGeneration?: number;
   /** Current lifecycle status */
   status: BackgroundAgentStatus;
   /** Final text result (populated when status === 'done') */
@@ -73,10 +69,7 @@ export interface BackgroundAgentTask {
   pooledAgent: PooledAgent | null;
   /** The tool call id that spawned this run (event nesting / pool key) */
   callId: string;
-  /** Resolves when the user backgrounds a foreground run (Ctrl+B) */
-  detachPromise: Promise<void>;
-  /** Trigger the detach (flip foreground → background). Set internally. */
-  detach: () => void;
+
 }
 
 /**
@@ -107,32 +100,24 @@ export class BackgroundAgentManager {
    *
    * @throws Error if at capacity with no completed runs to evict
    */
-  /**
-   * Build a tracked task with a detach deferred wired up. The caller fills in
-   * the run `promise` and then calls addTask(). detach() flips the mode to
-   * 'background' and resolves detachPromise so a foreground awaiter can stop
-   * blocking the main loop while the run continues.
-   */
+  /** Create an asynchronous run; addTask owns admission before execution begins. */
   createTask(meta: {
     agentType: string;
     taskPrompt: string;
     description?: string;
-    mode: BackgroundAgentMode;
     subAgent: Agent;
     pooledAgent: PooledAgent | null;
     callId: string;
   }): BackgroundAgentTask {
     this.assertAdmissionOpen();
-    let detachResolve: () => void = () => {};
-    const detachPromise = new Promise<void>((resolve) => { detachResolve = resolve; });
 
     const task: BackgroundAgentTask = {
       id: this.generateId(),
       agentType: meta.agentType,
       taskPrompt: meta.taskPrompt,
       description: meta.description,
-      mode: meta.mode,
       status: 'running',
+      acceptingMessages: true,
       result: null,
       error: null,
       finalizationError: null,
@@ -144,23 +129,13 @@ export class BackgroundAgentManager {
       inputQueue: meta.subAgent.getInputQueue?.(),
       pooledAgent: meta.pooledAgent,
       callId: meta.callId,
-      detachPromise,
-      detach: () => {},
-    };
-    task.detach = () => {
-      if (task.mode === 'foreground' && task.status === 'running') {
-        task.mode = 'background';
-        detachResolve();
-      }
     };
     return task;
   }
 
   addTask(task: BackgroundAgentTask): void {
     this.assertAdmissionOpen();
-    // Only background runs count against the concurrency cap; foreground runs
-    // are transient (awaited by their tool) and block the main loop anyway.
-    if (task.mode === 'background' && this.getBackgroundRunningCount() >= this.maxConcurrent) {
+    if (this.getRunningCount() >= this.maxConcurrent) {
       throw new Error(
         `Background agent limit reached (${this.maxConcurrent} running). ` +
         `Wait for one to finish or cancel it with cancel-agent before starting another.`
@@ -169,11 +144,11 @@ export class BackgroundAgentManager {
 
     // Keep the overall map bounded by evicting old, already-consumed completions.
     if (this.tasks.size >= this.maxConcurrent * 2) {
-      this.removeOldestCompleted();
+      if (!this.removeOldestCompleted()) throw new Error('Agent task retention is full. Inspect or acknowledge completed tasks before starting another.');
     }
 
     this.tasks.set(task.id, task);
-    logger.debug(`[BackgroundAgentManager] Added ${task.mode} agent ${task.id} (${task.agentType})`);
+    logger.debug(`[BackgroundAgentManager] Added agent ${task.id} (${task.agentType})`);
   }
 
   getTask(id: string): BackgroundAgentTask | undefined {
@@ -203,33 +178,6 @@ export class BackgroundAgentManager {
     return count;
   }
 
-  /** Number of currently running background runs (counts against the cap). */
-  getBackgroundRunningCount(): number {
-    let count = 0;
-    for (const task of this.tasks.values()) {
-      if (task.status === 'running' && task.mode === 'background') count++;
-    }
-    return count;
-  }
-
-  /**
-   * Background all currently-running foreground runs (Ctrl+B). Each flips to
-   * 'background' mode and its detachPromise resolves, so the awaiting tool stops
-   * blocking and the run continues, reporting its result via the normal drain.
-   *
-   * @returns the number of runs detached
-   */
-  requestDetachAll(): number {
-    let detached = 0;
-    for (const task of this.tasks.values()) {
-      if (task.mode === 'foreground' && task.status === 'running') {
-        task.detach();
-        detached++;
-      }
-    }
-    return detached;
-  }
-
   getCount(): number {
     return this.tasks.size;
   }
@@ -253,6 +201,8 @@ export class BackgroundAgentManager {
     }
 
     if (task.status === 'running') {
+      task.cancellationRequested = true;
+      task.inputQueue?.cancel();
       try {
         task.subAgent.interrupt({ kind: 'user_cancel' });
       } catch (error) {
@@ -269,12 +219,10 @@ export class BackgroundAgentManager {
    *
    * Mirrors how backgrounded bash output is drained on the next tool turn.
    */
-  drainCompletedResults(): BackgroundAgentTask[] {
+  drainCompletedResults(ownerId?: string): BackgroundAgentTask[] {
     const drained: BackgroundAgentTask[] = [];
     for (const task of this.tasks.values()) {
-      // Only background runs deliver via the drain; foreground runs return their
-      // result directly to the tool caller.
-      if (task.mode === 'background' && !task.consumed && task.status !== 'running') {
+      if (!task.deliveryPending && !task.consumed && task.status !== 'running' && (ownerId === undefined || task.ownerId === ownerId)) {
         task.consumed = true;
         drained.push(task);
       }
@@ -286,7 +234,7 @@ export class BackgroundAgentManager {
   acknowledgeCompletedResults(ids: Iterable<string>): void {
     for (const id of ids) {
       const task = this.tasks.get(id);
-      if (task?.mode === 'background' && task.status !== 'running') {
+      if (task && task.status !== 'running') {
         task.consumed = true;
       }
     }
@@ -296,12 +244,13 @@ export class BackgroundAgentManager {
    * Status reminders for the model: running agents + recently completed ones.
    * Mirrors BashProcessManager.getStatusReminders().
    */
-  getStatusReminders(): string[] {
+  getStatusReminders(ownerId?: string): string[] {
     const now = Date.now();
     const recentCutoff = now - BACKGROUND_AGENT.COMPLETED_RETENTION_MS;
     const reminders: string[] = [];
 
     for (const task of this.tasks.values()) {
+      if (ownerId !== undefined && task.ownerId !== ownerId) continue;
       const elapsed = formatDuration((task.endTime ?? now) - task.startTime);
 
       if (task.status === 'running') {
@@ -337,7 +286,7 @@ export class BackgroundAgentManager {
     logger.info(`[BackgroundAgentManager] Shutting down ${running.length} background agent(s)...`);
     for (const task of running) {
       try {
-        task.subAgent.interrupt({ kind: 'user_cancel' });
+        this.cancelTask(task.id);
       } catch (error) {
         failures.push(new Error(`Failed to interrupt ${task.id} on shutdown`, { cause: error }));
       }

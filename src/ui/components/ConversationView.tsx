@@ -3,7 +3,7 @@ import { Box, Text } from 'ink';
 import { CommittedTranscript, useBottomLayout } from './BottomAlignedLayout.js';
 import { Message, ToolCallState, ToolCallTreeNode, Config } from '@shared/index.js';
 import { MessageDisplay } from './MessageDisplay.js';
-import { ToolCallDisplay } from './ToolCallDisplay.js';
+import { ToolCallDisplay, agentPreviewLines } from './ToolCallDisplay.js';
 import { CompactionNotice, RewindNotice, StatusMessage } from '../contexts/AppContext.js';
 import { readFileSync } from 'fs';
 import { fileURLToPath } from 'url';
@@ -235,9 +235,9 @@ const MAX_VISIBLE_RUNNING_TOOLS = 8;
  */
 const MAX_STREAMING_LINES = 60;
 
-function estimateToolRows(toolCall: ToolCallTreeNode, config?: any): number {
+function estimateToolRows(toolCall: ToolCallTreeNode, config: Partial<Config> | undefined, width: number): number {
   const visibility = resolveToolVisibility(toolCall, config);
-  let rows = 1;
+  let rows = 1 + agentPreviewLines(toolCall, width).length;
   if (permissionDecisionText(toolCall.permissionDecision)) rows += 1;
   const output = toolCall.output?.trim();
   if (output && visibility.showOutput) {
@@ -246,7 +246,7 @@ function estimateToolRows(toolCall: ToolCallTreeNode, config?: any): number {
   if (toolCall.diffPreview && !visibility.collapsed) rows += 6;
   if (toolCall.thinking && toolCall.thinkingEndTime) rows += 1;
   if (visibility.showChildren) {
-    rows += (toolCall.children ?? []).reduce((sum, child) => sum + estimateToolRows(child, config), 0);
+    rows += (toolCall.children ?? []).reduce((sum, child) => sum + estimateToolRows(child, config, Math.max(1, width - 4)), 0);
   }
   return rows;
 }
@@ -280,7 +280,7 @@ const ActiveContent = React.memo<{
 
   // The newest streaming lines come first within the budget; tools take what
   // is left, dropping the oldest, so an expanded call never hides the reply.
-  const estimate = (toolCall: ToolCallTreeNode) => estimateToolRows(toolCall, config);
+  const estimate = (toolCall: ToolCallTreeNode) => estimateToolRows(toolCall, config, Math.max(1, width - 2));
   const wantedToolRows = [...completedToolCalls, ...visibleRunning].reduce((sum, toolCall) => sum + estimate(toolCall), 0);
   let displayStreaming = streamingContent?.trimStart();
   let streamingRows = 0;
@@ -319,7 +319,7 @@ const ActiveContent = React.memo<{
       )}
 
       {visibleTools.map((toolCall) => (
-        <Box key={`live-tool-${toolCall.id}`} paddingLeft={2} width={width}>
+        <Box key={`live-tool-${toolCall.id}`} paddingLeft={2} width={width} flexShrink={0}>
           <ErrorBoundary label={`live-tool-${toolCall.id}`}>
             {renderToolCallTree(toolCall, 0, config, compactionNotices, Math.max(1, width - 2), onToggleToolCall)}
           </ErrorBoundary>

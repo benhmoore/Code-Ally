@@ -3,6 +3,7 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { BackgroundAgentManager } from '@services/BackgroundAgentManager.js';
 import { AgentTool } from '@tools/AgentTool.js';
 import { ActivityStream } from '@services/ActivityStream.js';
 import { ServiceRegistry } from '@services/ServiceRegistry.js';
@@ -18,15 +19,10 @@ describe('AgentTool', () => {
   let agentManager: AgentManager;
   let tool: AgentTool;
   let testDir: string;
-  let originalHome: string | undefined;
 
   beforeEach(async () => {
     // Create a temporary directory for testing
     testDir = await mkdtemp(join(tmpdir(), 'agent-test-'));
-
-    // Mock home directory to point to test directory
-    originalHome = process.env.HOME;
-    process.env.HOME = testDir;
 
     // Create agents directory
     await mkdir(join(testDir, '.ally', 'agents'), { recursive: true });
@@ -99,9 +95,11 @@ describe('AgentTool', () => {
         // Return mock pooled agent
         return {
           agent: {
+            interrupt: vi.fn(),
             sendMessage: vi.fn().mockResolvedValue('Agent task completed successfully'),
             getTokenManager: vi.fn().mockReturnValue({
               getContextUsagePercentage: () => 0,
+              getCurrentTokenCount: () => 0,
             }),
             getToolUseCount: vi.fn().mockReturnValue(0),
           },
@@ -112,6 +110,7 @@ describe('AgentTool', () => {
     };
 
     // Register with correct service names
+    registry.registerInstance('background_agent_manager', new BackgroundAgentManager());
     registry.registerInstance('model_client', mockModelClient);
     registry.registerInstance('tool_manager', mockToolManager);
     registry.registerInstance('config_manager', mockConfigManager);
@@ -122,11 +121,8 @@ describe('AgentTool', () => {
   });
 
   afterEach(async () => {
-    // Restore original home
-    if (originalHome !== undefined) {
-      process.env.HOME = originalHome;
-    }
 
+    await registry.get('background_agent_manager')?.shutdown();
     await registry.shutdown();
 
     // Remove test directory
@@ -186,6 +182,7 @@ describe('AgentTool', () => {
     it('should reject agent delegation beyond maximum depth', async () => {
       // Mock a parent agent at maximum depth
       const mockParentAgent = {
+        getInstanceId: () => 'parent-id',
         getAgentDepth: vi.fn().mockReturnValue(AGENT_CONFIG.MAX_AGENT_DEPTH),
       };
 
@@ -205,6 +202,7 @@ describe('AgentTool', () => {
     it('should allow agent delegation at depth 1', async () => {
       // Mock a root agent at depth 0
       const mockRootAgent = {
+        getInstanceId: () => 'parent-id',
         getAgentDepth: vi.fn().mockReturnValue(0),
       };
 
@@ -225,6 +223,7 @@ describe('AgentTool', () => {
       // hard backstop behind stripping delegation tools and the agent roster from
       // sub-agent prompts.
       const mockSubAgent = {
+        getInstanceId: () => 'parent-id',
         getAgentDepth: vi.fn().mockReturnValue(1),
         getAgentName: vi.fn().mockReturnValue('task'),
         getAgentCallStack: vi.fn().mockReturnValue([]),
@@ -355,7 +354,8 @@ describe('AgentTool', () => {
       const endEvents = events.filter((e) => e.type === 'agent_end');
 
       expect(startEvents.length).toBeGreaterThan(0);
-      expect(endEvents.length).toBeGreaterThan(0);
+      await registry.get('background_agent_manager')!.listTasks()[0]!.promise;
+      expect(events.filter((event: any) => event.type === 'agent_end').length).toBeGreaterThan(0);
     });
   });
 
@@ -378,7 +378,7 @@ describe('AgentTool', () => {
       const props = def.function.parameters.properties as Record<string, any>;
       // The full public parameter surface the consolidation must preserve.
       expect(Object.keys(props).sort()).toEqual(
-        ['agent_type', 'context_files', 'context_images', 'description', 'notify_when_done', 'run_in_background', 'task_prompt', 'thoroughness'].sort()
+        ['agent_type', 'context_files', 'context_images', 'description', 'notify_when_done', 'task_prompt', 'thoroughness'].sort()
       );
       expect(props.task_prompt.type).toBe('string');
       expect(props.agent_type.type).toBe('string');
@@ -388,7 +388,7 @@ describe('AgentTool', () => {
       expect(props.context_files.items.type).toBe('string');
       expect(props.context_images.type).toBe('array');
       expect(props.context_images.items.type).toBe('string');
-      expect(props.run_in_background.type).toBe('boolean');
+      expect(props).not.toHaveProperty('run_in_background');
       expect(props.notify_when_done.type).toBe('boolean');
 
       // task_prompt is the only required parameter.
@@ -490,6 +490,7 @@ describe('AgentTool', () => {
       // but a call stack already holding the target agent MAX_AGENT_CYCLE_DEPTH times.
       const stack = new Array(AGENT_CONFIG.MAX_AGENT_CYCLE_DEPTH).fill('task');
       const mockAgent = {
+        getInstanceId: () => 'parent-id',
         getAgentDepth: vi.fn().mockReturnValue(0),
         getAgentName: vi.fn().mockReturnValue('ally'),
         getAgentCallStack: vi.fn().mockReturnValue(stack),
@@ -515,9 +516,10 @@ describe('AgentTool', () => {
       registry.registerInstance('agent_pool', {
         acquire: vi.fn().mockResolvedValue({
           agent: {
+            interrupt: vi.fn(),
             sendMessage: vi.fn().mockResolvedValue(''),
             getMessages: vi.fn().mockReturnValue([]),
-            getTokenManager: vi.fn().mockReturnValue({ getContextUsagePercentage: () => 0 }),
+            getTokenManager: vi.fn().mockReturnValue({ getContextUsagePercentage: () => 0, getCurrentTokenCount: () => 0 }),
             getToolUseCount: vi.fn().mockReturnValue(0),
           },
           agentId: 'empty-agent-id',
@@ -532,7 +534,8 @@ describe('AgentTool', () => {
       }, 'test-call-id');
 
       expect(result.success).toBe(true);
-      expect(result.content).toContain('did not provide a summary');
+      await registry.get('background_agent_manager')!.listTasks()[0]!.promise;
+      expect(registry.get('background_agent_manager')!.listTasks()[0]!.result).toContain('did not provide a summary');
     });
   });
 

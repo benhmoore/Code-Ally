@@ -3,6 +3,8 @@ import type { Message } from '../types/index.js';
 /** Distinguish submitted user directions from harness messages using the user role. */
 export function isActualUserMessage(message: Message): boolean {
   return message.role === 'user'
+    && !message.metadata?.agentMessage
+    && message.metadata?.source !== 'agent'
     && !message.metadata?.ephemeral
     && !message.metadata?.isConversationCheckpoint
     && !message.metadata?.isCommandResponse

@@ -56,6 +56,9 @@ export interface ToolCallContext {
  * Optional metadata for messages
  */
 export interface MessageMetadata {
+  /** Agent communication is durable context, never human authorization. */
+  agentMessage?: { messageId: string; sender: string };
+  source?: 'agent';
   /** Original user text when hooks appended model-facing context. */
   submittedContent?: string;
   /** Persist a system event as conversation history rather than request-only context. */

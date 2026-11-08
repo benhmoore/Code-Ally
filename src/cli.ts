@@ -1253,6 +1253,15 @@ async function main() {
     const backgroundAgentManager = new BackgroundAgentManager();
     registry.registerInstance('background_agent_manager', backgroundAgentManager);
 
+    const { AgentMessagingService } = await import('./services/AgentMessagingService.js');
+    const agentMessaging = new AgentMessagingService(
+      () => registry.get('agent'),
+      () => registry.get('agent_pool'),
+      backgroundAgentManager,
+      activityStream,
+    );
+    registry.registerInstance('agent_messaging', agentMessaging);
+
     // Unified registry over agents + shell processes + condition watchers, for
     // the wait/watch tools. Composes the two managers above (read adapters).
     const { BackgroundTaskRegistry } = await import('./services/BackgroundTaskRegistry.js');

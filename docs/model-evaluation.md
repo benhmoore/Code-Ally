@@ -108,7 +108,7 @@ Interactive requests also context-gate schemas that cannot help on the current
 turn. Plan completion tools appear only in plan mode; scheduler, watcher,
 line-number editing, agent management, and session-history tools require matching
 user intent; background output/cancel/wait controls require matching task state;
-`agent-ask` requires a persistent agent; and `cleanup-call` requires removable
+`send-message` requires an available parent or peer; and `cleanup-call` requires removable
 tool results. Ordinary coding turns omit volatile clock text. Execution policy
 remains the authority—the gating only removes irrelevant provider schemas.
 

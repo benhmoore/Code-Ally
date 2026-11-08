@@ -2,7 +2,7 @@
  * Delegation utilities
  *
  * Shared primitives for the agent delegation tools (agent, explore, plan,
- * research, sessions, agent-ask). These collapse the boilerplate that was
+ * research, sessions). These collapse the boilerplate that was
  * previously copy-pasted across every delegation tool:
  *
  * - The "user can't see this" response suffix (one canonical wording).
@@ -116,7 +116,7 @@ export function completeDelegation(callId: string): void {
 
 /** Core services every delegation tool needs to spin up a sub-agent. */
 export interface DelegationServices {
-  registry: ServiceRegistry;
+  registry: Pick<ServiceRegistry, 'get'>;
   mainModelClient: ModelClient;
   toolManager: ToolManager;
   configManager: any;
@@ -134,8 +134,7 @@ export interface DelegationServices {
  * @param toolName - Tool name used in the "requires X" error messages
  * @throws if any required service is missing or getConfig() returns null
  */
-export function resolveDelegationServices(toolName: string): DelegationServices {
-  const registry = ServiceRegistry.getInstance();
+export function resolveDelegationServices(toolName: string, registry: Pick<ServiceRegistry, 'get'> = ServiceRegistry.getInstance()): DelegationServices {
   const mainModelClient = registry.get('model_client');
   const toolManager = registry.get('tool_manager');
   const configManager = registry.get('config_manager');

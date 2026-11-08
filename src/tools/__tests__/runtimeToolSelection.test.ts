@@ -16,7 +16,7 @@ describe('runtime tool selection', () => {
     })).toEqual([
       'write-plan',
       'exit-plan-mode',
-      'agent-ask',
+      'send-message',
       'cleanup-call',
       'read-checkpoint',
       'read-history',
@@ -91,7 +91,7 @@ describe('runtime tool selection', () => {
       hasPersistentAgent: true,
       hasToolResults: true,
     });
-    expect(exclusions).not.toContain('agent-ask');
+    expect(exclusions).not.toContain('send-message');
     expect(exclusions).not.toContain('cleanup-call');
   });
 });

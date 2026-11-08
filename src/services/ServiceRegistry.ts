@@ -455,7 +455,7 @@ export class ServiceRegistry {
 export class ScopedServiceRegistryProxy {
   private _overrides: Map<string, unknown>;
 
-  constructor(private _base: ServiceRegistry) {
+  constructor(private _base: Pick<ServiceRegistry, 'get'>) {
     this._overrides = new Map();
   }
 
@@ -492,7 +492,7 @@ export class ScopedServiceRegistryProxy {
    * Check if a service exists (checks both overrides and base)
    */
   hasService(name: ServiceName): boolean {
-    return this._overrides.has(name) || this._base.hasService(name);
+    return this._overrides.has(name) || this._base.get(name) !== null;
   }
 
   /**

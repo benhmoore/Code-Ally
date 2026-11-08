@@ -27,7 +27,7 @@ export { ApplyPatchTool } from './ApplyPatchTool.js';
 export { AgentTool } from './AgentTool.js';
 export { ManageAgentsTool } from './ManageAgentsTool.js';
 export { TodoWriteTool } from './TodoWriteTool.js';
-export { AgentAskTool } from './AgentAskTool.js';
+export { SendMessageTool } from './SendMessageTool.js';
 export { ExploreTool } from './ExploreTool.js';
 export { PlanTool } from './PlanTool.js';
 export { WebFetchTool } from './WebFetchTool.js';
