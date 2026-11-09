@@ -789,17 +789,17 @@ describe('ConversationCompactor', () => {
     expect(client.send).toHaveBeenCalledTimes(1);
   });
 
-  it('uses the reducer request headroom for accumulated structured output', async () => {
+  it.each([1, 256, 2048, 8192, undefined])('caps reducer request headroom by configured maximum %s', async modelMaxOutput => {
     const manager = new ConversationManager({ initialMessages: history() });
     const client = structuredClient();
     const compactor = new ConversationCompactor(
       client, manager, new TokenManager(16_384), new ActivityStream(), vi.fn().mockResolvedValue(true),
     );
 
-    await compactor.compactAndApply(context());
+    await compactor.compactAndApply({ ...context(), modelMaxOutput });
 
     expect(client.send).toHaveBeenCalled();
-    expect(client.send.mock.calls[0][1].dynamicMaxTokens).toBe(4_096);
+    expect(client.send.mock.calls[0][1].dynamicMaxTokens).toBe(Math.min(modelMaxOutput ?? 4096, 4096));
   });
 
   it('checkpoints an oversized completed tool exchange with no raw tail', async () => {

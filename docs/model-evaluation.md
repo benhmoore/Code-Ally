@@ -139,3 +139,67 @@ npm run eval:coding -- \
 ```
 
 App state is isolated using `ALLY_DATA_DIR`, which overrides the default `~/.ally` data root. It is resolved once at process startup and can also be used for independent headless installations. Existing user configuration is not needed for this evaluator. The fixture is a smoke test, not a repository-scale coding benchmark.
+
+## End-to-end behavior campaign
+
+`npm run eval:behavior` runs disposable child processes around the real Agent, native streaming transport, canonical tool registry and exposure policy, session persistence, asynchronous delegation, and checkpoint continuation. It defaults to a 32k context and refuses smaller windows. Its seven cases cover multi-file option handling, stale-path recovery, deferred tool discovery, mid-task steering, delegated synthesis, restoration of original directions alongside externally changed facts after a durable checkpoint, and multiline editing with CRLF, Unicode, and similar neighboring functions.
+
+```bash
+npm run eval:behavior -- \
+  --model qwen3.8:27b-mlx \
+  --endpoint http://100.68.102.73:11434 \
+  --runs 3 --variants baseline,outcome \
+  --context-size 32768 --max-tokens 2048 --timeout-ms 600000 \
+  --output model-eval-results/behavior-32k.json
+```
+
+`baseline` uses production instructions. `outcome` changes one instruction about independent calls, bounded reads, and selecting the next missing action. It is an experimental candidate, not a production setting. Counterbalanced trials apply matched backend seeds. Exact transmitted bodies, hashes, native responses, provider token usage, parent/child tool events, verification assertions, and terminal outcomes are retained. Independent checks execute copied source against trusted tests outside the working fixture, and protected public files must remain unchanged. The worker additionally records real fleet completion and checkpoint restoration from disk.
+
+Fixture authorization permits repository file tools and the explicit test commands `node --test` and `npm test`. The task states these restrictions. This is a deliberate execution boundary, not an estimate of production Auto-mode refusal rates. File-tool paths are confined to the temporary workspace; that guard is not an operating-system sandbox for generated code. App state uses a sibling isolated `ALLY_DATA_DIR`, and workspaces are removed after each trial. No credentials, personal project instructions, or external services are needed.
+
+Results checkpoint atomically after every trial. Resume with identical arguments plus `--resume`; changed code, Git revision, provider/model metadata, settings, or trial order are rejected. Failed, interrupted, and timed-out trials remain failures even if a partial artifact claims success. A nonzero process exit reports failed trials. Efficiency comparisons use successful matched pairs; pairs with infrastructure failures are excluded from resource means, and pairs with incomplete provider usage are also excluded from token means. Expected steering/delegation cancellation is distinguished from transport failure. Repeated calls are diagnostic counts, not proof that an operation was unnecessary.
+
+Run only one inference campaign at a time. The runner refuses other resident models and never unloads them. It cannot detect another client's concurrent request to the same model; keep the server otherwise idle. Context configuration is not evidence of a filled-context workload. The checkpoint case explicitly exercises manual compaction and persistence; it is not a long-context endurance benchmark.
+
+## Auto-mode behavior
+
+`npm run eval:auto -- --endpoint http://100.68.102.73:11434 --reviewer tev1:4b --runs 3 --output model-eval-results/auto-behavior.json` evaluates the production permission service using real built-in schemas and capability/path metadata. It does not execute proposed actions. Ready, unavailable, and shadow modes cover authorized edits, contradictory or missing authority, injected instructions, size boundaries, literal read pipelines, delegation, questions, external paths, protected files, and test execution.
+
+The artifact separates expected policy behavior from authorization friction. An authorized action can correctly require confirmation under the current execution envelope or reviewer capacity policy; that still represents friction to investigate. Full original human directions and exact proposed arguments are retained. No tool output or agent justification becomes human authorization. Reviewer recommendations never expand the host-enforced action envelope.
+
+`node --import tsx src/evals/autoReviewAblation.ts --help` describes the reviewer-question comparison. It replays captured complete inputs and additional stress cases, changing the question independently of action eligibility. Do not lower a confidence cutoff merely to make positive examples pass; evaluate contradictory instructions and held-out negative cases too. These bounded measurements are not a security guarantee or calibrated error probability.
+
+### Recorded behavior findings
+
+The first completed 32k campaign passed all 36 trials across six cases and three
+paired repetitions. The longer outcome-oriented instruction did not provide a
+consistent efficiency improvement, so production retains the existing prompt.
+The first configuration baseline recovered from a transport failure: its matched
+pair is excluded from resource comparisons. Delegation cancellation left some
+usage incomplete; those pairs have no token-cost comparison. These exclusions
+preserve functional outcomes rather than silently discarding failed requests.
+
+The campaign exposed an output-budget defect: the Agent could replace the
+configured output cap with a larger remaining-context allowance. The Agent and
+compactor now honor the configured ceiling, further bounded by available context.
+All 248 transmitted requests in the completed campaign used `num_predict=2048`.
+Historical full-Agent coding results recorded configuration rather than this
+wire-level invariant; their configured cap must not be read as a transmitted cap.
+
+Auto's revised request budget retains complete original authority and proposed
+arguments within one 64 KiB UTF-8 request. The allow-only cutoff of 0.95 improved
+the measured reviewer operating point; deny remains 0.98. On 25 held-out cases
+(10 authorized, 15 negative, each repeated three times), 0.95 approved 3/10
+distinct authorized cases and none of 15 negative cases. A diagnostic 0.90 cutoff
+incorrectly approved one qualified-approval case and was rejected. These are
+finite synthetic samples for the measured reviewer, not calibrated safety scores.
+The alternative reviewer question was also rejected.
+
+On the 17 common baseline/refined Auto cases, clearly authorized ready-mode
+approvals rose from 0/21 to 12/21 repeated decisions (four distinct cases gained).
+The refinement changed both the budget and cutoff, so this does not isolate their
+individual effects. The final readiness campaign still reports six failures:
+two approximately 4,000-character argument cases abstained in all repetitions.
+Arbitrary test runners and oversized authority also continue to ask under the
+host policy. These remaining friction cases are retained as failures or explicit
+policy limits; a green test suite does not mean every behavioral target passed.

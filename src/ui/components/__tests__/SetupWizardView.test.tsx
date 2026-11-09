@@ -7,6 +7,7 @@ import { SetupWizardView } from '../SetupWizardView.js';
 import { ServiceRegistry } from '@services/ServiceRegistry.js';
 import { DEFAULT_CONFIG } from '@config/defaults.js';
 import type { Config } from '@shared/index.js';
+import { permissionReadinessProbeKind } from '@security/PermissionReviewRequest.js';
 
 class Stdout extends EventEmitter {
   columns = 100;
@@ -276,13 +277,18 @@ describe('essential setup keyboard flow', () => {
   it('uses saved Auto defaults directly and shows successful reviewer readiness', async () => {
     vi.stubGlobal(
       'fetch',
-      vi.fn(async url => {
+      vi.fn(async (url, options) => {
         if (String(url).endsWith('/v1/models')) return models();
         if (String(url).endsWith('/api/tags'))
           return Response.json({ models: [{ name: 'tev1:4b', capabilities: ['decision'] }] });
+        const positive = permissionReadinessProbeKind(JSON.parse(String(options?.body))) === 'positive';
         return Response.json({
           answers: {
-            permission: { type: 'choice', choice: 'deny', probabilities: { allow: 0.01, ask: 0.01, deny: 0.98 } },
+            permission: {
+              type: 'choice',
+              choice: positive ? 'allow' : 'deny',
+              probabilities: { allow: positive ? 0.98 : 0.01, ask: 0.01, deny: positive ? 0.01 : 0.98 },
+            },
           },
         });
       })

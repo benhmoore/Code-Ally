@@ -675,6 +675,7 @@ export class ConversationCompactor {
         validSourceIds,
         options.customInstructions,
         context.signal,
+        context.modelMaxOutput,
       );
       // User requests are authoritative source text. Structured reduction may
       // organize evidence around them, but it may never replace them with a
@@ -843,6 +844,7 @@ export class ConversationCompactor {
     validSourceIds: readonly string[],
     focus: string | undefined,
     signal: AbortSignal,
+    modelMaxOutput?: number,
   ): Promise<SemanticCheckpointStateV1> {
     const maxTokens = Math.max(1000, Math.floor(this.tokenManager.getContextSize() * MAX_REDUCER_INPUT_RATIO));
     const chunks: Message[][] = [];
@@ -920,13 +922,18 @@ export class ConversationCompactor {
         }
         throw new Error('Checkpoint reducer request exceeds the available context budget');
       }
-      const reducerOutputTokens = Math.max(
-        MIN_REDUCER_OUTPUT_TOKENS,
-        Math.min(
-          MAX_REDUCER_OUTPUT_TOKENS,
-          this.tokenManager.getContextSize()
-            - this.debugState.reducerInputTokens
-            - REDUCER_OUTPUT_SAFETY_TOKENS,
+      if (modelMaxOutput !== undefined && (!Number.isFinite(modelMaxOutput) || modelMaxOutput < 1))
+        throw new Error('Checkpoint reducer requires a positive finite output limit');
+      const reducerOutputTokens = Math.min(
+        Math.floor(modelMaxOutput ?? MAX_REDUCER_OUTPUT_TOKENS),
+        Math.max(
+          MIN_REDUCER_OUTPUT_TOKENS,
+          Math.min(
+            MAX_REDUCER_OUTPUT_TOKENS,
+            this.tokenManager.getContextSize()
+              - this.debugState.reducerInputTokens
+              - REDUCER_OUTPUT_SAFETY_TOKENS,
+          ),
         ),
       );
 

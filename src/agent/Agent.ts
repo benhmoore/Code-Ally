@@ -27,7 +27,7 @@ import {
 } from '../llm/ModelClient.js';
 import { ToolManager } from '../tools/ToolManager.js';
 import { ConversationOperationQueue } from './ConversationOperationQueue.js';
-import { toolSchemaBudget } from './context/ContextBudget.js';
+import { requestOutputLimit, toolSchemaBudget } from './context/ContextBudget.js';
 import { deferredToolCatalogueMessage, renderDeferredToolCatalogue } from '../tools/ToolExposurePolicy.js';
 import { DURABLE_OBJECTIVE_TOOLS, selectRuntimeToolSurface, needsTemporalContext } from '../tools/runtimeToolSelection.js';
 import { ActivityStream } from '../services/ActivityStream.js';
@@ -1805,10 +1805,8 @@ export class Agent {
       const estimatedRequestTokens = this.tokenManager.estimateMessagesTokens(sentMessages)
         + this.tokenManager.estimateTokens(JSON.stringify(functions))
         + this.tokenManager.getCalibrationOverhead();
-      const remainingTokens = Math.max(0, this.tokenManager.getContextSize() - estimatedRequestTokens);
-      const dynamicMaxTokens = Math.max(
-        TOKEN_MANAGEMENT.MIN_OUTPUT_TOKENS,
-        Math.floor(remainingTokens * TOKEN_MANAGEMENT.DYNAMIC_OUTPUT_PERCENT)
+      let dynamicMaxTokens = requestOutputLimit(
+        this.tokenManager.getContextSize(), estimatedRequestTokens, this.appConfig.max_tokens,
       );
 
       // When the output budget is tight, a single large tool call (a whole-file
@@ -1824,6 +1822,13 @@ export class Agent {
         budgetWarning.metadata = { ...(budgetWarning.metadata ?? {}), ephemeral: true };
         this.conversationManager.addMessage(budgetWarning);
         sentMessages = this.conversationManager.getMessages();
+        dynamicMaxTokens = requestOutputLimit(
+          this.tokenManager.getContextSize(),
+          this.tokenManager.estimateMessagesTokens(sentMessages)
+            + this.tokenManager.estimateTokens(JSON.stringify(functions))
+            + this.tokenManager.getCalibrationOverhead(),
+          this.appConfig.max_tokens,
+        );
       }
       // The watchdog stands down until the model produces its first output; a
       // large prompt on a slow backend spends that whole time in prefill with

@@ -1,3 +1,4 @@
+import { MAX_PERMISSION_REVIEW_BYTES } from './PermissionReviewLimits.js';
 import type { Message } from '../types/index.js';
 import type { SemanticCheckpointStateV1 } from '../agent/compaction/types.js';
 import { isActualUserMessage } from '../utils/messagePersistence.js';
@@ -6,7 +7,7 @@ import { isActualUserMessage } from '../utils/messagePersistence.js';
 export function permissionTask(
   transcript: readonly Message[],
   checkpoint?: SemanticCheckpointStateV1,
-  limit = 2000,
+  limit = MAX_PERMISSION_REVIEW_BYTES,
 ): string | undefined {
   if (checkpoint && !checkpoint.userDirections) return undefined;
   const parts: string[] = [];

@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { MAX_PERMISSION_REVIEW_BYTES } from '../PermissionReviewLimits.js';
 import { permissionTask } from '../permissionTask.js';
 import { extractSemanticCheckpoint } from '../../agent/compaction/CheckpointReducer.js';
 import type { Message } from '../../types/index.js';
@@ -31,10 +32,17 @@ describe('permission task authority', () => {
   });
 
   it('abstains rather than truncating oversized or incomplete authority', () => {
-    expect(permissionTask([user('large', 'x'.repeat(2001))])).toBeUndefined();
+    expect(permissionTask([user('large', 'x'.repeat(MAX_PERMISSION_REVIEW_BYTES + 1))])).toBeUndefined();
     const legacy = extractSemanticCheckpoint([user('old', 'Do not delete files.')]);
     delete legacy.userDirections;
     expect(permissionTask([user('new', 'Continue')], legacy)).toBeUndefined();
+  });
+
+  it('preserves long and Unicode authority exactly within the early character ceiling', () => {
+    const text = '你'.repeat(5000);
+    expect(permissionTask([user('long', text)])).toBe(text);
+    expect(permissionTask([user('custom', 'abcd')], undefined, 4)).toBe('abcd');
+    expect(permissionTask([user('custom', 'abcde')], undefined, 4)).toBeUndefined();
   });
 
   it('retains repeated directions with distinct IDs and their ordering', () => {

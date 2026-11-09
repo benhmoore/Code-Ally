@@ -1,3 +1,4 @@
+import { TOKEN_MANAGEMENT } from '../../config/constants.js';
 import type { FunctionDefinition, Message } from '../../types/index.js';
 import type { TokenManager } from '../TokenManager.js';
 import { isPersistentMessage } from '../../utils/messagePersistence.js';
@@ -95,6 +96,29 @@ export function requestCeilings(contextWindow: number, modelMaxOutput?: number):
     ),
   );
   return { outputReserve, safetyReserve, triggerBudget };
+}
+
+/** Provider output ceiling, capped by both configuration and remaining context.
+ * Keep the dynamic headroom policy without a minimum that can exceed capacity.
+ */
+export function requestOutputLimit(
+  contextWindow: number,
+  estimatedInput: number,
+  modelMaxOutput?: number,
+): number {
+  if (!Number.isFinite(contextWindow) || !Number.isFinite(estimatedInput)
+    || contextWindow < 1 || estimatedInput < 0) {
+    throw new RangeError('Request context sizes must be finite nonnegative token counts');
+  }
+  if (modelMaxOutput !== undefined && (!Number.isFinite(modelMaxOutput) || modelMaxOutput < 1)) {
+    throw new RangeError('Maximum output tokens must be a positive finite token count');
+  }
+  const remaining = Math.floor(contextWindow - estimatedInput);
+  if (remaining < 1) throw new RangeError('No context capacity remains for model output');
+  return Math.min(
+    Math.floor(modelMaxOutput ?? Number.MAX_SAFE_INTEGER),
+    Math.max(1, Math.floor(remaining * TOKEN_MANAGEMENT.DYNAMIC_OUTPUT_PERCENT)),
+  );
 }
 
 /**

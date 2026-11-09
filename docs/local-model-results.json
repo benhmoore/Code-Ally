@@ -739,5 +739,6 @@
       "independentTestsPassed": true,
       "verificationOutput": "\u2714 independent range cases (0.268042ms)\n\u2139 tests 1\n\u2139 suites 0\n\u2139 pass 1\n\u2139 fail 0\n\u2139 cancelled 0\n\u2139 skipped 0\n\u2139 todo 0\n\u2139 duration_ms 81.746167\n"
     }
-  }
+  },
+  "outputBudgetCaveat": "Historical full-Agent coding runs recorded configured max_tokens, but the harness could replace that setting with a larger remaining-context output budget. Those configured limits are not evidence of the transmitted num_predict. Direct-client ablations are unaffected. The end-to-end behavior campaign records actual wire budgets and verifies the corrected Agent and compactor caps."
 }

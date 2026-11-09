@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { ContextBudgetPlanner } from '../context/ContextBudget.js';
+import { ContextBudgetPlanner, requestOutputLimit } from '../context/ContextBudget.js';
 import { TokenManager } from '../TokenManager.js';
 import type { Message } from '../../types/index.js';
 
@@ -142,5 +142,49 @@ describe('ContextBudgetPlanner', () => {
     expect(budget.domainBudget).toBeLessThanOrEqual(budget.usableBudget);
     expect(budget.retainedTailBudget + budget.checkpointBudget).toBe(budget.domainBudget);
     expect(budget.targetBudget).toBeLessThan(budget.triggerBudget);
+  });
+});
+
+
+describe('requestOutputLimit', () => {
+  it('keeps configured output maxima on both 32k and 128k contexts', () => {
+    for (const context of [32768, 131072]) {
+      for (const configured of [1, 512, 2048, 4096]) {
+        expect(requestOutputLimit(context, 6000, configured)).toBe(configured);
+      }
+    }
+  });
+
+  it('shrinks near the window while retaining dynamic headroom', () => {
+    expect(requestOutputLimit(32768, 32000, 2048)).toBe(691);
+    expect(requestOutputLimit(131072, 130972, 2048)).toBe(90);
+    expect(requestOutputLimit(32768, 32767, 2048)).toBe(1);
+  });
+
+  it('never exceeds the configured cap or available capacity', () => {
+    for (const context of [32768,131072]) {
+      for (const remaining of [1,2,10,100,1023,2048,10000]) {
+        const result = requestOutputLimit(context, context-remaining, 2048);
+        expect(Number.isInteger(result)).toBe(true);
+        expect(result).toBeGreaterThan(0);
+        expect(result).toBeLessThanOrEqual(Math.min(2048,remaining));
+        if (remaining >= 2) expect(result).toBeLessThan(remaining);
+      }
+    }
+  });
+
+  it('accounts for input added by a low-output warning', () => {
+    expect(requestOutputLimit(32768, 32000+100, 2048)).toBe(601);
+  });
+
+  it('supports an unset maximum and rounds fractional estimates conservatively', () => {
+    expect(requestOutputLimit(32768, 32000)).toBe(691);
+    expect(requestOutputLimit(100, 97.5, 1.9)).toBe(1);
+  });
+
+  it('refuses invalid or exhausted capacity rather than sending an invalid provider limit', () => {
+    for (const cap of [0,-1,NaN,Infinity]) expect(() => requestOutputLimit(32768,100,cap)).toThrow(RangeError);
+    for (const input of [32768,40000,NaN,Infinity,-1]) expect(() => requestOutputLimit(32768,input,2048)).toThrow(RangeError);
+    expect(() => requestOutputLimit(Infinity,100,2048)).toThrow(RangeError);
   });
 });
