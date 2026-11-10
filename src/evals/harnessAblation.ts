@@ -22,7 +22,7 @@ import {
   normalizeProviderToolDefinitions,
 } from './runtimeToolProfiles.js';
 
-const SUITE = { id: 'code-ally-harness-ablation', version: 16 } as const;
+const SUITE = { id: 'code-ally-harness-ablation', version: 17 } as const;
 const FIXTURE_NOW = new Date('2026-08-17T14:08:36.000Z');
 const FIXTURE_TIME_ZONE = 'America/Chicago';
 

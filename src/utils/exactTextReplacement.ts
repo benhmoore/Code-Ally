@@ -1,3 +1,5 @@
+import { assertTextEditContent } from './textEditContent.js';
+
 /** Exact text replacement with LF/CRLF treated as the same logical newline. */
 export interface ExactTextReplacement {
   content: string;
@@ -7,26 +9,6 @@ export interface ExactTextReplacement {
   newline: '\n' | '\r\n';
 }
 
-function validateText(text: string): void {
-  if (text.includes('\0')) throw new Error('NUL-containing binary text cannot be edited');
-  for (let index = 0; index < text.length; index++) {
-    const code = text.charCodeAt(index);
-    if (code >= 0xd800 && code <= 0xdbff) {
-      const next = text.charCodeAt(++index);
-      if (!(next >= 0xdc00 && next <= 0xdfff)) throw new Error('Text contains an invalid Unicode surrogate');
-    } else if (code >= 0xdc00 && code <= 0xdfff) throw new Error('Text contains an invalid Unicode surrogate');
-  }
-}
-
-/** Decode without silently replacing invalid bytes or removing a UTF-8 BOM. */
-export function decodeExactTextSource(bytes: Uint8Array): string {
-  const buffer = Buffer.from(bytes);
-  const text = buffer.toString('utf8');
-  if (!Buffer.from(text, 'utf8').equals(buffer)) throw new Error('Source is not valid UTF-8');
-  validateText(text);
-  return text;
-}
-
 /**
  * Empty oldText names the sole insertion point only when source is empty.
  * Only newline encoding is equivalent: no trimming, Unicode normalization, or fuzzy matching.
@@ -34,7 +16,7 @@ export function decodeExactTextSource(bytes: Uint8Array): string {
  * file newline, otherwise LF. Bytes outside the matched raw slice remain untouched.
  */
 export function replaceExactText(source: string, oldText: string, newText: string): ExactTextReplacement {
-  for (const text of [source, oldText, newText]) validateText(text);
+  for (const text of [source, oldText, newText]) assertTextEditContent(text);
   if (!oldText.length && source.length) throw new Error('Empty old_text is allowed only for an empty file');
   const normalized = source.replace(/\r\n/g, '\n');
   const needle = oldText.replace(/\r\n/g, '\n');

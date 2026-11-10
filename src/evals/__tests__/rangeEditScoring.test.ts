@@ -1,5 +1,6 @@
 import { expect, it } from 'vitest';
 import { ApplyPatchTool } from '../../tools/ApplyPatchTool.js';
+import { ExactTextEditTool } from '../../tools/ExactTextEditTool.js';
 import { ActivityStream } from '../../services/ActivityStream.js';
 import {
   currentHarnessEditDefinition,
@@ -11,6 +12,7 @@ import {
 import type { FunctionDefinition } from '../../types/index.js';
 
 const exact = { file_path: 'src/range.ts', old_text: '  return end - start;', new_text: '  return end - start + 1;' };
+const exactDefinition = new ExactTextEditTool(new ActivityStream()).getFunctionDefinition();
 const legacyDefinition: FunctionDefinition = {
   type: 'function',
   function: {
@@ -29,19 +31,21 @@ const legacy = {
     '@@ -1,3 +1,3 @@\n export function rangeSize(start: number, end: number) {\n-  return end - start;\n+  return end - start + 1;\n }\n',
 };
 
-it('uses the production schema and accepts exact edits producing the complete expected source', () => {
+it('uses the unified production schema and accepts the explicit exact candidate when its schema was sent', () => {
   expect(currentHarnessEditDefinition()).toEqual(new ApplyPatchTool(new ActivityStream()).getFunctionDefinition());
-  expect(scoreRangeFixtureEdit(exact, currentHarnessEditDefinition())).toBe(true);
+  expect(scoreRangeFixtureEdit(legacy, currentHarnessEditDefinition())).toBe(true);
+  expect(scoreRangeFixtureEdit({ ...legacy, show_updated_context: true }, currentHarnessEditDefinition())).toBe(true);
+  expect(scoreRangeFixtureEdit(exact, exactDefinition)).toBe(true);
   expect(
     scoreRangeFixtureEdit(
       { file_path: 'src/range.ts', old_text: RANGE_FIXTURE_SOURCE, new_text: RANGE_FIXTURE_EXPECTED },
-      currentHarnessEditDefinition()
+      exactDefinition
     )
   ).toBe(true);
 });
 it('accepts historical captured patches only under their declared schema', () => {
   expect(scoreRangeFixtureEdit(legacy, legacyDefinition)).toBe(true);
-  expect(scoreRangeFixtureEdit(legacy, currentHarnessEditDefinition())).toBe(false);
+  expect(scoreRangeFixtureEdit(legacy, exactDefinition)).toBe(false);
   expect(scoreRangeFixtureEdit(exact, legacyDefinition)).toBe(false);
   expect(scoreRangeFixtureEdit(legacy, undefined)).toBe(false);
 });
@@ -56,7 +60,7 @@ it.each([
   { ...exact, file_path: 'src/wrong.ts' },
   { ...exact, old_text: 3 },
 ])('rejects malformed, mixed, noop and semantically incorrect exact arguments: %j', args => {
-  expect(scoreRangeFixtureEdit(args, currentHarnessEditDefinition())).toBe(false);
+  expect(scoreRangeFixtureEdit(args, exactDefinition)).toBe(false);
 });
 it.each([
   { ...legacy, old_text: exact.old_text },
@@ -83,7 +87,7 @@ it.each([
   expect(
     scoreRangeFixtureEdit(
       { file_path: 'src/range.ts', old_text: RANGE_FIXTURE_SOURCE, new_text: source },
-      currentHarnessEditDefinition()
+      exactDefinition
     )
   ).toBe(true);
 });

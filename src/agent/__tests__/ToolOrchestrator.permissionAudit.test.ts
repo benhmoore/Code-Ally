@@ -166,7 +166,7 @@ it('releases real prepared editor source after permission denial without executi
     {
       id: 'denied-edit',
       type: 'function',
-      function: { name: 'apply-patch', arguments: { file_path: file, old_text: 'old', new_text: 'new' } },
+      function: { name: 'apply-patch', arguments: { file_path: file, patch: '@@ -1,1 +1,1 @@\n-old source\n+new source' } },
     },
   ];
   const messages: Message[] = [];

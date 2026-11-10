@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, rm, symlink, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -111,9 +111,14 @@ describe('selective Auto deterministic envelope', () => {
     const decision = await classify('write', { file_path: 'new.ts', content });
     expect(decision.kind).toBe('review');
     expect(decision.review?.arguments).toEqual({ file_path: 'new.ts', content });
-    expect((await classify('apply-patch', { file_path: 'source.ts', old_text: 'old', new_text: 'new' })).kind).toBe(
-      'review'
-    );
+    expect(
+      (
+        await classify('apply-patch', {
+          file_path: 'source.ts',
+          patch: '@@ -1,1 +1,1 @@\n-ordinary source\n+changed source\n',
+        })
+      ).kind
+    ).toBe('review');
     expect((await classify('write', { file_path: 'source.ts', content })).kind).toBe('ask');
     expect((await classify('write', { file_path: 'large.ts', content: 'x'.repeat(40 * 1024) })).kind).toBe('ask');
     for (const file_path of ['.env', 'credentials.json', 'AGENTS.md', '.git/config', 'private.key', '../new.ts']) {
@@ -124,50 +129,85 @@ describe('selective Auto deterministic envelope', () => {
   });
 });
 
-describe('exact edit Auto review boundary', () => {
-  it('reviews initialization only for an existing zero-byte file and rechecks its size', async () => {
-    const args = {
-      file_path: 'empty.ts',
-      old_text: '',
-      new_text: 'export const x = 1;',
-    };
+describe('canonical unified edit Auto review boundary', () => {
+  const patch = '@@ -1,1 +1,1 @@\n-ordinary source\n+changed source\n';
+  it('reviews original numeric unified arguments without rewriting them', async () => {
+    const args = { file_path: 'source.ts', patch, show_updated_context: true };
+    const result = await classify('apply-patch', args);
+    expect(result.kind).toBe('review');
+    expect(result.review?.arguments).toEqual(args);
+    expect(result.review?.arguments).not.toBe(args);
+    expect(args).not.toHaveProperty('old_text');
+  });
+  it('accepts one existing empty-file insertion and rejects changed targets on reclassification', async () => {
+    const args = { file_path: 'empty.ts', patch: '@@ -0,0 +1,1 @@\n+export const x = 1;\n' };
     expect((await classify('apply-patch', args)).kind).toBe('ask');
     await writeFile(path.join(root, 'empty.ts'), '');
-    const eligible = await classify('apply-patch', args);
-    expect(eligible.kind).toBe('review');
-    expect(eligible.review?.arguments).toEqual(args);
+    expect((await classify('apply-patch', args)).kind).toBe('review');
     await writeFile(path.join(root, 'empty.ts'), 'changed');
     expect((await classify('apply-patch', args)).kind).toBe('ask');
-    await writeFile(path.join(root, 'empty.ts'), '\n');
-    expect((await classify('apply-patch', args)).kind).toBe('ask');
-    await writeFile(path.join(root, 'empty.ts'), '');
-    expect((await classify('apply-patch', { ...args, new_text: '' })).kind).toBe('ask');
-  });
-  it('reviews the original exact arguments without rewriting them to a patch', async () => {
-    const args = { file_path: 'source.ts', old_text: 'ordinary source', new_text: 'changed source' };
-    const decision = await classify('apply-patch', args);
-    expect(decision.kind).toBe('review');
-    expect(decision.review?.arguments).toEqual(args);
-    expect(decision.review?.arguments).not.toBe(args);
-    expect(args).not.toHaveProperty('patch');
   });
   it.each([
-    { old_text: '', new_text: 'changed' },
-    { old_text: 'source', new_text: null },
-    { old_text: 'source', new_text: 'source' },
-    { old_text: 'a\0', new_text: 'b' },
-    { old_text: 'a', new_text: 'b\0' },
-    { old_text: 'source', new_text: 'new', patch: 'mixed schema' },
-    { old_text: 'source', new_text: 'new', extra: true },
-    { patch: 'historical interface' },
-  ])('asks on invalid, mixed or unknown exact arguments: %j', async invalid => {
+    { patch: '' },
+    { patch: 12 },
+    { patch: '@@\n-ordinary source\n+new' },
+    { patch: '@@ -1,1 +1,1 @@\n-ordinary source\n+ordinary source\n' },
+    { patch: '@@ -1,1 +1,1 @@\n-missing context\n+new\n' },
+    { patch: '@@ -1,1 +1,1 @@\n-ordinary source\n+new\0' },
+    { old_text: 'ordinary source', new_text: 'new' },
+    { patch: '@@ -1 +1 @@\n-ordinary source\n+new', old_text: 'ordinary source' },
+    { patch: '@@ -1 +1 @@\n-ordinary source\n+new', extra: true },
+    { patch: '@@ -1 +1 @@\n-ordinary source\n+new', show_updated_context: 'yes' },
+  ])('asks on malformed, mixed, ambiguous or no-op patch input: %j', async invalid => {
     expect((await classify('apply-patch', { file_path: 'source.ts', ...invalid })).kind).toBe('ask');
   });
   it('preserves existing-file, protected-path, external-path and byte bounds', async () => {
     for (const file_path of ['new.ts', '.env', 'AGENTS.md', '../outside.txt', '.'])
-      expect((await classify('apply-patch', { file_path, old_text: 'old', new_text: 'new' })).kind).toBe('ask');
-    expect(
-      (await classify('apply-patch', { file_path: 'source.ts', old_text: 'source', new_text: '界'.repeat(12000) })).kind
-    ).toBe('ask');
+      expect((await classify('apply-patch', { file_path, patch })).kind).toBe('ask');
+    expect((await classify('apply-patch', { file_path: 'source.ts', patch: patch + '界'.repeat(12000) })).kind).toBe(
+      'ask'
+    );
+  });
+  it.each([
+    { name: 'invalid UTF-8', bytes: Buffer.concat([Buffer.from('ordinary source\n'), Buffer.from([0xff])]) },
+    { name: 'NUL binary source', bytes: Buffer.from('ordinary source\n\0') },
+    {
+      name: 'UTF-8 encoded surrogate',
+      bytes: Buffer.concat([Buffer.from('ordinary source\n'), Buffer.from([0xed, 0xa0, 0x80])]),
+    },
+  ])('abstains without changing invalid target bytes: $name', async ({ bytes }) => {
+    const file = path.join(root, 'source.ts');
+    await writeFile(file, bytes);
+    expect((await classify('apply-patch', { file_path: 'source.ts', patch })).kind).toBe('ask');
+    expect(await readFile(file)).toEqual(bytes);
+  });
+  it.each(['\0', '\ud800', '\udc00'])(
+    'rejects invalid transformed text from canonical escaped patch repair: %j',
+    async invalid => {
+      const decoded = '@@ -1,1 +1,1 @@\n-ordinary source\n+invalid' + invalid + '\n';
+      const encoded = JSON.stringify(decoded).slice(1, -1);
+      const file = path.join(root, 'source.ts'),
+        before = await readFile(file);
+      expect((await classify('apply-patch', { file_path: 'source.ts', patch: encoded })).kind).toBe('ask');
+      expect(await readFile(file)).toEqual(before);
+    }
+  );
+  it('rejects a raw patch with an unpaired surrogate before reviewing it', async () => {
+    const invalid = '@@ -1,1 +1,1 @@\n-ordinary source\n+invalid\ud800\n';
+    expect((await classify('apply-patch', { file_path: 'source.ts', patch: invalid })).kind).toBe('ask');
+  });
+  it('retains valid literal replacement characters, BOM and CRLF during eligibility checks', async () => {
+    const file = path.join(root, 'source.ts'),
+      source = '\ufeffheader �\r\nordinary source\r\n';
+    await writeFile(file, source);
+    const args = { file_path: 'source.ts', patch: '@@ -2,1 +2,1 @@\n-ordinary source\n+changed source\n' };
+    expect((await classify('apply-patch', args)).kind).toBe('review');
+    expect(await readFile(file)).toEqual(Buffer.from(source, 'utf8'));
+  });
+  it('does not approve a patch whose formerly matching source changes', async () => {
+    const args = { file_path: 'source.ts', patch };
+    expect((await classify('apply-patch', args)).kind).toBe('review');
+    await writeFile(path.join(root, 'source.ts'), 'externally changed');
+    expect((await classify('apply-patch', args)).kind).toBe('ask');
   });
 });

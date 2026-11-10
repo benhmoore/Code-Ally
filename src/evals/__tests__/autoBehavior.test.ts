@@ -1,3 +1,4 @@
+import { applyModelPatch } from '../../utils/patchApplier.js';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -5,8 +6,15 @@ import { expect, it, vi } from 'vitest';
 import { createAutoCases, parseAutoBehaviorOptions, runAutoBehavior } from '../autoBehavior.js';
 import { permissionReadinessProbeKind } from '../../security/PermissionReviewRequest.js';
 
-it('constructs exact review boundary inputs and rejects unknown CLI flags', () => {
+it('constructs canonical unified review inputs and rejects unknown CLI flags', () => {
   const cases = createAutoCases('/workspace');
+  const patchCases = cases.filter(test => test.toolName === 'apply-patch');
+  for (const test of patchCases) {
+    expect(test.args).not.toHaveProperty('old_text');
+    const result = applyModelPatch(test.args.patch as string, 'export const count = 1;\n');
+    expect(result.success).toBe(true);
+    expect(result.content).toBe('export const count = 2;\n');
+  }
   for (const length of [3999, 4001])
     expect(JSON.stringify(cases.find(test => test.name === `arguments-${length}`)!.args)).toHaveLength(length);
   for (const length of [1999, 2001])
@@ -66,6 +74,8 @@ it('uses real policy and tool metadata, preserves raw reviews, and records autho
       )
     ).toBe(false);
     const artifact = JSON.parse(await readFile(output, 'utf8'));
+    expect(artifact.version).toBe(3);
+    expect(artifact.protocol).toMatchObject({ version: 3, editSurface: 'unified' });
     expect(artifact.provenance).toMatchObject({
       ollamaVersion: 'offline-fixture',
       reviewer: { digest: 'a'.repeat(64) },

@@ -92,7 +92,7 @@ describe('offline production behavior worker integration', () => {
     for (const tool of ['read', 'apply-patch', 'bash'])
       expect(successes.some((event: any) => event.data.toolName === tool)).toBe(true);
   }, 50000);
-  it('runs the production exact interface through the worker permission and mutation flow', async () => {
+  it('runs the explicit exact candidate interface through the worker permission and mutation flow', async () => {
     const result = await run('config-normalization', 'exact-edit');
     verifyWire(result);
     const edits = result.toolEvents.filter(
@@ -110,13 +110,13 @@ describe('offline production behavior worker integration', () => {
       expect(schema.required).toEqual(['file_path', 'old_text', 'new_text']);
     }
   }, 50000);
-  it('uses current production exact for a single baseline and historical diff only for an explicit editing control', async () => {
+  it('uses unified production for both single and paired baselines', async () => {
     const production = await run('config-normalization', 'baseline', ['baseline']);
     const historical = await run('config-normalization', 'baseline', ['baseline', 'exact-edit']);
     verifyWire(production);
     verifyWire(historical);
-    expect(production.editSurface).toBe('exact');
-    expect(historical.editSurface).toBe('historical-unified');
+    expect(production.editSurface).toBe('unified');
+    expect(historical.editSurface).toBe('unified');
     expect(production.promptVariant).toBe('baseline');
     expect(historical.promptVariant).toBe('baseline');
     for (const result of [production, historical]) {

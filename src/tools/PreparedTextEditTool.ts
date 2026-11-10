@@ -1,6 +1,7 @@
 /** Shared immutable preparation, scoped preview, and atomic text-edit publication. */
 
 import * as fs from 'fs/promises';
+import { assertTextEditContent, decodeTextEditSource } from '../utils/textEditContent.js';
 import { BaseTool } from './BaseTool.js';
 import { ToolCapability } from './ToolCapability.js';
 import type { ToolExecutionContext, ToolResult, FunctionDefinition } from '../types/index.js';
@@ -48,7 +49,11 @@ export abstract class PreparedTextEditTool extends BaseTool {
   abstract getFunctionDefinition(): FunctionDefinition;
   protected abstract validateInput(args: Record<string, unknown>): void;
   protected decodeSource(bytes: Uint8Array): string {
-    return Buffer.from(bytes).toString('utf8');
+    try {
+      return decodeTextEditSource(bytes);
+    } catch (error) {
+      throw new TextEditInputError(error instanceof Error ? error.message : String(error));
+    }
   }
   protected abstract transformSource(args: Readonly<Record<string, unknown>>, source: string): AppliedModelPatch;
   private readonly prepared = new WeakMap<
@@ -207,6 +212,11 @@ export abstract class PreparedTextEditTool extends BaseTool {
         const applied = this.transformSource(snapshot, originalContent);
         if (!applied.success || applied.content === undefined)
           throw new TextEditInputError(applied.error ?? 'The edit makes no changes.');
+        try {
+          assertTextEditContent(applied.content);
+        } catch (error) {
+          throw new TextEditInputError(error instanceof Error ? error.message : String(error));
+        }
         const readRanges = Object.freeze((applied.readRanges ?? []).map(range => Object.freeze({ ...range })));
         const editRanges = Object.freeze((applied.editRanges ?? []).map(range => Object.freeze({ ...range })));
         return Object.freeze({

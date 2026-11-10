@@ -229,11 +229,30 @@ now share the configured ceiling with an additional available-context bound.
 The complete 36-trial campaign transmitted 248 requests, all capped at 2,048
 output tokens. This fixes a harness contract independently of model identity.
 
+Native Ollama transport projects conversation messages onto the provider's API
+fields before sending them. Internal identifiers, timestamps, and UI metadata stay
+in persistence; native thinking and tool-call identity remain on the wire. Captured
+request snapshots became 27–38% smaller in serialized HTTP bytes. This measures
+transport overhead, not model-token or inference-latency savings.
+
+Context accounting uses a provider-owned replay policy to include plaintext
+reasoning that the native client sends again. Other providers' display-only
+thoughts do not acquire this cost. The same estimate feeds admission, compaction,
+output budgets, and usage reporting, with cache identity tied to the replay policy.
+Calibration captures its estimation basis before awaiting the provider and avoids
+learning negative fixed overhead from omitted historical reasoning. Native
+templates can discard older thinking, so counting transmitted thinking remains a
+conservative estimate rather than an exact rendered-prompt count. The implementation
+does not strip reasoning or select behavior by model name.
+
 The edit-interface comparison separates the tool schema from the system prompt.
-Exact text matching admits LF/CRLF equivalence while preserving other characters
-and all bytes outside the replacement. It rejects ambiguous matches, invalid
-UTF-8, binary text, and no-op edits. Preparation holds an immutable source and
-argument snapshot; scoped read evidence is checked before permission and execution.
+The production tool retains contextual unified diffs. An exact-text candidate
+admits LF/CRLF equivalence while preserving other characters and surrounding bytes,
+but failed the functional regression gate and remains an explicit evaluator
+option. Both frontends reject invalid UTF-8, NUL-containing text, and malformed
+Unicode through shared text validation, including transformed patch output.
+Preparation holds an immutable source and argument snapshot; scoped read evidence
+is checked before permission and execution.
 The shared finalizer owns atomic compare-and-swap, cancellation at the publication
 boundary, read-cache updates, journaling, and undo. Preview and execution use the
 same prepared edit, and invocation cleanup releases it after denial, interruption,
@@ -242,6 +261,9 @@ failure, or success. No model-specific edit fallback or fuzzy matching is used.
 Two experimental adapters were rejected after valid replacements failed in their
 intermediate unified-diff conversion. The corrected implementation derives line
 observation and mutation ranges directly from the exact match offsets. The
-historical unified-diff frontend remains an explicit evaluator control sharing
-that finalization backend, rather than a second normal tool offered to the model.
+unified-diff frontend and exact-text candidate share that finalization backend;
+normal requests expose only the production frontend. At temperature 1, the paired
+Qwen follow-up passed two cases with unified diffs and one with exact text. This
+end-to-end regression rejects promotion even though the submitted edits executed
+correctly. No model-specific fallback or silent sampler change was introduced.
 See [model evaluation](model-evaluation.md) for protocols, findings, and limits.

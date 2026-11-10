@@ -3,19 +3,19 @@ import { BEHAVIOR_PROTOCOL_VERSION, assertBehaviorProtocol, resolveBehaviorFacto
 describe('explicit behavior campaign factors', () => {
   it('makes a single baseline exercise current production', () => {
     expect(resolveBehaviorFactors(['baseline'])).toEqual({
-      baseline: { editSurface: 'exact', promptVariant: 'baseline' },
+      baseline: { editSurface: 'unified', promptVariant: 'baseline' },
     });
   });
   it('changes only prompt advice in the behavior comparison', () => {
     const factors = resolveBehaviorFactors(['baseline', 'outcome']);
-    expect(factors.baseline?.editSurface).toBe('exact');
-    expect(factors.outcome?.editSurface).toBe('exact');
+    expect(factors.baseline?.editSurface).toBe('unified');
+    expect(factors.outcome?.editSurface).toBe('unified');
     expect(factors.baseline?.promptVariant).toBe('baseline');
     expect(factors.outcome?.promptVariant).toBe('outcome');
   });
   it('changes only edit interface in the editing comparison', () => {
     const factors = resolveBehaviorFactors(['baseline', 'exact-edit']);
-    expect(factors.baseline).toEqual({ editSurface: 'historical-unified', promptVariant: 'baseline' });
+    expect(factors.baseline).toEqual({ editSurface: 'unified', promptVariant: 'baseline' });
     expect(factors['exact-edit']).toEqual({ editSurface: 'exact', promptVariant: 'baseline' });
   });
   it('does not depend on caller variant ordering', () => {
@@ -37,7 +37,7 @@ it('resolves actual factory schemas with exactly one factor changed per pair', a
   const { applyBehaviorVariant, BASELINE_OPERATION_RULE } = await import('../behaviorPolicies.js');
   const messages = [{ role: 'system' as const, content: `Identity\n${BASELINE_OPERATION_RULE}` }];
   const payload = (factors: {
-    editSurface: 'exact' | 'historical-unified';
+    editSurface: 'exact' | 'unified';
     promptVariant: 'baseline' | 'outcome';
   }) => ({
     messages: applyBehaviorVariant(messages, factors.promptVariant),
@@ -63,13 +63,12 @@ it('resolves actual factory schemas with exactly one factor changed per pair', a
   );
   expect(actualDefault?.getFunctionDefinition().function.parameters.required).toEqual([
     'file_path',
-    'old_text',
-    'new_text',
+    'patch',
   ]);
 });
 
 it('rejects earlier task/verifier protocols even when their labels and resolved factors match', () => {
   expect(() => assertBehaviorProtocol(BEHAVIOR_PROTOCOL_VERSION)).not.toThrow();
-  for (const version of [1, 2, undefined, null, String(BEHAVIOR_PROTOCOL_VERSION)])
+  for (const version of [1, 2, 3, undefined, null, String(BEHAVIOR_PROTOCOL_VERSION)])
     expect(() => assertBehaviorProtocol(version)).toThrow('protocol changed');
 });

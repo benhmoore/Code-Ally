@@ -71,7 +71,7 @@ async function main(): Promise<void> {
   if (!['baseline', 'outcome', 'exact-edit'].includes(options.variant) || options.contextSize < 32768)
     throw new Error('Invalid behavior variant/context');
   if (
-    !['exact', 'historical-unified'].includes(options.editSurface) ||
+    !['unified', 'exact'].includes(options.editSurface) ||
     !['baseline', 'outcome'].includes(options.promptVariant)
   )
     throw new Error('Behavior worker requires explicit edit surface and prompt factors');

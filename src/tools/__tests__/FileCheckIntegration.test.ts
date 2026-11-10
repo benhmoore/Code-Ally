@@ -113,8 +113,7 @@ describe('Automatic File Checking After Modification', () => {
 
       const result = await applyPatchTool.execute({
         file_path: jsonPath,
-        old_text: '{"name": "original"}',
-        new_text: '{"name": "modified"}',
+        patch: '@@ -1,1 +1,1 @@\n-{"name": "original"}\n+{"name": "modified"}',
       });
 
       expect(result.success).toBe(true);
@@ -134,8 +133,7 @@ describe('Automatic File Checking After Modification', () => {
 
       const result = await applyPatchTool.execute({
         file_path: jsonPath,
-        old_text: '{"name": "test"}',
-        new_text: '{"name": "test",}',
+        patch: '@@ -1,1 +1,1 @@\n-{"name": "test"}\n+{"name": "test",}',
       });
 
       expect(result.success).toBe(true);
@@ -156,8 +154,7 @@ describe('Automatic File Checking After Modification', () => {
 
     const result = await applyPatchTool.execute({
       file_path: jsonPath,
-      old_text: '"name": "test"',
-      new_text: '"name": "modified"',
+      patch: '@@ -2,1 +2,1 @@\n-  "name": "test",\n+  "name": "modified",',
     });
 
     expect(result.success).toBe(true);
@@ -177,8 +174,7 @@ describe('Automatic File Checking After Modification', () => {
 
     const result = await applyPatchTool.execute({
       file_path: jsonPath,
-      old_text: '{',
-      new_text: '{\n  invalid syntax here,',
+      patch: '@@ -1,1 +1,2 @@\n {\n+  invalid syntax here,',
     });
 
     expect(result.success).toBe(true);

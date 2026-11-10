@@ -438,12 +438,14 @@ ripgrep configuration and inherited preprocessing settings. Bounded new-file
 writes and contextual patches require a positive reviewer decision. The reviewer
 cannot broaden this envelope. This is not an OS sandbox for arbitrary programs.
 
-The reviewer receives original human directions and complete proposed arguments,
-not the coding model's reasoning or a lossy summary. If the authority exceeds
-2,000 characters or arguments exceed 4,000 characters, Auto asks instead of
-silently truncating evidence. These compact decision records do not change the
-coding model's 32K-or-larger context. Timeout, malformed output, or an unavailable
-reviewer falls back to human approval (or a structured denial in headless runs).
+The reviewer receives original human directions and complete proposed arguments.
+The complete serialized review request has a shared 64 KiB UTF-8 budget; exceeding
+it asks for approval without truncating evidence. This budget does not change the
+coding model's 32K-or-larger context. Reviewers must pass both an authorized-action
+probe and a contradictory-authority probe. Decisions below the confidence cutoff
+ask for approval; these scores are not calibrated safety guarantees. Timeout,
+malformed output, or an unavailable reviewer falls back to human approval (or a
+structured denial in headless runs).
 
 ### Management
 

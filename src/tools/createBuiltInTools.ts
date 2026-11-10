@@ -14,7 +14,7 @@ import { CompleteObjectiveTool } from './CompleteObjectiveTool.js';
 import { DeleteAgentTool } from './DeleteAgentTool.js';
 import { EditAgentTool } from './EditAgentTool.js';
 import { ApplyPatchTool } from './ApplyPatchTool.js';
-import { HistoricalUnifiedDiffTool } from './HistoricalUnifiedDiffTool.js';
+import { ExactTextEditTool } from './ExactTextEditTool.js';
 import { EnterPlanModeTool } from './EnterPlanModeTool.js';
 import { ExitPlanModeTool } from './ExitPlanModeTool.js';
 import { ExploreTool } from './ExploreTool.js';
@@ -58,7 +58,7 @@ import { WriteTool } from './WriteTool.js';
 export function createBuiltInTools(
   activityStream: ActivityStream,
   config: Readonly<Config>,
-  options: { editSurface?: 'exact' | 'historical-unified' } = {}
+  options: { editSurface?: 'unified' | 'exact' } = {}
 ): BaseTool[] {
   return [
     new BashTool(activityStream, config),
@@ -80,8 +80,8 @@ export function createBuiltInTools(
     new DeleteAgentTool(activityStream),
     new ListAgentsTool(activityStream),
     new WriteTempTool(activityStream),
-    options.editSurface === 'historical-unified'
-      ? new HistoricalUnifiedDiffTool(activityStream)
+    options.editSurface === 'exact'
+      ? new ExactTextEditTool(activityStream)
       : new ApplyPatchTool(activityStream),
     new GlobTool(activityStream),
     new GrepTool(activityStream),

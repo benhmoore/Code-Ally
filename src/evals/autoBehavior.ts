@@ -44,8 +44,7 @@ export function createAutoCases(root: string): AutoCase[] {
   const file = join(root, 'created.ts');
   const edit = {
     file_path: join(root, 'source.ts'),
-    old_text: 'export const count = 1;',
-    new_text: 'export const count = 2;',
+    patch: '@@ -1,1 +1,1 @@\n-export const count = 1;\n+export const count = 2;\n',
   };
   const task = 'Change source.ts count to 2 and create created.ts exporting enabled = true.';
   return [
@@ -250,7 +249,21 @@ export async function runAutoBehavior(options: AutoBehaviorOptions, fetcher: typ
     );
     await writeFile(
       output + '.tmp',
-      JSON.stringify({ version: 2, options, provenance, casesHash: autoHash(cases), passed, summary, records, requests }, null, 2)
+      JSON.stringify(
+        {
+          version: 3,
+          protocol: { id: 'auto-behavior', version: 3, editSurface: 'unified' },
+          options,
+          provenance,
+          casesHash: autoHash(cases),
+          passed,
+          summary,
+          records,
+          requests,
+        },
+        null,
+        2
+      )
     );
     await rename(output + '.tmp', output);
   };

@@ -1,9 +1,9 @@
-export const BEHAVIOR_PROTOCOL_VERSION = 3;
+export const BEHAVIOR_PROTOCOL_VERSION = 4;
 export function assertBehaviorProtocol(version: unknown): void {
   if (version !== BEHAVIOR_PROTOCOL_VERSION) throw new Error('Resume rejected: behavior protocol changed');
 }
-/** Protocol 3: experiment labels resolve to explicit independent factors. */
-export type EditSurface = 'exact' | 'historical-unified';
+/** Protocol 4: unified production default and an explicit exact-edit candidate. */
+export type EditSurface = 'unified' | 'exact';
 export type PromptVariant = 'baseline' | 'outcome';
 export type CampaignVariant = 'baseline' | 'outcome' | 'exact-edit';
 export interface BehaviorFactors {
@@ -19,12 +19,11 @@ export function resolveBehaviorFactors(variants: readonly CampaignVariant[]): Re
     (variants.length === 2 && !variants.includes('baseline'))
   )
     throw new Error('Compare current baseline with one candidate at a time.');
-  const editingComparison = variants.length === 2 && variants.includes('exact-edit');
   return Object.fromEntries(
     variants.map(variant => [
       variant,
       {
-        editSurface: editingComparison && variant === 'baseline' ? 'historical-unified' : 'exact',
+        editSurface: variant === 'exact-edit' ? 'exact' : 'unified',
         promptVariant: variant === 'outcome' ? 'outcome' : 'baseline',
       },
     ])

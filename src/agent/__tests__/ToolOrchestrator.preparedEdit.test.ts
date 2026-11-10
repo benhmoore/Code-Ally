@@ -92,11 +92,11 @@ describe('prepared editor through real orchestration and permission', () => {
   const call = (file_path: string): ToolCall => ({
     id: 'edit-call',
     type: 'function',
-    function: { name: 'apply-patch', arguments: { file_path, old_text: 'beta', new_text: 'BETA' } },
+    function: { name: 'apply-patch', arguments: { file_path, patch: '@@ -2,1 +2,1 @@\n-beta\n+BETA' } },
   });
   const previews = () => events.filter(event => event.type === ActivityEventType.DIFF_PREVIEW);
 
-  it('pins the preview source across approval even when old_text still matches an external edit', async () => {
+  it('pins the preview source across approval even when the patch body still matches an external edit', async () => {
     const external = 'external prefix\nbeta\ngamma\n';
     approve = async () => {
       expect(previews()).toHaveLength(1);
@@ -152,7 +152,7 @@ describe('prepared editor through real orchestration and permission', () => {
       hasHooks: (name: string) => name === 'PreToolUse',
       run: vi.fn(async () => ({
         kind: 'proceed',
-        updatedInput: { file_path: changed, old_text: 'beta', new_text: 'HOOK' },
+        updatedInput: { file_path: changed, patch: '@@ -2,1 +2,1 @@\n-beta\n+HOOK' },
       })),
     } as any);
     const validate = vi.spyOn(tool, 'validateBeforePermission');
@@ -170,7 +170,7 @@ describe('prepared editor through real orchestration and permission', () => {
     await writeFile(changed, 'beta\n');
     registry.registerInstance('hook_runner', {
       hasHooks: (name: string) => name === 'PreToolUse',
-      run: async () => ({ kind: 'proceed', updatedInput: { file_path: changed, old_text: 'beta', new_text: 'HOOK' } }),
+      run: async () => ({ kind: 'proceed', updatedInput: { file_path: changed, patch: '@@ -2,1 +2,1 @@\n-beta\n+HOOK' } }),
     } as any);
     const permission = vi.spyOn(permissions, 'checkPermission');
     const result = (await orchestrator.executeToolCalls([call(file)]))[0]!;
@@ -183,12 +183,12 @@ describe('prepared editor through real orchestration and permission', () => {
   it('resolves a form replacement before preview, validation, and approval', async () => {
     Object.defineProperty(tool, 'supportsInteractiveForm', { value: true });
     Object.defineProperty(tool, 'formSchema', { value: { title: 'edit', fields: [] } });
-    registry.registerInstance('form_manager', { requestForm: vi.fn(async () => ({ new_text: 'FORM' })) } as any);
+    registry.registerInstance('form_manager', { requestForm: vi.fn(async () => ({ patch: '@@ -2,1 +2,1 @@\n-beta\n+FORM' })) } as any);
     const validate = vi.spyOn(tool, 'validateBeforePermission');
     const result = (await orchestrator.executeToolCalls([call(file)]))[0]!;
     expect(result.success, result.error).toBe(true);
     expect(previews()[0]?.data.newContent).toBe('alpha\nFORM\ngamma\n');
-    expect(validate.mock.calls[0]![0].new_text).toBe('FORM');
+    expect(validate.mock.calls[0]![0].patch).toContain('+FORM');
     expect(await readFile(file, 'utf8')).toBe('alpha\nFORM\ngamma\n');
   });
   it.each(['disallowed', 'hook', 'form'] as const)(

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { decodeExactTextSource, replaceExactText } from '../exactTextReplacement.js';
+import { replaceExactText } from '../exactTextReplacement.js';
+import { decodeTextEditSource } from '../textEditContent.js';
 
 describe('logical-newline exact replacement', () => {
   it('admits one insertion point only for a truly empty source', () => {
@@ -59,13 +60,13 @@ describe('logical-newline exact replacement', () => {
   });
   it('rejects invalid UTF-8, binary NUL and invalid Unicode arguments', () => {
     for (const bytes of [Buffer.from([0xc3, 0x28]), Buffer.from('a\0b')])
-      expect(() => decodeExactTextSource(bytes)).toThrow();
+      expect(() => decodeTextEditSource(bytes)).toThrow();
     for (const old of ['\ud800', '\udc00', 'a\0b']) expect(() => replaceExactText('source', old, 'new')).toThrow();
     expect(() => replaceExactText('source', 'source', '\ud800')).toThrow();
   });
   it('preserves a BOM and valid Unicode byte-for-byte and rejects logical no-ops', () => {
     const source = '\ufeffcafé 🦊\r\n';
-    expect(decodeExactTextSource(Buffer.from(source))).toBe(source);
+    expect(decodeTextEditSource(Buffer.from(source))).toBe(source);
     expect(() => replaceExactText(source, 'café 🦊\n', 'café 🦊\r\n')).toThrow('no changes');
   });
 });

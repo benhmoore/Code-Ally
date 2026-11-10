@@ -126,7 +126,7 @@ export function schedule(options: Pick<CampaignOptions, 'cases' | 'variants' | '
 export function identity(value: unknown): string {
   return createHash('sha256').update(JSON.stringify(value)).digest('hex');
 }
-/** Resume requires the exact protocol-3 resolved factors, not just display labels. */
+/** Resume requires the exact protocol-4 resolved factors, not just display labels. */
 export function assertResumePrefix(trials: readonly Trial[], results: readonly Trial[]): void {
   for (const [index, row] of results.entries()) {
     const expected = trials[index];

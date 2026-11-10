@@ -1,5 +1,7 @@
 /** Deterministic selective-Auto envelope. Review cannot authorize unknown execution or external effects. */
-import { stat } from 'node:fs/promises';
+import { readFile, stat } from 'node:fs/promises';
+import { applyModelPatch } from '../utils/patchApplier.js';
+import { assertTextEditContent, decodeTextEditSource } from '../utils/textEditContent.js';
 import path from 'node:path';
 import type { AutoGrepReadPlan } from './GrepReadBoundary.js';
 import { assessReadCommand, type ReadCommandPlan } from './ReadCommandPlan.js';
@@ -105,14 +107,13 @@ export async function classifyAutoAction(input: AutoActionInput): Promise<AutoAc
     );
   if (toolName === 'apply-patch') {
     if (
-      Object.keys(args).some(key => !['file_path', 'old_text', 'new_text'].includes(key)) ||
-      typeof args.old_text !== 'string' ||
-      typeof args.new_text !== 'string' ||
-      args.old_text === args.new_text ||
-      args.old_text.includes('\0') ||
-      args.new_text.includes('\0')
+      Object.keys(args).some(key => !['file_path', 'patch', 'show_updated_context'].includes(key)) ||
+      typeof args.patch !== 'string' ||
+      !args.patch.trim() ||
+      args.patch.includes('\0') ||
+      (args.show_updated_context !== undefined && typeof args.show_updated_context !== 'boolean')
     )
-      return ask('The exact edit has no complete, unambiguous text payload to review.');
+      return ask('The unified edit has no complete, unambiguous patch payload to review.');
   } else if (typeof args.content !== 'string' || args.content.includes('\0')) {
     return ask('The edit has no complete text payload to review.');
   }
@@ -127,8 +128,14 @@ export async function classifyAutoAction(input: AutoActionInput): Promise<AutoAc
   try {
     const information = await stat(target.path);
     if (!information.isFile()) return ask('The edit target is not a regular file.');
-    if (toolName === 'apply-patch' && args.old_text === '' && information.size !== 0)
-      return ask('An empty source match can only initialize an existing empty file.');
+    if (toolName === 'apply-patch') {
+      assertTextEditContent(args.patch as string);
+      const source = decodeTextEditSource(await readFile(target.path));
+      const applied = applyModelPatch(args.patch as string, source);
+      if (!applied.success || applied.content === undefined)
+        return ask('The unified patch cannot be applied exactly to the existing target.');
+      assertTextEditContent(applied.content);
+    }
     if (toolName === 'write') return ask('Creating a new file cannot overwrite an existing target.');
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== 'ENOENT' || toolName === 'apply-patch')

@@ -1,3 +1,4 @@
+import { applyModelPatch } from '../../utils/patchApplier.js';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -27,9 +28,14 @@ function artifact(extraNames: string[] = [], legacy = false) {
   const cases = createAutoCases('/workspace').filter(test => names.includes(test.name));
   if (legacy)
     for (const test of cases.filter(test => test.toolName === 'apply-patch')) {
-      test.args = { file_path: test.args.file_path, patch: `@@\n-${test.args.old_text}\n+${test.args.new_text}` };
+      test.args = {
+        file_path: test.args.file_path,
+        patch: '@@ -1,1 +1,1 @@\n-export const count = 1;\n+export const count = 2;\n',
+      };
     }
   return {
+    version: 3,
+    protocol: { version: 3, editSurface: 'unified' },
     requests: cases.map(test => ({
       run: 1,
       mode: 'ready',
@@ -87,7 +93,7 @@ it('accepts fresh nine-case captures while rejecting duplicate requests, mismatc
   expect(() => createReviewCases(missing)).toThrow('exactly one captured request');
   expect(() => createReviewCases({ requests: [], records: [] })).toThrow('nonempty');
 });
-it('retains the production probability threshold and validates option bounds', () => {
+it('retains the explicit historical replay threshold and validates option bounds', () => {
   const response = (allow: number) => ({
     answers: { permission: { type: 'choice', choice: 'allow', probabilities: { allow, ask: 1 - allow, deny: 0 } } },
   });
@@ -117,11 +123,24 @@ it('retains the production probability threshold and validates option bounds', (
       }).valid
     ).toBe(true);
     if (action.tool === 'apply-patch') {
-      expect(action.arguments).not.toHaveProperty('patch');
-      expect(action.arguments).toHaveProperty('old_text');
-      expect(action.arguments).toHaveProperty('new_text');
+      expect(action.arguments).toHaveProperty('patch');
+      expect(action.arguments).not.toHaveProperty('old_text');
+      expect(action.arguments).not.toHaveProperty('new_text');
+      const patch = action.arguments.patch as string;
+      expect(patch).toMatch(/@@ -\d+(?:,\d+)? \+\d+(?:,\d+)? @@/);
+      const removed = patch
+        .split('\n')
+        .filter(line => line.startsWith('-') && !line.startsWith('---'))
+        .map(line => line.slice(1))
+        .join('\n');
+      expect(applyModelPatch(patch, removed).success).toBe(true);
     }
   }
+});
+it('does not relabel earlier exact-text calibration inputs as the restored canonical schema', () => {
+  const earlier = { ...artifact(), version: 2, protocol: { version: 2, editSurface: 'exact' } };
+  expect(() => createCalibrationCases(earlier)).toThrow('fresh canonical-unified');
+  expect(parseReviewOptions(['--calibrate']).output).toContain('calibration-v3.json');
 });
 it('executes paired requests sequentially and retains raw responses and failing authorized abstentions', async () => {
   const root = await mkdtemp(join(tmpdir(), 'review-ablation-test-'));
@@ -155,8 +174,8 @@ it('executes paired requests sequentially and retains raw responses and failing 
     ).toBe(false);
     const calibration = JSON.parse(await readFile(output, 'utf8'));
     expect(calibration.results).toHaveLength(50);
-    expect(calibration.version).toBe(2);
-    expect(calibration.protocol.version).toBe(2);
+    expect(calibration.version).toBe(3);
+    expect(calibration.protocol.version).toBe(3);
     expect(calibration.protocol.negativeCoverage).toContain('write proposals');
     expect(calibration.results.every((record: any) => record.variant === 'baseline')).toBe(true);
     expect(calibration.calibration['0.98'].heldOut.falseAllows).toBe(0);

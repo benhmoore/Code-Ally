@@ -1,5 +1,10 @@
 # Model compatibility evaluation
 
+The [model behavior report](model-behavior-results.md) records completed
+comparisons, source identities, decisions, and limitations. Its evidence manifest
+also identifies final live validation that remains pending; historical runs do
+not stand in for validation of a later source revision.
+
 `npm run eval:models` runs a versioned live-Ollama suite through Code Ally's
 actual `OllamaClient`. It evaluates exact tool arguments, parallel tool calls,
 recovery after a simulated tool failure, structured output, streaming, and the
@@ -129,7 +134,7 @@ behavior remains at least as accurate and safe.
 
 ## Full coding smoke test
 
-The direct-client harness `read_before_edit` scenario also executes the resulting `rangeSize` fixture after validating the submitted tool schema and applying the edit in memory. TypeScript is transpiled and checked on 100 numeric input pairs in a child process with V8 old-heap/time limits and a VM without host callbacks, IO, timers, or dynamic code generation; surviving VM global binding changes and intrinsic mutation fail. Equivalent formatting, pure Math calls, helpers, local variables and control flow are accepted. This is a generated-code benchmark execution boundary, not an OS security sandbox, a proof of purity, or an authorization grant for real tool actions. Historical schema-declared patches retain their parser, and suite version 16 records this semantic scoring change.
+The direct-client harness `read_before_edit` scenario also executes the resulting `rangeSize` fixture after validating the submitted tool schema and applying the edit in memory. TypeScript is transpiled and checked on 100 numeric input pairs in a child process with V8 old-heap/time limits and a VM without host callbacks, IO, timers, or dynamic code generation; surviving VM global binding changes and intrinsic mutation fail. Equivalent formatting, pure Math calls, helpers, local variables and control flow are accepted. This is a generated-code benchmark execution boundary, not an OS security sandbox, a proof of purity, or an authorization grant for real tool actions. Suite version 17 restores the unified editing contract and retains the semantic scoring introduced in version 16.
 
 The isolated coding evaluator runs the real `Agent`, provider client, permission layer, and built-in file/shell tools. The model reads a small JavaScript fixture, repairs an inclusive-range bug, and runs `node --test`. A separate process verifies the resulting source against additional trusted cases and checks that the visible test was not changed. The evaluator records tool results and the transcript, bounds execution time, and removes temporary workspaces.
 
@@ -155,15 +160,15 @@ npm run eval:behavior -- \
   --output model-eval-results/behavior-current-32k.json
 ```
 
-Protocol 3 records explicit `editSurface` and `promptVariant` factors in each trial,
+Protocol 4 records explicit `editSurface` and `promptVariant` factors in each trial,
 worker result, and resume identity. A single `baseline` uses the current production
 factory and prompt. `baseline,outcome` holds that factory fixed and changes one
 instruction about independent calls, bounded reads, and selecting the next missing
-action. `baseline,exact-edit` compares the historical unified-diff frontend against
-the exact-text frontend, with identical production system messages. The historical
-frontend is an evaluator control; it is not registered in the normal tool library.
-Only one comparison is allowed at a time. Protocol 1 and 2 artifacts remain historical
-references and cannot resume into protocol 3. Counterbalanced trials apply matched backend seeds. Exact transmitted bodies, hashes, native responses, provider token usage, parent/child tool events, verification assertions, and terminal outcomes are retained. Independent checks execute copied source against trusted tests outside the working fixture, and protected public files must remain unchanged. The worker additionally records real fleet completion and checkpoint restoration from disk.
+action. `baseline,exact-edit` compares the production unified-diff frontend against
+the explicit exact-text candidate, with identical production system messages. Only
+one editing frontend is registered in a normal request. The candidate failed the
+selection gate and is not the production default. Protocols 1–3 remain historical
+references and cannot resume into protocol 4. Counterbalanced trials apply matched backend seeds. Exact transmitted bodies, hashes, native responses, provider token usage, parent/child tool events, verification assertions, and terminal outcomes are retained. Independent checks execute copied source against trusted tests outside the working fixture, and protected public files must remain unchanged. The worker additionally records real fleet completion and checkpoint restoration from disk.
 
 Fixture authorization permits repository file tools and the explicit test commands `node --test` and `npm test`. The task states these restrictions. This is a deliberate execution boundary, not an estimate of production Auto-mode refusal rates. File-tool paths are confined to the temporary workspace; that guard is not an operating-system sandbox for generated code. App state uses a sibling isolated `ALLY_DATA_DIR`, and workspaces are removed after each trial. No credentials, personal project instructions, or external services are needed.
 
@@ -176,6 +181,11 @@ Run only one inference campaign at a time. The runner refuses other resident mod
 `npm run eval:auto -- --endpoint http://100.68.102.73:11434 --reviewer tev1:4b --runs 3 --output model-eval-results/auto-behavior.json` evaluates the production permission service using real built-in schemas and capability/path metadata. It does not execute proposed actions. Ready, unavailable, and shadow modes cover authorized edits, contradictory or missing authority, injected instructions, size boundaries, literal read pipelines, delegation, questions, external paths, protected files, and test execution.
 
 Artifacts include a mandatory preflight identity: reviewer digest and metadata, Ollama version, exact source manifest and policy/evaluator hashes, Git state, and Node version. A missing identity fails before model review. Earlier artifacts without this identity remain historical evidence with incomplete deployment provenance.
+
+Auto artifact version 3 uses the production unified-patch schema. Calibration
+protocol 3 requires a fresh version-3 capture and builds valid numeric contextual
+patches checked by the host parser. Version-2 exact-schema calibration remains
+historical evidence; it does not validate the restored production schema.
 
 The artifact separates expected policy behavior from authorization friction. An authorized action can correctly require confirmation under the current execution envelope or reviewer capacity policy; that still represents friction to investigate. Full original human directions and exact proposed arguments are retained. No tool output or agent justification becomes human authorization. Reviewer recommendations never expand the host-enforced action envelope.
 
@@ -222,7 +232,7 @@ Arbitrary test runners and oversized authority also continue to ask under the
 host policy. These remaining friction cases are retained as failures or explicit
 policy limits; a green test suite does not mean every behavioral target passed.
 
-Protocol 3 derives a visible protected-file list from the same fixture metadata
+Protocols 3 and 4 derive a visible protected-file list from the same fixture metadata
 used by the verifier. It does not reveal editable paths or discovery answers.
 It also checks explicit null and mixed undefined values in the configuration
 case and requires the actual reported stale path to be the first main-agent read,

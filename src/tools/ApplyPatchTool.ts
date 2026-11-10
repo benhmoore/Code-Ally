@@ -1,12 +1,11 @@
-/** Default apply-patch interface: one unique exact-text replacement. */
+/** Production apply-patch interface: contextual unified diff with host-owned preparation. */
 import { PreparedTextEditTool, TextEditInputError } from './PreparedTextEditTool.js';
 import type { FunctionDefinition } from '../types/index.js';
-import { prepareExactTextEdit } from '../utils/exactTextEdit.js';
-import { decodeExactTextSource } from '../utils/exactTextReplacement.js';
-
+import { assertTextEditContent } from '../utils/textEditContent.js';
+import { applyModelPatch } from '../utils/patchApplier.js';
 export class ApplyPatchTool extends PreparedTextEditTool {
   readonly description =
-    'Edit one existing file by replacing exact text. Read the target first. old_text must occur exactly once; use empty old_text only for an existing empty file. LF and CRLF are equivalent; all other whitespace and Unicode must match exactly. Use write only for new files.';
+    'Modify one existing text file with contextual unified-diff hunks. Read each target region first. Use write only to create new files.';
   getFunctionDefinition(): FunctionDefinition {
     return {
       type: 'function',
@@ -20,55 +19,48 @@ export class ApplyPatchTool extends PreparedTextEditTool {
             file_path: {
               type: 'string',
               format: 'local-path',
-              description: 'Existing file to edit.',
+              description: 'Existing text file to modify.',
             },
-            old_text: {
+            patch: {
               type: 'string',
               description:
-                'Unique source text, or empty string only for an existing empty file. LF and CRLF match the same logical newline; all other characters must match exactly.',
+                'Unified-diff hunks, for example: @@ -1,3 +1,3 @@\\n unchanged\\n-old\\n+new\\n unchanged. File headers are optional; hunk line counts are derived from the body.',
             },
-            new_text: {
-              type: 'string',
-              description:
-                'Replacement text. Inserted newlines use the matched region’s first newline style, otherwise the file’s first style, otherwise LF. Empty string deletes old_text.',
+            show_updated_context: {
+              type: 'boolean',
+              description: 'Return full updated source if it fits the output budget (default false).',
             },
           },
-          required: ['file_path', 'old_text', 'new_text'],
+          required: ['file_path', 'patch'],
         },
       },
     };
   }
+
   protected validateInput(args: Record<string, unknown>): void {
     if (
       !args ||
       typeof args !== 'object' ||
       Array.isArray(args) ||
-      Object.keys(args).some(key => !['file_path', 'old_text', 'new_text'].includes(key))
+      Object.keys(args).some(key => !['file_path', 'patch', 'show_updated_context'].includes(key))
     )
-      throw new TextEditInputError('Use only file_path, old_text and new_text; do not send unified diff arguments.');
+      throw new TextEditInputError('Use only file_path, patch and optional show_updated_context.');
     if (typeof args.file_path !== 'string' || !args.file_path.trim())
-      throw new TextEditInputError('file_path is required.');
-    if (typeof args.old_text !== 'string')
-      throw new TextEditInputError('old_text must be a string; empty text is allowed only for an existing empty file.');
-    if (typeof args.new_text !== 'string') throw new TextEditInputError('new_text must be a string.');
-    if (args.old_text === args.new_text) throw new TextEditInputError('Replacement makes no changes.');
-    if (args.old_text.length + args.new_text.length > 1_000_000)
-      throw new TextEditInputError('Exact edit exceeds its size limit.');
-    if (args.old_text.includes('\0') || args.new_text.includes('\0'))
-      throw new TextEditInputError('Binary text edits are unsupported.');
-  }
-  protected override decodeSource(bytes: Uint8Array): string {
+      throw new TextEditInputError('file_path is required');
+    if (typeof args.patch !== 'string' || !args.patch || args.patch.length > 1_000_000)
+      throw new TextEditInputError('A nonempty bounded unified diff is required.');
     try {
-      return decodeExactTextSource(bytes);
+      assertTextEditContent(args.patch);
     } catch (error) {
       throw new TextEditInputError(error instanceof Error ? error.message : String(error));
     }
+    if (args.show_updated_context !== undefined && typeof args.show_updated_context !== 'boolean')
+      throw new TextEditInputError('show_updated_context must be a boolean.');
   }
   protected transformSource(args: Readonly<Record<string, unknown>>, source: string) {
-    try {
-      return prepareExactTextEdit(source, args.old_text as string, args.new_text as string);
-    } catch (error) {
-      throw new TextEditInputError(error instanceof Error ? error.message : String(error));
-    }
+    const applied = applyModelPatch(args.patch as string, source);
+    // An existing empty file still requires observation in this agent's scope.
+    if (source === '' && applied.success) applied.readRanges = [{ start: 1, end: 1 }];
+    return applied;
   }
 }

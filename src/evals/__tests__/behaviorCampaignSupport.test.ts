@@ -77,7 +77,7 @@ describe('campaign schedule and summary', () => {
       variant,
       repetition,
       seed: repetition,
-      editSurface: 'exact',
+      editSurface: 'unified',
       promptVariant: variant,
       passed,
       elapsedMs,
@@ -120,7 +120,7 @@ describe('campaign schedule and summary', () => {
 describe('paired comparison validity', () => {
   const trial = (variant: 'baseline' | 'outcome', caseId: string, requests: unknown[]): TrialResult => ({
     variant,
-    editSurface: 'exact',
+    editSurface: 'unified',
     promptVariant: variant,
     caseId,
     repetition: 0,
@@ -164,14 +164,15 @@ it('rejects resume across resolved edit interfaces or legacy trials even when la
   const current = schedule({ cases: ['a'], variants: ['baseline'], runs: 1 });
   const historical = schedule({ cases: ['a'], variants: ['baseline', 'exact-edit'], runs: 1 });
   expect(() => assertResumePrefix(current, current)).not.toThrow();
-  expect(() => assertResumePrefix(current, [historical[0]!])).toThrow('resolved factors');
+  expect(() => assertResumePrefix(current, [historical[0]!])).not.toThrow();
+  expect(() => assertResumePrefix(current, [{ ...current[0]!, editSurface: 'exact' }])).toThrow('resolved factors');
   const { editSurface: _surface, promptVariant: _prompt, ...legacy } = current[0]!;
   expect(() => assertResumePrefix(current, [legacy as (typeof current)[0]])).toThrow('resolved factors');
 });
 
 describe('request-error observations and deadline outcomes', () => {
   const result = (errors: string[], timedOut: boolean): TrialResult => ({
-    caseId:'multiline-edit', variant:'baseline', editSurface:'historical-unified', promptVariant:'baseline',
+    caseId:'multiline-edit', variant:'baseline', editSurface:'unified', promptVariant:'baseline',
     repetition:0,seed:0,passed:false,elapsedMs:600182,exitCode:124,signal:null,timedOut,log:'',
     worker:{ requests:errors.map(error=>({error})), metrics:{usageComplete:false} },
   });

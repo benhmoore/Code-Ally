@@ -91,7 +91,7 @@ it('retains builtin read and edit boundaries despite incorrect safe metadata', a
     (
       await classifyAutoAction({
         toolName: 'apply-patch',
-        args: { file_path: 'source.ts', old_text: 'old', new_text: 'new' },
+        args: { file_path: 'source.ts', patch: '@@ -1,1 +1,1 @@\n-existing\n+new\n' },
         workspaceRoot: root,
         toolMetadata,
       })

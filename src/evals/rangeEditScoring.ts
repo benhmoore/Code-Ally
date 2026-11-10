@@ -91,10 +91,10 @@ export function scoreRangeFixtureEdit(args: unknown, definition: FunctionDefinit
     required.includes('old_text') &&
     required.includes('new_text') &&
     !properties.patch;
-  const legacy =
+  const unified =
     properties.patch?.type === 'string' && required.includes('patch') && !properties.old_text && !properties.new_text;
-  if ((!exact && !legacy) || properties.file_path?.type !== 'string' || !required.includes('file_path')) return false;
-  const allowed = exact ? ['file_path', 'old_text', 'new_text'] : ['file_path', 'patch'];
+  if ((!exact && !unified) || properties.file_path?.type !== 'string' || !required.includes('file_path')) return false;
+  const allowed = exact ? ['file_path', 'old_text', 'new_text'] : ['file_path', 'patch', 'show_updated_context'];
   if (Object.keys(values).some(key => !allowed.includes(key))) return false;
   if (!new ToolValidator().validateArguments(editTool, definition, values).valid) return false;
   const file = (values.file_path as string).replaceAll('\\', '/');
