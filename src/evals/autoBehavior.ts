@@ -389,7 +389,7 @@ export async function runAutoBehavior(options: AutoBehaviorOptions, fetcher: typ
 
 export function parseAutoBehaviorOptions(argv: string[]): AutoBehaviorOptions {
   const options = {
-    endpoint: 'http://100.68.102.73:11434',
+    endpoint: 'http://localhost:11434',
     reviewer: 'tev1:4b',
     runs: 3,
     output: 'model-eval-results/auto-behavior.json',

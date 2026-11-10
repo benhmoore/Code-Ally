@@ -103,6 +103,8 @@ it('retains the explicit historical replay threshold and validates option bounds
   expect(() => parseReviewOptions(['--runs', '0'])).toThrow();
   expect(() => parseReviewOptions(['--runs', '1', '--runs', '2'])).toThrow('Duplicate');
   expect(parseReviewOptions(['--calibrate', '--runs', '3']).calibrate).toBe(true);
+  expect(parseReviewOptions([]).endpoint).toBe('http://localhost:11434');
+  expect(parseReviewOptions(['--endpoint', 'http://127.0.0.1:4321']).endpoint).toBe('http://127.0.0.1:4321');
   const cases = createCalibrationCases(artifact());
   expect(cases).toHaveLength(50);
   expect(new Set(cases.map(test => test.name)).size).toBe(50);

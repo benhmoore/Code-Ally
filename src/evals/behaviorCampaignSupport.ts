@@ -70,7 +70,7 @@ export function parseOptions(args: string[]): CampaignOptions {
   };
   const model = values.get('model');
   if (!model?.trim()) throw new Error('--model is required');
-  const endpoint = new URL(values.get('endpoint') ?? 'http://100.68.102.73:11434');
+  const endpoint = new URL(values.get('endpoint') ?? 'http://localhost:11434');
   if (
     !['http:', 'https:'].includes(endpoint.protocol) ||
     endpoint.username ||

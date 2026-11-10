@@ -2,23 +2,23 @@
 
 The [model behavior report](model-behavior-results.md) records completed
 comparisons, source identities, decisions, and limitations. Its evidence manifest
-also identifies final live validation that remains pending; historical runs do
-not stand in for validation of a later source revision.
+separates measured source epochs and the completed production checks; historical
+runs do not stand in for validation of a later source revision.
 
 `npm run eval:models` runs a versioned live-Ollama suite through Code Ally's
 actual `OllamaClient`. It evaluates exact tool arguments, parallel tool calls,
 recovery after a simulated tool failure, structured output, streaming, and the
 configured reasoning control (including a native reasoning-trace assertion).
 
-For the Qwen3.8/Glimmer comparison:
+For a two-model comparison:
 
 ```bash
 npm run eval:models -- \
-  --models qwen3.8:27b-mlx,muse-glimmer:30b-mlx \
+  --models qwen3.8:27b-mlx,gemma4:31b-mlx \
   --runs 3 \
   --temperature 1 \
   --reasoning-effort low \
-  --output model-eval-results/qwen3.8-vs-glimmer.json
+  --output model-eval-results/qwen3.8-vs-gemma4.json
 ```
 
 The runner loads one model at a time, alternates their order between repetitions, and
@@ -54,7 +54,7 @@ Optional-tool schema probes explicitly activate their target capability. The `di
 
 ```bash
 npm run eval:harness -- \
-  --models qwen3.8:27b-mlx,muse-glimmer:30b-mlx \
+  --models qwen3.8:27b-mlx,gemma4:31b-mlx \
   --runs 3 \
   --temperature 0 \
   --sections prompt_tooling,behavior,schema_reliability,discovery,reasoning,late_reminder,structured_output \
@@ -141,7 +141,7 @@ The isolated coding evaluator runs the real `Agent`, provider client, permission
 ```bash
 npm run eval:coding -- \
   --model qwen3.8:27b-mlx \
-  --endpoint http://100.68.102.73:11434 \
+  --endpoint http://localhost:11434 \
   --output model-eval-results/remote-coding.json
 ```
 
@@ -154,7 +154,7 @@ App state is isolated using `ALLY_DATA_DIR`, which overrides the default `~/.all
 ```bash
 npm run eval:behavior -- \
   --model qwen3.8:27b-mlx \
-  --endpoint http://100.68.102.73:11434 \
+  --endpoint http://localhost:11434 \
   --runs 3 --variants baseline,outcome \
   --context-size 32768 --max-tokens 16384 --timeout-ms 600000 \
   --output model-eval-results/behavior-current-32k.json
@@ -178,7 +178,7 @@ Run only one inference campaign at a time. The runner refuses other resident mod
 
 ## Auto-mode behavior
 
-`npm run eval:auto -- --endpoint http://100.68.102.73:11434 --reviewer tev1:4b --runs 3 --output model-eval-results/auto-behavior.json` evaluates the production permission service using real built-in schemas and capability/path metadata. It does not execute proposed actions. Ready, unavailable, and shadow modes cover authorized edits, contradictory or missing authority, injected instructions, size boundaries, literal read pipelines, delegation, questions, external paths, protected files, and test execution.
+`npm run eval:auto -- --endpoint http://localhost:11434 --reviewer tev1:4b --runs 3 --output model-eval-results/auto-behavior.json` evaluates the production permission service using real built-in schemas and capability/path metadata. It does not execute proposed actions. Ready, unavailable, and shadow modes cover authorized edits, contradictory or missing authority, injected instructions, size boundaries, literal read pipelines, delegation, questions, external paths, protected files, and test execution.
 
 Artifacts include a mandatory preflight identity: reviewer digest and metadata, Ollama version, exact source manifest and policy/evaluator hashes, Git state, and Node version. A missing identity fails before model review. Earlier artifacts without this identity remain historical evidence with incomplete deployment provenance.
 
@@ -191,61 +191,15 @@ The artifact separates expected policy behavior from authorization friction. An 
 
 `node --import tsx src/evals/autoReviewAblation.ts --help` describes the reviewer-question comparison. It replays captured complete inputs and additional stress cases, changing the question independently of action eligibility. Do not lower a confidence cutoff merely to make positive examples pass; evaluate contradictory instructions and held-out negative cases too. These bounded measurements are not a security guarantee or calibrated error probability.
 
-### Recorded behavior findings
+### Coverage and interpretation
 
-The first completed 32k campaign recorded 36/36 passes under its original verifier
-across six cases and three paired repetitions. A later audit found that its
-configuration case omitted explicit null checks despite requiring only undefined
-to trigger defaults. Those recorded passes therefore do not establish every
-stated semantic requirement; the strengthened protocol retains this limitation
-and the original artifacts. Replaying the six recorded configuration repairs
-against explicit null cases confirmed baseline 3/3 and candidate 2/3; this
-functional regression independently rejects the candidate. The longer outcome-oriented instruction did not provide a
-consistent efficiency improvement, so production retains the existing prompt.
-The first configuration baseline recovered from a transport failure: its matched
-pair is excluded from resource comparisons. Delegation cancellation left some
-usage incomplete; those pairs have no token-cost comparison. These exclusions
-preserve functional outcomes rather than silently discarding failed requests.
+Use independent behavior checks in addition to tool-schema validation. Keep requirements explicit in the task, including boundary values and files that must remain unchanged. The behavior fixtures derive their visible protected-file list from the same metadata used by verification, without revealing editable paths or discovery answers.
 
-The campaign exposed an output-budget defect: the Agent could replace the
-configured output cap with a larger remaining-context allowance. The Agent and
-compactor now honor the configured ceiling, further bounded by available context.
-All 248 transmitted requests in the completed campaign used `num_predict=2048`.
-Historical full-Agent coding results recorded configuration rather than this
-wire-level invariant; their configured cap must not be read as a transmitted cap.
+Preserve failed trials and original scores. If a verifier misses a requirement, publish a separate supplemental audit rather than rewriting the original artifact. Compare costs only for matched successful trials with complete provider usage; a deadline-related AbortError does not by itself establish a network fault. Repeated tool calls are diagnostic counts, not proof that the calls were unnecessary.
 
-Auto's revised request budget retains complete original authority and proposed
-arguments within one 64 KiB UTF-8 request. The allow-only cutoff of 0.95 improved
-the measured reviewer operating point; deny remains 0.98. On 25 held-out cases
-(10 authorized, 15 negative, each repeated three times), 0.95 approved 3/10
-distinct authorized cases and none of 15 negative cases. A diagnostic 0.90 cutoff
-incorrectly approved one qualified-approval case and was rejected. These are
-finite synthetic samples for the measured reviewer, not calibrated safety scores.
-The alternative reviewer question was also rejected.
+The cases provide bounded coverage. Checkpoint recovery creates a new SessionManager from disk but resumes the same Agent process. Protected-file hashes check terminal state; delegation telemetry does not exclude every inspection path or transient child write. Steering checks admission and final behavior without proving how the model reached its result. Context configuration is not a filled-context workload, and different native reasoning controls prevent simple cross-model latency rankings.
 
-On the 17 common baseline/refined Auto cases, clearly authorized ready-mode
-approvals rose from 0/21 to 12/21 repeated decisions (four distinct cases gained).
-The refinement changed both the budget and cutoff, so this does not isolate their
-individual effects. The final readiness campaign still reports six failures:
-two approximately 4,000-character argument cases abstained in all repetitions.
-Arbitrary test runners and oversized authority also continue to ask under the
-host policy. These remaining friction cases are retained as failures or explicit
-policy limits; a green test suite does not mean every behavioral target passed.
-
-Protocols 3 and 4 derive a visible protected-file list from the same fixture metadata
-used by the verifier. It does not reveal editable paths or discovery answers.
-It also checks explicit null and mixed undefined values in the configuration
-case and requires the actual reported stale path to be the first main-agent read,
-with a real file error. Historical artifacts retain their original scores;
-supplemental audits are separate evidence rather than rewritten results.
-
-Coverage remains bounded: delegation telemetry identifies ordinary parent reads
-but does not prove absence of every alternative inspection path or transient
-child write. Checkpoint recovery reconstructs a SessionManager from disk and
-resumes the same Agent process; it does not simulate an entirely new CLI process.
-Protected-file hashes check terminal state, not every transient mutation. Steering
-checks admission and final behavior without establishing a causal explanation of
-the model's plan. These limits constrain the conclusions from a passing trial.
+Measured outcomes and selection decisions are recorded in [model behavior results](model-behavior-results.md).
 
 ### Controlled execution and recovery
 

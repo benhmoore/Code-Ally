@@ -512,7 +512,7 @@ CLI → Ink UI / Headless → SessionRuntime → Agent → LLM/Tools
 - Tool orchestration with permission gating
 - Agent pooling for performance
 
-See [the local-model architecture review](docs/architecture-review.md) for ownership boundaries, compact tool discovery, context preservation, the Pi comparison, and validation.
+See [runtime architecture and design rationale](docs/architecture-review.md) for service ownership, tool discovery, context preservation, authorization, and terminal rendering.
 
 ## Development
 
@@ -545,7 +545,7 @@ src/
 
 ## Terminal UX regression audit
 
-The [coverage report](docs/ux-fuzz-results.json) records the November 2026 tmux audit, its limits, and representative [terminal captures](docs/ux-fuzz-evidence). The fixture provider makes streaming, failures, questions, permissions, and delegated tasks repeatable without model inference.
+The [coverage report](docs/ux-fuzz-results.json) records the November 2026 tmux audit, its limits, and representative [terminal captures](docs/ux-fuzz-evidence). The fixture provider makes streaming, failures, questions, permissions, and delegated tasks repeatable without model inference. The retained captures are unchanged output from those fixtures, used for visual review.
 
 Build with `npm run build`, then run these in separate terminals (requires Python 3 and tmux):
 

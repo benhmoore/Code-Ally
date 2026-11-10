@@ -20,6 +20,8 @@ it('constructs canonical unified review inputs and rejects unknown CLI flags', (
   for (const length of [1999, 2001])
     expect(cases.find(test => test.name === `authority-${length}`)!.task).toHaveLength(length);
   expect(parseAutoBehaviorOptions(['--runs', '3']).runs).toBe(3);
+  expect(parseAutoBehaviorOptions([]).endpoint).toBe('http://localhost:11434');
+  expect(parseAutoBehaviorOptions(['--endpoint', 'http://127.0.0.1:4321']).endpoint).toBe('http://127.0.0.1:4321');
   expect(() => parseAutoBehaviorOptions(['--unexpected', 'x'])).toThrow('Unknown option');
   for (const argv of [
     ['--runs', '1', '--runs', '2'],

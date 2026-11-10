@@ -568,7 +568,7 @@ export async function runReviewAblation(options: Options, fetcher: typeof fetch 
 export function parseReviewOptions(argv: string[]): Options {
   const options = {
     baseline: 'model-eval-results/auto-behavior-baseline.json',
-    endpoint: 'http://100.68.102.73:11434',
+    endpoint: 'http://localhost:11434',
     output: 'model-eval-results/auto-review-ablation.json',
     runs: 3,
     calibrate: false,

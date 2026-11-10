@@ -130,7 +130,7 @@ interface Checkpoint {
 export async function main(args = process.argv.slice(2)): Promise<void> {
   if (args.length === 1 && args[0] === '--help') {
     process.stdout.write(
-      'Usage: npm run eval:behavior -- --model NAME [--endpoint URL] [--runs 3] [--cases IDS] [--variants baseline,outcome,exact-edit] [--context-size 32768] [--max-tokens 4096] [--temperature 0] [--reasoning-effort low] [--timeout-ms 240000] [--output PATH] [--resume]\nDefault endpoint: http://100.68.102.73:11434; default variant: baseline. Runs are sequential.\n'
+      'Usage: npm run eval:behavior -- --model NAME [--endpoint URL] [--runs 3] [--cases IDS] [--variants baseline,outcome,exact-edit] [--context-size 32768] [--max-tokens 4096] [--temperature 0] [--reasoning-effort low] [--timeout-ms 240000] [--output PATH] [--resume]\nDefault endpoint: http://localhost:11434; default variant: baseline. Runs are sequential.\n'
     );
     return;
   }

@@ -22,7 +22,7 @@ describe('behavior campaign options', () => {
       contextSize: 32768,
       maxTokens: 4096,
       temperature: 0,
-      endpoint: 'http://100.68.102.73:11434',
+      endpoint: 'http://localhost:11434',
     });
   });
   it('admits exact-edit as a separate runtime tool experiment without changing defaults', () => {
