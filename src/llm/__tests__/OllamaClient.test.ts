@@ -994,6 +994,25 @@ describe('OllamaClient', () => {
   });
 
   describe('Payload preparation', () => {
+    it('uses the same native projection for previews and actual sends without mutating stored history', async () => {
+      mockFetch.mockResolvedValueOnce({ ok: true, json: async () => ({ message: { role: 'assistant', content: 'done' } }) });
+      const messages: Message[] = [
+        { role: 'assistant', content: '', thinking: 'Keep actual reasoning', id: 'internal', timestamp: 123,
+          metadata: { tool_context: { call: { thinking: 'Keep actual reasoning' } } },
+          tool_calls: [{ id: 'call', type: 'function', function: { name: 'read', arguments: { file_path: 'a.ts' } } }] },
+        { role: 'tool', name: 'read', tool_call_id: 'call', content: 'source', is_error: false },
+      ];
+      const before = structuredClone(messages);
+      const options = { stream: false, signal: new AbortController().signal };
+      const preview = client.previewRequest(messages, options);
+      await client.send(messages, options);
+      const payload = JSON.parse(mockFetch.mock.calls[0][1].body);
+      expect(payload).toEqual(preview.payload);
+      expect(payload.messages[0]).toEqual({ role: 'assistant', content: '', thinking: 'Keep actual reasoning', tool_calls: messages[0]!.tool_calls });
+      expect(payload.messages[1]).toEqual({ role: 'tool', tool_name: 'read', tool_call_id: 'call', content: 'source' });
+      expect(messages).toEqual(before);
+    });
+
     it('should prepare payload with correct structure', async () => {
       mockFetch.mockResolvedValueOnce({
         ok: true,

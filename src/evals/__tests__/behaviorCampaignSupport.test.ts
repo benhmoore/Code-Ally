@@ -140,7 +140,7 @@ describe('paired comparison validity', () => {
     expect(report.completion.baseline.passed).toBe(1);
     expect(report.successfulPairs).toBe(0);
     expect(report.pairedMeans.outcome.totalTokens).toBeNull();
-    expect(report.infrastructureExcludedTrials).toEqual([{ variant: 'baseline', repetition: 0 }]);
+    expect(report.requestErrorTrials).toEqual([{ variant: 'baseline', repetition: 0 }]);
   });
   it('distinguishes expected owner cancellation from unplanned connection failures', () => {
     expect(
@@ -167,4 +167,34 @@ it('rejects resume across resolved edit interfaces or legacy trials even when la
   expect(() => assertResumePrefix(current, [historical[0]!])).toThrow('resolved factors');
   const { editSurface: _surface, promptVariant: _prompt, ...legacy } = current[0]!;
   expect(() => assertResumePrefix(current, [legacy as (typeof current)[0]])).toThrow('resolved factors');
+});
+
+describe('request-error observations and deadline outcomes', () => {
+  const result = (errors: string[], timedOut: boolean): TrialResult => ({
+    caseId:'multiline-edit', variant:'baseline', editSurface:'historical-unified', promptVariant:'baseline',
+    repetition:0,seed:0,passed:false,elapsedMs:600182,exitCode:124,signal:null,timedOut,log:'',
+    worker:{ requests:errors.map(error=>({error})), metrics:{usageComplete:false} },
+  });
+  it('reports the deadline separately without claiming ownership of an observed abort', () => {
+    const row=result(['AbortError: This operation was aborted'],true);
+    const report=summarize([row],['multiline-edit']).cases[0]!;
+    expect(report.deadlineExceededTrials).toEqual([{variant:'baseline',repetition:0}]);
+    expect(report.requestErrorTrials).toEqual([{variant:'baseline',repetition:0}]);
+    expect(report.completion.baseline).toEqual({passed:0,total:1});
+    expect(report.successfulPairs).toBe(0);
+    expect(report.pairedMeans.baseline.elapsedMs).toBeNull();
+    expect(report).not.toHaveProperty('infrastructureExcludedTrials');
+  });
+  it('preserves earlier fetch-error exclusions when a deadline and final abort coexist', () => {
+    const row=result(['TypeError: fetch failed','AbortError: This operation was aborted'],true);
+    expect(hasInfrastructureFailure(row)).toBe(true);
+    expect(summarize([row],['multiline-edit']).cases[0]?.requestErrorTrials).toHaveLength(1);
+  });
+  it('retains unknown abort exclusions even without a recorded deadline', () => {
+    const row=result(['AbortError: unknown cancellation'],false);
+    expect(hasInfrastructureFailure(row)).toBe(true);
+    const report=summarize([row],['multiline-edit']).cases[0]!;
+    expect(report.requestErrorTrials).toHaveLength(1);
+    expect(report.deadlineExceededTrials).toEqual([]);
+  });
 });

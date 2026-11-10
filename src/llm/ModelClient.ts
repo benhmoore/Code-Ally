@@ -187,6 +187,13 @@ export interface ModelClientConfig {
  * - Cancellation/interruption
  */
 export abstract class ModelClient {
+  /** Plaintext reasoning sent by this transport, conservatively budgeted when rendering is uncertain.
+   * Internal/UI traces and opaque provider items are not plaintext request costs.
+   */
+  getReplayedReasoningText(_message: Message): string | undefined {
+    return undefined;
+  }
+
   /** Stable transport identifier used in persisted checkpoints. */
   get providerId(): string {
     return 'chat';

@@ -123,6 +123,9 @@ export class ConfigurableModelClient extends ModelClient {
   override previewRequest(messages: readonly Message[], options: SendOptions) {
     return this.client.previewRequest(messages, options);
   }
+  override getReplayedReasoningText(message: Message): string | undefined {
+    return this.client.getReplayedReasoningText?.(message);
+  }
   override countInput(messages: readonly Message[], options: SendOptions) {
     return this.withClient(client => client.countInput(messages, options));
   }

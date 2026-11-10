@@ -467,7 +467,8 @@ export class Agent {
     logger.debug('[AGENT_CONTEXT]', this.instanceId, 'LoopDetector created');
 
     // Create agent's own TokenManager for isolated context tracking
-    this.tokenManager = new TokenManager(this.appConfig.context_size);
+    this.tokenManager = new TokenManager(this.appConfig.context_size,
+      message => this.modelClient.getReplayedReasoningText?.(message));
     logger.debug('[AGENT_CONTEXT]', this.instanceId, 'TokenManager created with context size:', this.appConfig.context_size);
 
     // Registered here, once both collaborators exist, so every append — however
@@ -1870,6 +1871,14 @@ export class Agent {
         logger.warn('[AGENT_CONTEXT]', this.instanceId, 'Could not capture request preview:', formatError(error));
       }
 
+      // Freeze calibration inputs before the request: live transport settings or
+      // conversation state can change while its response is in flight.
+      const estimatedSentPromptTokens = this.tokenManager.estimateMessagesTokens(sentMessages)
+        + this.tokenManager.estimateTokens(JSON.stringify(functions));
+      const calibrationSample = {
+        containsUnestimatedMedia: sentMessages.some(message => (message.images?.length ?? 0) > 0),
+        containsReplayedReasoning: this.tokenManager.hasReplayedReasoning(sentMessages),
+      };
       const response = await this.modelClient.send(sentMessages, requestOptions);
 
       if (response.providerState) {
@@ -1890,15 +1899,9 @@ export class Agent {
       // overhead permanently poisons later text-only budgets after the image has
       // been evicted, and can make a healthy small-context session impossible to
       // continue. A later text-only request will resume calibration normally.
-      const hasUnestimatedMedia = sentMessages.some(message =>
-        (message.images?.length ?? 0) > 0
-      );
-      if (response.usage?.promptTokens) {
-        const estimated = this.tokenManager.estimateMessagesTokens(sentMessages)
-          + this.tokenManager.estimateTokens(JSON.stringify(functions));
-        this.tokenManager.calibrate(estimated, response.usage.promptTokens, {
-          containsUnestimatedMedia: hasUnestimatedMedia,
-        });
+      if (response.usage?.promptTokens && calibrationSample.containsReplayedReasoning
+        === this.tokenManager.hasReplayedReasoning(sentMessages)) {
+        this.tokenManager.calibrate(estimatedSentPromptTokens, response.usage.promptTokens, calibrationSample);
       }
 
       // Remove ephemeral system-reminder messages after receiving response

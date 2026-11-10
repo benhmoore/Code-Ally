@@ -1,6 +1,40 @@
 import type { Message } from '../types/index.js';
 import { prepareMessageImages } from './messageImages.js';
 
+/** Native /api/chat api.Message fields; internal names are tool_name on this wire. */
+export type OllamaMessage = Pick<
+  Message,
+  'role' | 'content' | 'thinking' | 'images' | 'tool_calls' | 'tool_call_id'
+> & {
+  tool_name?: string;
+};
+const NATIVE_MESSAGE_FIELDS = new Set([
+  'role',
+  'content',
+  'thinking',
+  'images',
+  'tool_calls',
+  'tool_name',
+  'tool_call_id',
+]);
+
+function projectNativeMessages(messages: readonly Message[]): readonly OllamaMessage[] {
+  let changed = false;
+  const projected = messages.map(message => {
+    if (Object.keys(message).every(key => NATIVE_MESSAGE_FIELDS.has(key))) return message as OllamaMessage;
+    changed = true;
+    const native: OllamaMessage = { role: message.role, content: message.content };
+    if (message.thinking !== undefined) native.thinking = message.thinking;
+    if (message.images !== undefined) native.images = message.images;
+    if (message.tool_calls !== undefined) native.tool_calls = message.tool_calls;
+    if (message.tool_call_id !== undefined) native.tool_call_id = message.tool_call_id;
+    const toolName = (message as OllamaMessage).tool_name ?? (message.role === 'tool' ? message.name : undefined);
+    if (toolName !== undefined) native.tool_name = toolName;
+    return native;
+  });
+  return changed ? projected : messages;
+}
+
 /**
  * Normalize internal conversation history for Ollama's native chat endpoint.
  *
@@ -16,8 +50,8 @@ import { prepareMessageImages } from './messageImages.js';
  */
 export function normalizeOllamaMessages(
   messages: readonly Message[],
-  supportsImages?: boolean,
-): readonly Message[] {
+  supportsImages?: boolean
+): readonly OllamaMessage[] {
   messages = prepareMessageImages(messages, supportsImages);
   messages = normalizeOllamaImages(messages);
   let leadingSystemCount = 0;
@@ -28,7 +62,7 @@ export function normalizeOllamaMessages(
   const hasLateSystem = messages.slice(leadingSystemCount).some(message => message.role === 'system');
 
   if (leadingSystemCount <= 1 && !hasLateSystem) {
-    return messages;
+    return projectNativeMessages(messages);
   }
 
   const normalized: Message[] = [];
@@ -50,7 +84,7 @@ export function normalizeOllamaMessages(
     normalized.push(message.role === 'system' ? { ...message, role: 'user' } : message);
   }
 
-  return normalized;
+  return projectNativeMessages(normalized);
 }
 
 /**
@@ -72,9 +106,7 @@ function normalizeOllamaImages(messages: readonly Message[]): readonly Message[]
       return match[1]!;
     });
 
-    return images.some((image, index) => image !== message.images![index])
-      ? { ...message, images }
-      : message;
+    return images.some((image, index) => image !== message.images![index]) ? { ...message, images } : message;
   });
 
   return changed ? normalized : messages;

@@ -30,9 +30,10 @@ describe('normalizeOllamaMessages', () => {
     const normalized = normalizeOllamaMessages(messages);
 
     expect(normalized.map(message => message.role)).toEqual(['system', 'user', 'assistant', 'user']);
-    expect(normalized[3]).toEqual({ ...reminder, role: 'user' });
+    expect(normalized[3]).toEqual({ role: 'user', content: reminder.content });
     expect(messages[3]).toBe(reminder);
     expect(reminder.role).toBe('system');
+    expect(reminder.metadata).toEqual({ ephemeral: true });
   });
 
   it('combines multiple leading system messages into one', () => {
@@ -77,6 +78,7 @@ describe('normalizeOllamaMessages', () => {
 
     expect(normalized).toHaveLength(2);
     expect(normalized[0]).not.toHaveProperty('images');
+    expect(normalized[0]).toMatchObject({ tool_name: 'browser/screenshot', tool_call_id: 'screenshot-1' });
     expect(normalized[1]).toMatchObject({
       role: 'user',
       images: ['aW1hZ2U='],
@@ -111,5 +113,29 @@ describe('normalizeOllamaMessages', () => {
     const messages = [message];
     expect(normalizeOllamaMessages(messages)).toBe(messages);
     expect(message.images).toEqual(['aW1hZ2U=']);
+  });
+
+  it('preserves every native field and nested tool data while removing only internal message fields', () => {
+    const native = {
+      role: 'assistant' as const, content: '', thinking: 'Native reasoning stays intact.',
+      images: ['aW1hZ2U='], tool_name: 'explicit-native-name', tool_call_id: 'call-1',
+      tool_calls: [{ id: 'call-1', type: 'function' as const, function: { index: 0, name: 'read', arguments: { metadata: 'A legitimate tool argument' } } }],
+    };
+    const message: Message = Object.assign({}, native, {
+      id: 'private-message-id', name: 'internal-assistant-name', timestamp: 123,
+      thinkingStartTime: 1, thinkingEndTime: 2, is_error: false,
+      metadata: { tool_context: { 'call-1': { thinking: native.thinking } } },
+      extensions: { private: 'not part of api.Message' },
+    });
+    const history = [message]; const stored = structuredClone(history);
+    expect(normalizeOllamaMessages(history)).toEqual([native]);
+    expect(history).toEqual(stored);
+  });
+
+  it('maps internal tool names without losing call association and prefers an explicit native name', () => {
+    const result: Message = { role: 'tool', name: 'read', tool_call_id: 'call-1', content: 'result', metadata: { ephemeral: true } };
+    expect(normalizeOllamaMessages([result])).toEqual([{ role: 'tool', tool_name: 'read', tool_call_id: 'call-1', content: 'result' }]);
+    expect(normalizeOllamaMessages([Object.assign({}, result, { tool_name: 'native-read' })])[0]?.tool_name).toBe('native-read');
+    expect(result.name).toBe('read');
   });
 });

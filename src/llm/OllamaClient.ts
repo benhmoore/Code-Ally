@@ -27,7 +27,7 @@ import { API_TIMEOUTS, ID_GENERATION, RETRY_CONFIG } from '../config/constants.j
 import { reasoningRequestFields, resolveModelProfile } from './modelProfile.js';
 import { buildRequestHeaders } from './requestHeaders.js';
 import { createHttpResponseError, httpRecoverySuggestions, isStreamTimeoutError, readResponseJsonWithTimeout, readResponseTextWithTimeout, readWithTimeout, runWithRetries, StreamProgressDeadline } from './httpTransport.js';
-import { normalizeOllamaMessages } from './ollamaMessages.js';
+import { normalizeOllamaMessages, type OllamaMessage } from './ollamaMessages.js';
 import { isImageInputRejection } from './messageImages.js';
 import { validateToolCalls } from './toolCalls.js';
 import { emitModelRetryActivity } from './retryActivity.js';
@@ -37,7 +37,7 @@ import { emitModelRetryActivity } from './retryActivity.js';
  */
 interface OllamaPayload {
   model: string;
-  messages: readonly Message[];
+  messages: readonly OllamaMessage[];
   stream: boolean;
   format?: Record<string, unknown>;
   /**
@@ -374,6 +374,12 @@ export class OllamaClient extends ModelClient {
         responseSchema?.schema,
       ) as unknown as Record<string, unknown>,
     };
+  }
+
+  override getReplayedReasoningText(message: Message): string | undefined {
+    // Native chat forwards this field. Some templates omit earlier-turn traces;
+    // count the wire text conservatively without guessing from model names.
+    return message.thinking;
   }
 
   /**

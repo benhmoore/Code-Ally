@@ -157,6 +157,47 @@ describe('production exact editing', () => {
     expect(result.success, result.error).toBe(true);
     expect(await readFile(file, 'utf8')).toBe('before\nALPHA\r\nBETA\nafter\r\n');
   });
+  it('rejects a changed raw byte sequence even when UTF-8 replacement decoding hides the difference', async () => {
+    const original = Buffer.from('marker �\nbeta\n', 'utf8');
+    const external = Buffer.concat([Buffer.from('marker '), Buffer.from([0xff]), Buffer.from('\nbeta\n')]);
+    expect(external.equals(original)).toBe(false);
+    expect(external.toString('utf8')).toBe(original.toString('utf8'));
+    await writeFile(file, original);
+    const context: ToolExecutionContext = { agentId: 'byte-editor' };
+    expect(
+      (await new ReadTool(stream).execute({ file_path: file }, undefined, undefined, false, false, context)).success
+    ).toBe(true);
+    const input = args(file);
+    await tool.runPreview(input, 'byte-cas-preview', context);
+    await writeFile(file, external);
+    const result = await tool.execute(input, undefined, undefined, false, false, context);
+    expect(result.success).toBe(false);
+    expect(result.error).toContain('File changed');
+    expect(await readFile(file)).toEqual(external);
+  });
+
+  it.each(['marker �\nbeta\n', 'marker 🦊\r\nbeta\r\n', '\ufeffmarker 東京\r\nbeta\r\n'])(
+    'preserves valid UTF-8, newline and BOM bytes through preview, edit, and undo: %j',
+    async original => {
+      await writeFile(file, original);
+      const context: ToolExecutionContext = { agentId: 'valid-editor' };
+      expect(
+        (await new ReadTool(stream).execute({ file_path: file }, undefined, undefined, false, false, context)).success
+      ).toBe(true);
+      const sessions = join(root, 'byte-cas-sessions');
+      const patches = new PatchManager({ getSessionId: () => 'byte-cas-test', sessionsDir: sessions });
+      await patches.initialize();
+      registry.registerInstance('patch_manager', patches);
+      const input = args(file);
+      await tool.runPreview(input, 'valid-byte-preview', context);
+      const result = await tool.execute(input, undefined, undefined, false, false, context);
+      expect(result.success, result.error).toBe(true);
+      expect(await readFile(file)).toEqual(Buffer.from(original.replace('beta', 'BETA'), 'utf8'));
+      expect((await patches.undoOperations()).success).toBe(true);
+      expect(await readFile(file)).toEqual(Buffer.from(original, 'utf8'));
+    }
+  );
+
   it('rejects invalid UTF-8 source without replacing the invalid bytes', async () => {
     const original = Buffer.from([0x61, 0xc3, 0x28, 0x62]);
     await writeFile(file, original);

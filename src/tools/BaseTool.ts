@@ -1001,8 +1001,8 @@ export abstract class BaseTool {
     const cacheRegistry = this.getExecutionRegistry(executionContext);
 
     const patchNumber = await fileMutationCoordinator.run(absolutePath, async () => {
-      const currentContent = await readFile(absolutePath, 'utf-8');
-      if (currentContent !== originalContent) {
+      const currentContent = await readFile(absolutePath);
+      if (!currentContent.equals(Buffer.from(originalContent, 'utf8'))) {
         throw new Error(`File changed while ${this.name} was preparing the edit. Re-read ${absolutePath} and retry.`);
       }
       options.abortSignal?.throwIfAborted();

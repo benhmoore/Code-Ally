@@ -52,7 +52,10 @@ export class TokenManager {
    * Create a new TokenManager
    * @param contextSize Maximum context window size in tokens
    */
-  constructor(contextSize: number) {
+  constructor(
+    contextSize: number,
+    private readonly replayedReasoningText: (message: Message) => string | undefined = () => undefined,
+  ) {
     this.contextSize = contextSize;
   }
 
@@ -72,6 +75,7 @@ export class TokenManager {
    * - Content tokens
    * - Role/metadata overhead
    * - Tool call tokens if present
+   * - Provider-owned plaintext reasoning actually sent (conservative if rendering is uncertain)
    *
    * @param message Message to estimate
    * @returns Estimated token count
@@ -86,6 +90,8 @@ export class TokenManager {
     if (message.content) {
       tokens += this.estimateTokens(message.content);
     }
+    const reasoning = this.replayedReasoningText(message);
+    if (reasoning) tokens += this.estimateTokens(reasoning);
 
     // Name field tokens
     if (message.name) {
@@ -119,6 +125,7 @@ export class TokenManager {
       name: message.name ?? '',
       tool_call_id: message.tool_call_id ?? '',
       tool_calls: message.tool_calls ?? null,
+      replayedReasoning: this.replayedReasoningText(message),
     });
   }
 
@@ -247,7 +254,7 @@ export class TokenManager {
   calibrate(
     estimatedPromptTokens: number,
     actualPromptTokens: number,
-    options: { containsUnestimatedMedia?: boolean } = {},
+    options: { containsUnestimatedMedia?: boolean; containsReplayedReasoning?: boolean } = {},
   ): void {
     // Image accounting is provider-, model-, and resolution-dependent. It is a
     // variable request cost, not the fixed tokenizer/template gap this value is
@@ -258,6 +265,10 @@ export class TokenManager {
     if (estimatedPromptTokens <= 0 || actualPromptTokens <= 0) return;
 
     const gap = actualPromptTokens - estimatedPromptTokens;
+    // A renderer may omit earlier-turn reasoning even though the transport sends
+    // it. Do not turn that uncertain variable cost into negative fixed overhead
+    // which would underbudget a later request whose active reasoning is rendered.
+    if (options.containsReplayedReasoning && gap < 0) return;
     // Snap to the first real sample, then smooth subsequent ones.
     const alpha = this.calibrated ? CALIBRATION_ALPHA : 1.0;
     this.overheadTokens = Math.round(this.overheadTokens * (1 - alpha) + gap * alpha);
@@ -267,6 +278,10 @@ export class TokenManager {
   /** The current calibration overhead in tokens (0 until first calibrated). */
   getCalibrationOverhead(): number {
     return this.overheadTokens;
+  }
+
+  hasReplayedReasoning(messages: readonly Message[]): boolean {
+    return messages.some(message => !!this.replayedReasoningText(message));
   }
 
   /** Apply the calibration overhead to a raw estimate (never below zero). */

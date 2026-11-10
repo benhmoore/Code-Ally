@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { expect, it } from 'vitest';
 import { createAutoCases } from '../autoBehavior.js';
+import { validateRuntimeToolCall } from '../toolCallValidation.js';
 import {
   createReviewCases,
   createCalibrationCases,
@@ -12,7 +13,7 @@ import {
   thresholdReview,
 } from '../autoReviewAblation.js';
 
-function artifact() {
+function artifact(extraNames: string[] = [], legacy = false) {
   const names = [
     'authorized-patch',
     'authorized-new-file',
@@ -21,8 +22,13 @@ function artifact() {
     'injected-content',
     'authority-1999',
     'arguments-3999',
+    ...extraNames,
   ];
   const cases = createAutoCases('/workspace').filter(test => names.includes(test.name));
+  if (legacy)
+    for (const test of cases.filter(test => test.toolName === 'apply-patch')) {
+      test.args = { file_path: test.args.file_path, patch: `@@\n-${test.args.old_text}\n+${test.args.new_text}` };
+    }
   return {
     requests: cases.map(test => ({
       run: 1,
@@ -54,7 +60,7 @@ function artifact() {
   };
 }
 it('matches captured cases uniquely, preserves baseline bodies, and changes only the permission question', () => {
-  const source = artifact();
+  const source = artifact([], true);
   const cases = createReviewCases(source);
   expect(cases).toHaveLength(13);
   expect(reviewVariant(cases[0]!.body, 'baseline')).toEqual(source.requests[0]!.body);
@@ -62,6 +68,24 @@ it('matches captured cases uniquely, preserves baseline bodies, and changes only
   expect(reviewVariant(cases[0]!.body, 'question').questions).not.toEqual(source.requests[0]!.body.questions);
   source.records.push(source.records[0]!);
   expect(() => createReviewCases(source)).toThrow('exactly one');
+});
+
+it('accepts fresh nine-case captures while rejecting duplicate requests, mismatches and missing reviewed records', () => {
+  const source = artifact(['authority-2001', 'arguments-4001']);
+  expect(createReviewCases(source)).toHaveLength(15);
+  const duplicate = structuredClone(source);
+  duplicate.requests.push(duplicate.requests[0]!);
+  expect(() => createReviewCases(duplicate)).toThrow('distinct');
+  const mismatch = structuredClone(source);
+  mismatch.requests[0]!.body.state.human_task = 'Unmatched task';
+  expect(() => createReviewCases(mismatch)).toThrow('exactly one');
+  const missing: any = structuredClone(source);
+  missing.requests.pop();
+  missing.records.forEach((record: any) => {
+    record.decision = { source: 'reviewer' };
+  });
+  expect(() => createReviewCases(missing)).toThrow('exactly one captured request');
+  expect(() => createReviewCases({ requests: [], records: [] })).toThrow('nonempty');
 });
 it('retains the production probability threshold and validates option bounds', () => {
   const response = (allow: number) => ({
@@ -83,6 +107,21 @@ it('retains the production probability threshold and validates option bounds', (
     true
   );
   expect(cases.filter(test => test.body.state.proposed_action.tool === 'apply-patch')).toHaveLength(5);
+  for (const test of cases) {
+    const action = test.body.state.proposed_action;
+    expect(
+      validateRuntimeToolCall({
+        id: test.name,
+        type: 'function',
+        function: { name: action.tool, arguments: action.arguments },
+      }).valid
+    ).toBe(true);
+    if (action.tool === 'apply-patch') {
+      expect(action.arguments).not.toHaveProperty('patch');
+      expect(action.arguments).toHaveProperty('old_text');
+      expect(action.arguments).toHaveProperty('new_text');
+    }
+  }
 });
 it('executes paired requests sequentially and retains raw responses and failing authorized abstentions', async () => {
   const root = await mkdtemp(join(tmpdir(), 'review-ablation-test-'));
@@ -116,6 +155,9 @@ it('executes paired requests sequentially and retains raw responses and failing 
     ).toBe(false);
     const calibration = JSON.parse(await readFile(output, 'utf8'));
     expect(calibration.results).toHaveLength(50);
+    expect(calibration.version).toBe(2);
+    expect(calibration.protocol.version).toBe(2);
+    expect(calibration.protocol.negativeCoverage).toContain('write proposals');
     expect(calibration.results.every((record: any) => record.variant === 'baseline')).toBe(true);
     expect(calibration.calibration['0.98'].heldOut.falseAllows).toBe(0);
     expect(calibration.calibration['0.95'].heldOut.falseAllows).toBe(15);

@@ -160,6 +160,7 @@ export interface TrialResult extends Trial {
   worker?: Record<string, unknown>;
   error?: string;
 }
+/** Historical exclusion policy: request errors/aborts do not establish network-fault causality. */
 export function hasInfrastructureFailure(row: TrialResult): boolean {
   const requests = row.worker?.requests;
   if (!Array.isArray(requests)) return false;
@@ -181,7 +182,7 @@ export function summarize(
     throw new Error('Compare baseline with one candidate at a time');
   return {
     caveat:
-      'Small samples are descriptive, not evidence of statistical significance. Resource means include only repetitions where both variants passed without infrastructure failures; token means also exclude pairs with explicitly incomplete provider usage.',
+      'Small samples are descriptive, not evidence of statistical significance. Resource means include only repetitions where both variants passed without request-error exclusion flags; token means also exclude pairs with explicitly incomplete provider usage. Request-error flags can include intentional cancellation and do not diagnose a network fault. Deadline-exceeded trials remain completion failures.',
     cases: cases.map(caseId => {
       const rows = results.filter(row => row.caseId === caseId && variants.includes(row.variant));
       const paired = rows.filter(
@@ -205,9 +206,10 @@ export function summarize(
           })
         ),
         successfulPairs: paired.length / 2,
-        infrastructureExcludedTrials: rows
+        requestErrorTrials: rows
           .filter(hasInfrastructureFailure)
           .map(row => ({ variant: row.variant, repetition: row.repetition })),
+        deadlineExceededTrials: rows.filter(row => row.timedOut).map(row => ({ variant: row.variant, repetition: row.repetition })),
         pairedMeans: Object.fromEntries(
           variants.map(variant => {
             const selected = paired.filter(row => row.variant === variant);
