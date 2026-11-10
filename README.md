@@ -19,13 +19,16 @@ Code Ally gives you an AI that lives where you work—your terminal. It reads yo
 - **Hooks** — Run your own commands at session and tool boundaries to enforce policy
 - **Headless mode** — Drive Ally over a JSON protocol and read typed results back
 
-## Recommended Models
+## Model validation
 
-Tested to work best with these models:
+Code Ally targets small and mid-sized models with native tool calling and at least
+32k context. The recorded Qwen3.8 27B campaign covers coding, tool recovery,
+steering, asynchronous delegation, and durable checkpoint continuation. These
+bounded fixtures measure harness behavior; they do not rank general model quality.
 
-- `gpt-oss:20b` — Balanced performance and speed
-- `gpt-oss:120b` — Best quality for complex tasks
-- `glm-4.6:cloud` — Cloud-hosted option via Ollama
+See [model evaluation](docs/model-evaluation.md) for reproducible commands,
+comparison controls, recorded findings, and limitations. Local evaluations can
+use a remote Ollama host so inference stays off the laptop.
 
 ## Installation
 

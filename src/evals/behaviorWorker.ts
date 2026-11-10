@@ -1,9 +1,9 @@
+import { BEHAVIOR_WORKER_STOP, BEHAVIOR_WORKER_CLEANED, BEHAVIOR_WORKER_STOPPING } from './behaviorProcess.js';
+import type { BehaviorFactors } from './behaviorFactors.js';
 /** One isolated full-Agent behavior case. Launched only by behaviorCampaign. */
 import { createHash } from 'node:crypto';
 import { readFile, realpath, rename, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
-import { ExactEditExperimentTool } from './ExactEditExperimentTool.js';
-import { ApplyPatchTool } from '../tools/ApplyPatchTool.js';
 import { Agent } from '../agent/Agent.js';
 import { TrustManager } from '../agent/TrustManager.js';
 import { DEFAULT_CONFIG } from '../config/defaults.js';
@@ -30,6 +30,7 @@ import { installBehaviorTransport } from './behaviorTransport.js';
 import { confineFixtureTools } from './behaviorWorkspace.js';
 import {
   getBehaviorFixture,
+  verifyFixtureReadRequirements,
   type BehaviorAssertion,
   type BehaviorCaseId,
   type BehaviorVerification,
@@ -42,7 +43,7 @@ import {
   type RuntimeBehaviorCaseId,
 } from './behaviorRuntimeFixtures.js';
 
-interface WorkerConfig {
+interface WorkerConfig extends BehaviorFactors {
   caseId: string;
   variant: BehaviorVariant;
   model: string;
@@ -69,10 +70,15 @@ async function main(): Promise<void> {
   }
   if (!['baseline', 'outcome', 'exact-edit'].includes(options.variant) || options.contextSize < 32768)
     throw new Error('Invalid behavior variant/context');
+  if (
+    !['exact', 'historical-unified'].includes(options.editSurface) ||
+    !['baseline', 'outcome'].includes(options.promptVariant)
+  )
+    throw new Error('Behavior worker requires explicit edit surface and prompt factors');
   const started = Date.now();
   const transport = installBehaviorTransport({
     endpoint: options.endpoint,
-    variant: options.variant,
+    variant: options.promptVariant,
     seed: options.seed,
   });
   const requests = transport.requests;
@@ -111,9 +117,7 @@ async function main(): Promise<void> {
   const configManager = new ConfigManager(join(data, 'config.json'));
   await configManager.initialize();
   configManager.applyRuntimeOverrides(config);
-  const tools = createBuiltInTools(stream, config).map(tool =>
-    options.variant === 'exact-edit' && tool instanceof ApplyPatchTool ? new ExactEditExperimentTool(stream) : tool
-  );
+  const tools = createBuiltInTools(stream, config, { editSurface: options.editSurface });
   confineFixtureTools(tools, options.workspace);
   const toolManager = new ToolManager(tools);
   const policy = new RunPolicyManager({
@@ -218,6 +222,8 @@ async function main(): Promise<void> {
         const result = {
           caseId: options.caseId,
           variant: options.variant,
+          editSurface: options.editSurface,
+          promptVariant: options.promptVariant,
           passed:
             !error &&
             verification.passed &&
@@ -304,6 +310,25 @@ async function main(): Promise<void> {
     };
   };
   observeStream(stream);
+  let stopDrain: Promise<void> | undefined;
+  let stopCleanupFailed = false;
+  const onStop = (message: unknown) => {
+    if (!message || typeof message !== 'object' || !('type' in message) || message.type !== BEHAVIOR_WORKER_STOP || stopDrain) return;
+    error = 'Campaign worker stop requested';
+    // Admit foreground shell handles to the existing manager before interrupting
+    // their foreground waits, so detached groups remain owned during shutdown.
+    bash.backgroundForeground();
+    if (process.connected) process.send?.({ type: BEHAVIOR_WORKER_STOPPING,
+      ownedProcesses: bash.listProcesses().filter(info => info.status !== 'exited').map(info => ({id:info.id,pid:info.pid})),
+    }, () => {});
+    stopDrain = Promise.allSettled([agent!.stopAndDrain(), background.shutdown(), tasks.shutdown(), bash.shutdown(250)]).then(results => {
+      for (const result of results) if (result.status === 'rejected') {
+        stopCleanupFailed = true; error = `${error ?? ''} Stop cleanup failed: ${String(result.reason)}`;
+      }
+    });
+    void writeResult().catch(() => {});
+  };
+  process.on('message', onStop);
   const checkpointTimer = setInterval(() => {
     void writeResult().catch(() => {});
   }, 5000);
@@ -379,17 +404,12 @@ async function main(): Promise<void> {
             event.data?.result?.success
         ),
       });
-    for (const name of fixture?.requiredFailureTools ?? []) {
-      extraAssertions.push({
-        name: `observed-failure:${name}`,
-        passed: toolEvents.some(
-          event =>
-            event.type === ActivityEventType.TOOL_CALL_END &&
-            event.data?.toolName === name &&
-            event.data?.result?.success === false
-        ),
-      });
-    }
+    if (fixture) extraAssertions.push(...verifyFixtureReadRequirements(fixture, toolEvents.map(event => ({
+      phase: event.type === ActivityEventType.TOOL_CALL_START ? 'start' as const : 'end' as const,
+      owner: event.owner ?? 'unknown', toolName: event.data?.toolName,
+      arguments: event.data?.arguments, success: event.data?.result?.success,
+      errorType: event.data?.result?.error_type,
+    })), options.workspace));
     if (fixture?.requiresTestRun) {
       extraAssertions.push({
         name: 'successful-visible-test-run',
@@ -402,7 +422,7 @@ async function main(): Promise<void> {
         ),
       });
     }
-    if (options.variant === 'outcome' || options.variant === 'exact-edit') {
+    if (options.promptVariant === 'outcome') {
       const taskRequests = requests.filter(request => request.owner === 'main' || request.owner === 'delegate');
       extraAssertions.push({
         name: 'candidate-applied-to-task-requests',
@@ -416,6 +436,8 @@ async function main(): Promise<void> {
     error = failure instanceof Error ? failure.stack : String(failure);
   } finally {
     clearInterval(checkpointTimer);
+    if (stopDrain) await stopDrain;
+    let cleanupSucceeded = !stopCleanupFailed;
     frozenFleet = structuredClone(
       background.listTasks().map(task => ({
         id: task.id,
@@ -439,14 +461,23 @@ async function main(): Promise<void> {
       try {
         await cleanup();
       } catch (failure) {
+        cleanupSucceeded = false;
         error = `${error ?? ''} Cleanup failed: ${String(failure)}`;
       }
     }
+    process.removeListener('message', onStop);
+    if (stopDrain) await stopDrain;
+    cleanupSucceeded &&= !stopCleanupFailed;
     transport.restore();
     await writeResult();
+    if (cleanupSucceeded && process.connected && process.send) await new Promise<void>(resolve => {
+      process.send!({ type: BEHAVIOR_WORKER_CLEANED }, () => resolve());
+    });
+    if (process.connected) process.disconnect();
+    if (stopDrain) process.exitCode = 124;
   }
 }
 main().catch(error => {
   process.stderr.write(`${error instanceof Error ? error.stack : String(error)}\n`);
   process.exitCode = 1;
-});
+}).finally(() => { if (process.connected) process.disconnect(); });

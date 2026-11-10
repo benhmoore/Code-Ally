@@ -129,6 +129,8 @@ behavior remains at least as accurate and safe.
 
 ## Full coding smoke test
 
+The direct-client harness `read_before_edit` scenario also executes the resulting `rangeSize` fixture after validating the submitted tool schema and applying the edit in memory. TypeScript is transpiled and checked on 100 numeric input pairs in a child process with V8 old-heap/time limits and a VM without host callbacks, IO, timers, or dynamic code generation; surviving VM global binding changes and intrinsic mutation fail. Equivalent formatting, pure Math calls, helpers, local variables and control flow are accepted. This is a generated-code benchmark execution boundary, not an OS security sandbox, a proof of purity, or an authorization grant for real tool actions. Historical schema-declared patches retain their parser, and suite version 16 records this semantic scoring change.
+
 The isolated coding evaluator runs the real `Agent`, provider client, permission layer, and built-in file/shell tools. The model reads a small JavaScript fixture, repairs an inclusive-range bug, and runs `node --test`. A separate process verifies the resulting source against additional trusted cases and checks that the visible test was not changed. The evaluator records tool results and the transcript, bounds execution time, and removes temporary workspaces.
 
 ```bash
@@ -149,11 +151,19 @@ npm run eval:behavior -- \
   --model qwen3.8:27b-mlx \
   --endpoint http://100.68.102.73:11434 \
   --runs 3 --variants baseline,outcome \
-  --context-size 32768 --max-tokens 2048 --timeout-ms 600000 \
-  --output model-eval-results/behavior-32k.json
+  --context-size 32768 --max-tokens 16384 --timeout-ms 600000 \
+  --output model-eval-results/behavior-current-32k.json
 ```
 
-`baseline` uses production instructions. `outcome` changes one instruction about independent calls, bounded reads, and selecting the next missing action. It is an experimental candidate, not a production setting. Counterbalanced trials apply matched backend seeds. Exact transmitted bodies, hashes, native responses, provider token usage, parent/child tool events, verification assertions, and terminal outcomes are retained. Independent checks execute copied source against trusted tests outside the working fixture, and protected public files must remain unchanged. The worker additionally records real fleet completion and checkpoint restoration from disk.
+Protocol 3 records explicit `editSurface` and `promptVariant` factors in each trial,
+worker result, and resume identity. A single `baseline` uses the current production
+factory and prompt. `baseline,outcome` holds that factory fixed and changes one
+instruction about independent calls, bounded reads, and selecting the next missing
+action. `baseline,exact-edit` compares the historical unified-diff frontend against
+the exact-text frontend, with identical production system messages. The historical
+frontend is an evaluator control; it is not registered in the normal tool library.
+Only one comparison is allowed at a time. Protocol 1 and 2 artifacts remain historical
+references and cannot resume into protocol 3. Counterbalanced trials apply matched backend seeds. Exact transmitted bodies, hashes, native responses, provider token usage, parent/child tool events, verification assertions, and terminal outcomes are retained. Independent checks execute copied source against trusted tests outside the working fixture, and protected public files must remain unchanged. The worker additionally records real fleet completion and checkpoint restoration from disk.
 
 Fixture authorization permits repository file tools and the explicit test commands `node --test` and `npm test`. The task states these restrictions. This is a deliberate execution boundary, not an estimate of production Auto-mode refusal rates. File-tool paths are confined to the temporary workspace; that guard is not an operating-system sandbox for generated code. App state uses a sibling isolated `ALLY_DATA_DIR`, and workspaces are removed after each trial. No credentials, personal project instructions, or external services are needed.
 
@@ -165,14 +175,22 @@ Run only one inference campaign at a time. The runner refuses other resident mod
 
 `npm run eval:auto -- --endpoint http://100.68.102.73:11434 --reviewer tev1:4b --runs 3 --output model-eval-results/auto-behavior.json` evaluates the production permission service using real built-in schemas and capability/path metadata. It does not execute proposed actions. Ready, unavailable, and shadow modes cover authorized edits, contradictory or missing authority, injected instructions, size boundaries, literal read pipelines, delegation, questions, external paths, protected files, and test execution.
 
+Artifacts include a mandatory preflight identity: reviewer digest and metadata, Ollama version, exact source manifest and policy/evaluator hashes, Git state, and Node version. A missing identity fails before model review. Earlier artifacts without this identity remain historical evidence with incomplete deployment provenance.
+
 The artifact separates expected policy behavior from authorization friction. An authorized action can correctly require confirmation under the current execution envelope or reviewer capacity policy; that still represents friction to investigate. Full original human directions and exact proposed arguments are retained. No tool output or agent justification becomes human authorization. Reviewer recommendations never expand the host-enforced action envelope.
 
 `node --import tsx src/evals/autoReviewAblation.ts --help` describes the reviewer-question comparison. It replays captured complete inputs and additional stress cases, changing the question independently of action eligibility. Do not lower a confidence cutoff merely to make positive examples pass; evaluate contradictory instructions and held-out negative cases too. These bounded measurements are not a security guarantee or calibrated error probability.
 
 ### Recorded behavior findings
 
-The first completed 32k campaign passed all 36 trials across six cases and three
-paired repetitions. The longer outcome-oriented instruction did not provide a
+The first completed 32k campaign recorded 36/36 passes under its original verifier
+across six cases and three paired repetitions. A later audit found that its
+configuration case omitted explicit null checks despite requiring only undefined
+to trigger defaults. Those recorded passes therefore do not establish every
+stated semantic requirement; the strengthened protocol retains this limitation
+and the original artifacts. Replaying the six recorded configuration repairs
+against explicit null cases confirmed baseline 3/3 and candidate 2/3; this
+functional regression independently rejects the candidate. The longer outcome-oriented instruction did not provide a
 consistent efficiency improvement, so production retains the existing prompt.
 The first configuration baseline recovered from a transport failure: its matched
 pair is excluded from resource comparisons. Delegation cancellation left some
@@ -203,3 +221,53 @@ two approximately 4,000-character argument cases abstained in all repetitions.
 Arbitrary test runners and oversized authority also continue to ask under the
 host policy. These remaining friction cases are retained as failures or explicit
 policy limits; a green test suite does not mean every behavioral target passed.
+
+Protocol 3 derives a visible protected-file list from the same fixture metadata
+used by the verifier. It does not reveal editable paths or discovery answers.
+It also checks explicit null and mixed undefined values in the configuration
+case and requires the actual reported stale path to be the first main-agent read,
+with a real file error. Historical artifacts retain their original scores;
+supplemental audits are separate evidence rather than rewritten results.
+
+Coverage remains bounded: delegation telemetry identifies ordinary parent reads
+but does not prove absence of every alternative inspection path or transient
+child write. Checkpoint recovery reconstructs a SessionManager from disk and
+resumes the same Agent process; it does not simulate an entirely new CLI process.
+Protected-file hashes check terminal state, not every transient mutation. Steering
+checks admission and final behavior without establishing a causal explanation of
+the model's plan. These limits constrain the conclusions from a passing trial.
+
+### Controlled execution and recovery
+
+Use the configured production output ceiling when evaluating normal behavior
+(currently 16,384 tokens). A 2,048-token run is a separate stress condition:
+reasoning and tool arguments share that output budget, and repeated limit hits
+can prevent a capable model from completing an edit. Preserve those failures as
+stress results; do not mix their resource means with production-budget trials.
+Keep context, output ceiling, temperature, and native reasoning settings identical
+within each paired comparison. Native reasoning controls can differ across model
+families, so these runs do not establish absolute cross-model latency rankings.
+
+Before timing a model block, issue a separately recorded tiny warmup at the same
+context size and confirm the response completed. Retain its exact request and
+native response separately; warmup tokens and loading time are not task metrics.
+Keep the client awake for the run using a temporary process-scoped wake lock when
+needed. Do not change persistent power settings. End-to-end wall time can still
+include compilation, caching, and service variability; prioritize correctness,
+tool calls, and provider-reported token usage over small timing differences.
+
+Workers use a private control channel for cancellation and acknowledge cleanup
+only after their Agent, delegated tasks, Bash jobs, persistence, and transport
+finish shutting down. The parent records timeout firing and overshoot, waits a
+bounded cooperative grace, and falls back to terminating its owned worker.
+A cleanup acknowledgment plus observed process exit and closed streams is required
+for confirmed cleanup. If cleanup cannot be confirmed, the runner checkpoints the
+failure, retains the workspace and owned-process diagnostics, and stops. It does
+not continue a campaign beside an unknown surviving job. A failed or timed-out
+trial cannot become a pass because its partial worker artifact says `passed`.
+
+This control channel does not override operating-system signal restrictions.
+The shared Bash termination primitive may remain pending if signals are denied;
+the evaluation supervisor bounds that failure and reports unconfirmed cleanup.
+Inspect and terminate only verified processes owned by the evaluation before
+starting another run. Never infer permission to terminate a process from its port.

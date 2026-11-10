@@ -1,3 +1,5 @@
+import { superviseBehaviorWorker, type BehaviorProcessOptions, type BehaviorProcessOutcome } from './behaviorProcess.js';
+import { BEHAVIOR_PROTOCOL_VERSION, assertBehaviorProtocol, resolveBehaviorFactors } from './behaviorFactors.js';
 /** Sequential, process-isolated behavioral campaign. Never unloads provider models. */
 import { spawn, execFileSync } from 'node:child_process';
 import { readdir, readFile, mkdtemp, mkdir, realpath, rm } from 'node:fs/promises';
@@ -6,6 +8,7 @@ import { join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   atomicJson,
+  assertResumePrefix,
   identity,
   parseOptions,
   schedule,
@@ -51,17 +54,14 @@ async function assertIdle(options: CampaignOptions): Promise<Record<string, unkn
     throw new Error(`Provider has other loaded models; leaving them untouched: ${JSON.stringify(foreign)}`);
   return state;
 }
-export async function runTrial(options: CampaignOptions, trial: Trial): Promise<TrialResult> {
+export async function runTrial(options: CampaignOptions, trial: Trial, testing: Pick<BehaviorProcessOptions, 'signalGroup' | 'cooperativeGraceMs' | 'terminationGraceMs' | 'closeGraceMs'> & { workerPath?: string; preloadPath?: string } = {}): Promise<TrialResult> {
   const root = await realpath(await mkdtemp(join(tmpdir(), 'ally-behavior-')));
   const workspace = join(root, 'workspace');
   const output = join(root, 'worker.json');
   const started = Date.now();
   let log = '';
-  let timedOut = false;
-  let exitCode: number | null = null;
-  let signal: string | null = null;
   let error: string | undefined;
-  let kill: (() => void) | undefined;
+  let termination: BehaviorProcessOutcome | undefined;
   try {
     await Promise.all([mkdir(workspace), mkdir(join(root, 'data'))]);
     const config = join(root, 'config.json');
@@ -78,11 +78,11 @@ export async function runTrial(options: CampaignOptions, trial: Trial): Promise<
     });
     const child = spawn(
       process.execPath,
-      ['--import', import.meta.resolve('tsx'), fileURLToPath(new URL('./behaviorWorker.ts', import.meta.url)), config],
+      [...(testing.preloadPath ? ['--import', testing.preloadPath] : []), '--import', import.meta.resolve('tsx'), testing.workerPath ?? fileURLToPath(new URL('./behaviorWorker.ts', import.meta.url)), config],
       {
         cwd: workspace,
         detached: process.platform !== 'win32',
-        stdio: ['ignore', 'pipe', 'pipe'],
+        stdio: ['ignore', 'pipe', 'pipe', 'ipc'],
         env: {
           ...process.env,
           ALLY_DATA_DIR: join(root, 'data'),
@@ -90,48 +90,13 @@ export async function runTrial(options: CampaignOptions, trial: Trial): Promise<
         },
       }
     );
-    kill = () => {
-      if (child.pid) {
-        try {
-          process.kill(process.platform === 'win32' ? child.pid : -child.pid, 'SIGKILL');
-        } catch (failure) {
-          if ((failure as NodeJS.ErrnoException).code !== 'ESRCH') error = String(failure);
-        }
-      }
-    };
-    const interrupt = () => {
-      error = 'Campaign interrupted';
-      kill?.();
-    };
-    process.once('SIGINT', interrupt);
-    process.once('SIGTERM', interrupt);
-    const append = (chunk: Buffer) => {
-      log = (log + chunk.toString()).slice(-200000);
-    };
-    child.stdout.on('data', append);
-    child.stderr.on('data', append);
-    const timer = setTimeout(() => {
-      timedOut = true;
-      kill?.();
-    }, options.timeoutMs);
-    try {
-      await new Promise<void>(resolve => {
-        child.once('error', failure => {
-          error = failure.message;
-          resolve();
-        });
-        child.once('close', (code, exitSignal) => {
-          exitCode = code;
-          signal = exitSignal;
-          resolve();
-        });
-      });
-    } finally {
-      clearTimeout(timer);
-      kill();
-      process.removeListener('SIGINT', interrupt);
-      process.removeListener('SIGTERM', interrupt);
-    }
+    const append = (chunk: Buffer) => { log = (log + chunk.toString()).slice(-200000); };
+    child.stdout?.on('data', append); child.stderr?.on('data', append);
+    termination = await superviseBehaviorWorker(child, { timeoutMs: options.timeoutMs, ...testing });
+    const { timedOut, exitCode, signal } = termination;
+    if (termination.interrupted) error = 'Campaign interrupted';
+    if (termination.errors.length) error = [error, ...termination.errors].filter(Boolean).join(' ');
+    if (!termination.cleanupConfirmed) error = `${error ?? ''} Process cleanup unconfirmed; workspace retained at ${root}`.trim();
     let worker: Record<string, unknown> | undefined;
     try {
       worker = JSON.parse(await readFile(output, 'utf8')) as Record<string, unknown>;
@@ -140,18 +105,19 @@ export async function runTrial(options: CampaignOptions, trial: Trial): Promise<
     }
     return {
       ...trial,
-      passed: !error && !timedOut && exitCode === 0 && signal === null && worker?.passed === true,
+      passed: termination.cleanupConfirmed && !error && !timedOut && exitCode === 0 && signal === null && worker?.passed === true,
       elapsedMs: Date.now() - started,
       exitCode,
       signal,
       timedOut,
+      termination,
+      ...(!termination.cleanupConfirmed ? { retainedRoot: root } : {}),
       log,
       worker,
       ...(error ? { error } : {}),
     };
   } finally {
-    kill?.();
-    await rm(root, { recursive: true, force: true });
+    if (!termination || termination.cleanupConfirmed) await rm(root, { recursive: true, force: true });
   }
 }
 interface Checkpoint {
@@ -184,6 +150,7 @@ export async function main(args = process.argv.slice(2)): Promise<void> {
   const { resume: _resume, output: _output, ...settings } = options;
   const metadata = {
     options: settings,
+    resolvedFactors: resolveBehaviorFactors(options.variants),
     sourceHash,
     git,
     version,
@@ -202,7 +169,8 @@ export async function main(args = process.argv.slice(2)): Promise<void> {
   let results: TrialResult[] = [];
   if (options.resume) {
     const previous = JSON.parse(await readFile(options.output, 'utf8')) as Checkpoint;
-    if (previous.schemaVersion !== 1 || previous.identity !== fingerprint || !Array.isArray(previous.results))
+    assertBehaviorProtocol(previous.schemaVersion);
+    if (previous.identity !== fingerprint || !Array.isArray(previous.results))
       throw new Error('Resume rejected: options, source, git or model metadata changed');
     if (
       previous.results.some(
@@ -217,26 +185,14 @@ export async function main(args = process.argv.slice(2)): Promise<void> {
       )
     )
       throw new Error('Resume rejected: malformed trial results');
+    if (previous.results.some(row => row.termination?.cleanupConfirmed === false)) throw new Error('Resume rejected: previous process cleanup remains unconfirmed; resolve it before starting a fresh campaign');
     results = previous.results;
   }
   const trials = schedule(options);
-  for (let index = 0; index < results.length; index++) {
-    const trial = trials[index];
-    if (
-      !trial ||
-      identity(trial) !==
-        identity({
-          caseId: results[index]!.caseId,
-          variant: results[index]!.variant,
-          repetition: results[index]!.repetition,
-          seed: results[index]!.seed,
-        })
-    )
-      throw new Error('Resume rejected: invalid trial order');
-  }
+  assertResumePrefix(trials, results);
   const checkpoint = () =>
     atomicJson(options.output, {
-      schemaVersion: 1,
+      schemaVersion: BEHAVIOR_PROTOCOL_VERSION,
       identity: fingerprint,
       metadata,
       results,
@@ -250,10 +206,13 @@ export async function main(args = process.argv.slice(2)): Promise<void> {
     results.push(result);
     await checkpoint();
     process.stdout.write(`${result.passed ? 'PASS' : 'FAIL'} (${result.elapsedMs}ms)\n`);
-    if (result.error === 'Campaign interrupted') {
+    if (result.termination?.interrupted) {
       process.exitCode = 130;
+      if (!result.termination.cleanupConfirmed) process.stderr.write(`Worker cleanup remains unconfirmed: ${result.error ?? ''}\n`);
       break;
     }
+    if (result.termination?.cleanupConfirmed === false) throw new Error(`Campaign stopped: worker/descendant cleanup is unconfirmed. ${result.error ?? ''}`);
+
   }
   if (results.some(result => !result.passed) && !process.exitCode) process.exitCode = 1;
   process.stdout.write(`Saved ${results.length} trials to ${options.output}\n`);

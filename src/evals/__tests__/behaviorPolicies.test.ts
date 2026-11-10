@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { applyBehaviorVariant, BASELINE_OPERATION_RULE, OUTCOME_OPERATION_RULE, EXACT_EDIT_RULE } from '../behaviorPolicies.js';
+import { applyBehaviorVariant, BASELINE_OPERATION_RULE, OUTCOME_OPERATION_RULE } from '../behaviorPolicies.js';
 import type { Message } from '../../types/index.js';
 
 describe('behavior policy ablation', () => {
@@ -16,21 +16,4 @@ describe('behavior policy ablation', () => {
     expect(applyBehaviorVariant(messages, 'baseline')).toEqual(messages);
     expect(applyBehaviorVariant(candidate, 'outcome')).toEqual(candidate);
   });
-  it('isolates exact-edit guidance from outcome behavior and preserves all human text', () => {
-    const messages: Message[] = [
-      {role:'system',content:`Stable identity\n${BASELINE_OPERATION_RULE}\n- Use apply-patch with numeric hunk headers.\nOther stable instruction.`},
-      {role:'user',content:'Do not change apply-patch behavior in production.'},
-      {role:'system',content:'Project policy: do not modify apply-patch.'},
-    ];
-    const result=applyBehaviorVariant(messages,'exact-edit');
-    expect(result[0].content).toContain(EXACT_EDIT_RULE);
-    expect(result[0].content).not.toContain('Use apply-patch with numeric');
-    expect(result[0].content).toContain(BASELINE_OPERATION_RULE);
-    expect(result[0].content).not.toContain(OUTCOME_OPERATION_RULE);
-    expect(result[0].content).toContain('Other stable instruction.');
-    expect(result.slice(1)).toEqual(messages.slice(1));
-    expect(applyBehaviorVariant(result,'exact-edit')).toEqual(result);
-    expect(applyBehaviorVariant(messages,'baseline')).toEqual(messages);
-  });
-
 });

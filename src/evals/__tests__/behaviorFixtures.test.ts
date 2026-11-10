@@ -3,7 +3,7 @@ import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { afterEach, describe, expect, it } from 'vitest';
-import { behaviorFixtures, getBehaviorFixture, type BehaviorCaseId } from '../behaviorFixtures.js';
+import { behaviorFixtures, getBehaviorFixture, type BehaviorCaseId, verifyFixtureReadRequirements, type BehaviorToolObservation } from '../behaviorFixtures.js';
 
 const MULTILINE_REPAIR = `export function normalizeRequestOptions(options = {}, defaults = REQUEST_DEFAULTS) {
   const retry = options.retry === undefined ? {} : options.retry;
@@ -63,6 +63,38 @@ describe('independently verified behavior fixtures', () => {
       expect(result.assertions.find(item => item.name === 'protected:package.json')?.passed).toBe(false);
     });
   }
+  it('declares the same protected existing files it hashes without disclosing repair targets', async () => {
+    for (const definition of behaviorFixtures) {
+      const {root,fixture} = await setup(definition.id);
+      const result = await fixture.verify(root);
+      const protectedFiles = result.assertions.filter(item => item.name.startsWith('protected:')).map(item => item.name.slice('protected:'.length)).sort();
+      expect(fixture.prompt.split('Protected existing files (keep unchanged): ')[1]).toBe(`${protectedFiles.join(', ')}.`);
+    }
+    const recovery = getBehaviorFixture('path-recovery');
+    expect(recovery.prompt).not.toContain('lib/text/slug.js');
+    expect(recovery.prompt).toContain('README.md, package.json, slug.test.js');
+  });
+  it.each(['enabled', 'retries', 'label'])('rejects nullish fallback for explicitly null %s', async field => {
+    const {root,fixture} = await setup('config-normalization');
+    await repair(root,'config-normalization');
+    const defaults = {enabled:'true', retries:'3', label:'"default"'};
+    await writeFile(join(root,'src/options.js'), `export function normalize(options = {}) { const {enabled=true,retries=3,label="default"}=options; return {enabled,retries,label,${field}:options.${field} ?? ${defaults[field]}}; }`);
+    expect((await fixture.verify(root)).assertions.find(item => item.name === 'independent-behavior')?.passed).toBe(false);
+  });
+  it('independently rejects client propagation that discards null after correct normalization', async () => {
+    const {root,fixture} = await setup('config-normalization');
+    await repair(root,'config-normalization');
+    await writeFile(join(root,'src/client.js'),'import { normalize } from "./options.js"; export function createClient(options) { const {enabled,retries,label}=normalize(options); return {active:enabled ?? true,attempts:retries ?? 3,label:label ?? "default"}; }');
+    expect((await fixture.verify(root)).passed).toBe(false);
+  });
+  it.each(['normalize', 'client'])('rejects %s mutating the input object while computing otherwise correct values', async stage => {
+    const {root,fixture} = await setup('config-normalization');
+    await repair(root,'config-normalization');
+    const path = stage === 'normalize' ? 'src/options.js' : 'src/client.js';
+    const source = repairs['config-normalization'][path]!;
+    await writeFile(join(root,path),source.replace('const {enabled','if (options) options.added = true; const {enabled'));
+    expect((await fixture.verify(root)).passed).toBe(false);
+  });
   it('holds out a realistic CRLF module and protects similar legacy code exactly', async () => {
     const {root,fixture}=await setup('multiline-edit');
     expect(MULTILINE_EDIT_SOURCE.split('\n').length).toBeGreaterThanOrEqual(60);
@@ -122,5 +154,28 @@ describe('independently verified behavior fixtures', () => {
     expect(fixture.steering?.afterToolCalls).toBe(1);
     await writeFile(join(root,'lib/retry.js'),'export function retryDelay(attempt,base=100,cap=10000) { return attempt <= 0 ? 0 : Math.min(base*2**(attempt-1),cap || 10000); }');
     expect((await fixture.verify(root)).passed).toBe(false);
+  });
+});
+
+describe('host-observed required stale reads', () => {
+  const requirements = getBehaviorFixture('path-recovery');
+  const observation = (phase: 'start'|'end', file_path: string, success?: boolean, errorType?: string, owner='main'): BehaviorToolObservation => ({
+    phase, owner, toolName:'read', arguments:{file_path}, success, errorType,
+  });
+  it('requires the first main read to target the declared stale path and an actual file-read error at that path', () => {
+    const events = [observation('start','src/utils/slug.js'), observation('end','/workspace/src/utils/slug.js',false,'file_error'), observation('start','lib/text/slug.js')];
+    expect(verifyFixtureReadRequirements(requirements,events,'/workspace').every(item=>item.passed)).toBe(true);
+  });
+  it.each([
+    [observation('start','other.js'), observation('end','other.js',false,'file_error')],
+    [observation('start','src/utils/slug.js'), observation('end','src/utils/slug.js',false,'validation_error')],
+    [observation('start','src/utils/slug.js'), observation('end','src/utils/slug.js',true)],
+    [observation('start','lib/text/slug.js'), observation('start','src/utils/slug.js'), observation('end','src/utils/slug.js',false,'file_error')],
+    [observation('start','src/utils/slug.js',undefined,undefined,'delegate'), observation('end','src/utils/slug.js',false,'file_error','delegate')],
+  ])('rejects unrelated, invalid, successful, out-of-order, or child-only reads: %j', (...events) => {
+    expect(verifyFixtureReadRequirements(requirements,events,'/workspace').every(item=>item.passed)).toBe(false);
+  });
+  it('adds no read constraints to fixtures that do not declare them', () => {
+    expect(verifyFixtureReadRequirements({},[],'/workspace')).toEqual([]);
   });
 });

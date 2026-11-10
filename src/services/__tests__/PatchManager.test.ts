@@ -358,6 +358,23 @@ describe('PatchManager', () => {
   });
 
   describe('undoOperations', () => {
+    it.each(['apply-patch', 'format', 'edit'])('restores a zero-byte existing file when undoing %s',async operation => {
+      const filePath=path.join(testFilesDir,'existing-empty.txt');
+      await fs.writeFile(filePath,'');
+      await patchManager.captureOperation(operation,filePath,'','initialized\n');
+      await fs.writeFile(filePath,'initialized\n');
+      expect((await patchManager.undoOperations()).success).toBe(true);
+      expect(await fs.readFile(filePath)).toEqual(Buffer.alloc(0));
+    });
+
+    it('still removes a newly created path when undoing write',async () => {
+      const filePath=path.join(testFilesDir,'newly-created.txt');
+      await patchManager.captureOperation('write',filePath,'','created\n');
+      await fs.writeFile(filePath,'created\n');
+      expect((await patchManager.undoOperations()).success).toBe(true);
+      await expect(fs.access(filePath)).rejects.toMatchObject({code:'ENOENT'});
+    });
+
     it('should undo a single operation successfully', async () => {
       const filePath = path.join(testFilesDir, 'test_file.txt');
       const original = 'Hello\n';

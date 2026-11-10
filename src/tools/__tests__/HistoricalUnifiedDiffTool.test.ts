@@ -1,0 +1,247 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import * as fs from 'fs/promises';
+import * as os from 'os';
+import * as path from 'path';
+import { HistoricalUnifiedDiffTool } from '../HistoricalUnifiedDiffTool.js';
+import { ActivityStream } from '../../services/ActivityStream.js';
+import { ReadStateManager } from '../../services/ReadStateManager.js';
+import { ServiceRegistry } from '../../services/ServiceRegistry.js';
+import * as fileChecks from '../../utils/fileCheckUtils.js';
+import { fileMutationCoordinator } from '../../services/FileMutationCoordinator.js';
+import { toModelToolResult } from '../../utils/toolResultContent.js';
+
+describe('HistoricalUnifiedDiffTool', () => {
+  let directory: string;
+  let tool: HistoricalUnifiedDiffTool;
+  let reads: ReadStateManager;
+  let registry: ServiceRegistry;
+
+  beforeEach(async () => {
+    directory = await fs.mkdtemp(path.join(os.tmpdir(), 'ally-apply-patch-'));
+    registry = ServiceRegistry.getInstance();
+    registry['_services'].clear();
+    registry['_descriptors'].clear();
+    reads = new ReadStateManager();
+    registry.registerInstance('read_state_manager', reads);
+    tool = new HistoricalUnifiedDiffTool(new ActivityStream());
+  });
+
+  afterEach(async () => {
+    vi.restoreAllMocks();
+    registry['_services'].clear();
+    registry['_descriptors'].clear();
+    await fs.rm(directory, { recursive: true, force: true });
+  });
+
+  async function fixture(content = 'alpha\nbeta\ngamma\n'): Promise<string> {
+    const file = path.join(directory, 'file.txt');
+    await fs.writeFile(file, content);
+    return file;
+  }
+
+  it('applies a patch after the exact target region was read', async () => {
+    const file = await fixture();
+    reads.trackRead(file, 1, 3);
+
+    const result = await tool.execute({
+      file_path: file,
+      patch: '@@ -1,3 +1,3 @@\n alpha\n-beta\n+BETA\n gamma',
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.hunks_applied).toBe(1);
+    expect(result.diff).toContain('+BETA');
+    expect(await fs.readFile(file, 'utf-8')).toBe('alpha\nBETA\ngamma\n');
+  });
+
+  it('rejects an unread target without changing the file', async () => {
+    const file = await fixture();
+    reads.trackRead(file, 1, 1);
+
+    const result = await tool.execute({
+      file_path: file,
+      patch: '@@ -2,1 +2,1 @@\n-beta\n+BETA',
+    });
+
+    expect(result.success).toBe(false);
+    expect(result.error).toContain('unread lines 2-2');
+    expect(result.suggestion).toContain('offset=2');
+    expect(await fs.readFile(file, 'utf-8')).toBe('alpha\nbeta\ngamma\n');
+  });
+
+  it('reports that no earlier hunks were applied when a later hunk fails', async () => {
+    const original = 'alpha\nbeta\ngamma\n';
+    const file = await fixture(original);
+    reads.trackRead(file, 1, 3);
+    const result = await tool.execute({
+      file_path: file,
+      patch: '@@ -1,1 +1,1 @@\n-alpha\n+ALPHA\n@@ -3,1 +3,1 @@\n-missing\n+GAMMA',
+    });
+    expect(result.success).toBe(false);
+    expect(result.error).toContain('Edit rejected before writing');
+    expect(result.error).not.toContain('retry only this hunk');
+    expect(await fs.readFile(file, 'utf8')).toBe(original);
+  });
+
+  it('leaves the file unchanged when individually matching hunks overlap', async () => {
+    const original = 'first anchor\nsecond line\nthird anchor\nfourth line\n';
+    const file = await fixture(original);
+    reads.trackRead(file, 1, 4);
+    const result = await tool.execute({
+      file_path: file,
+      patch:
+        '@@ -1,3 +1,3 @@\n first anchor\n-second line\n+SECOND\n third anchor\n@@ -3,2 +3,2 @@\n third anchor\n-fourth line\n+FOURTH',
+    });
+    expect(result.success).toBe(false);
+    expect(result.error).toContain('overlaps or precedes');
+    expect(await fs.readFile(file, 'utf8')).toBe(original);
+  });
+
+  it('validates the actual context location rather than trusting a stale line hint', async () => {
+    const file = await fixture('prefix\ntarget\nold\n');
+    reads.trackRead(file, 1, 1);
+
+    const result = await tool.execute({
+      file_path: file,
+      patch: '@@ -1,2 +1,2 @@\n target\n-old\n+new',
+    });
+
+    expect(result.success).toBe(false);
+    expect(result.error).toContain('unread lines 2-3');
+  });
+
+  it('preserves file bytes and read evidence after rejecting inexact whitespace', async () => {
+    const original = 'payload = """\n  value\n"""\n';
+    const file = await fixture(original);
+    reads.trackRead(file, 1, 3);
+    const before = reads.getReadState(file);
+    const result = await tool.execute({
+      file_path: file,
+      patch: '@@ -2,1 +2,1 @@\n- value\n+ changed',
+    });
+    expect(result.success).toBe(false);
+    expect(result.error).toContain('Edit rejected before writing');
+    expect(await fs.readFile(file, 'utf8')).toBe(original);
+    expect(reads.getReadState(file)).toEqual(before);
+  });
+
+  it('invalidates old reads and can deliberately track returned updated content', async () => {
+    const file = await fixture();
+    reads.trackRead(file, 1, 3, 'agent-a');
+    reads.trackRead(file, 1, 3, 'agent-b');
+
+    const first = await tool.execute(
+      {
+        file_path: file,
+        patch: '@@ -2,1 +2,1 @@\n-beta\n+BETA',
+        show_updated_context: true,
+      },
+      undefined,
+      undefined,
+      false,
+      false,
+      { agentId: 'agent-a' }
+    );
+
+    expect(first.success).toBe(true);
+    expect(first.updated_content).toBe('alpha\nBETA\ngamma\n');
+    expect(first._non_truncatable).toBe(true);
+    expect(toModelToolResult(first).updated_content).toBe(first.updated_content);
+    expect(reads.getReadState(file, 'agent-a')).toEqual([{ start: 1, end: 4 }]);
+    expect(reads.getReadState(file, 'agent-b')).toBeNull();
+  });
+
+  it('does not grant read credit for updated content outside the output allowance', async () => {
+    const original = 'alpha\n' + 'unobserved source text\n'.repeat(2000);
+    const file = await fixture(original);
+    reads.trackRead(file, 1, 1);
+    const result = await tool.execute(
+      {
+        file_path: file,
+        patch: '@@ -1,1 +1,1 @@\n-alpha\n+ALPHA',
+        show_updated_context: true,
+      },
+      'bounded-patch',
+      undefined,
+      false,
+      false,
+      {
+        outputBudget: { limitTokens: 500, maxResultTokensByCallId: new Map([['bounded-patch', 500]]) },
+      }
+    );
+    expect(result.success).toBe(true);
+    expect(result.updated_content).toBeUndefined();
+    expect(result.system_reminder).toContain('omitted');
+    expect(reads.getReadState(file)).toEqual([{ start: 1, end: 1 }]);
+    expect(await fs.readFile(file, 'utf8')).toBe(original.replace('alpha', 'ALPHA'));
+  });
+
+  it('does not authorize a snapshot superseded during post-write checking', async () => {
+    const file = await fixture();
+    reads.trackRead(file, 1, 1);
+    vi.spyOn(fileChecks, 'checkFileAfterModification').mockImplementationOnce(async () => {
+      await fileMutationCoordinator.run(file, async () => {
+        await fs.writeFile(file, 'another writer\n');
+        reads.clearFile(file);
+      });
+      return null;
+    });
+    const result = await tool.execute({
+      file_path: file,
+      patch: '@@ -1,1 +1,1 @@\n-alpha\n+ALPHA',
+      show_updated_context: true,
+    });
+    expect(result.success).toBe(true);
+    expect(result.updated_content).toBe('ALPHA\nbeta\ngamma\n');
+    expect(result._non_truncatable).toBe(true);
+    expect(reads.getReadState(file)).toBeNull();
+    expect(await fs.readFile(file, 'utf8')).toBe('another writer\n');
+  });
+
+  it('transforms the editing agent read evidence and invalidates every other scope', async () => {
+    const file = await fixture();
+    reads.trackRead(file, 1, 3, 'agent-a');
+    reads.trackRead(file, 1, 3, 'agent-b');
+
+    const executeAsAgent = (patch: string) =>
+      tool.execute({ file_path: file, patch }, undefined, undefined, false, false, { agentId: 'agent-a' });
+    const first = await executeAsAgent('@@ -2,1 +2,1 @@\n-beta\n+BETA');
+    expect(first.success).toBe(true);
+    expect(reads.getReadState(file, 'agent-a')).toEqual([{ start: 1, end: 3 }]);
+    expect(reads.getReadState(file, 'agent-b')).toBeNull();
+
+    const second = await executeAsAgent('@@ -2,1 +2,1 @@\n-BETA\n+final');
+    expect(second.success).toBe(true);
+    expect(await fs.readFile(file, 'utf-8')).toBe('alpha\nfinal\ngamma\n');
+  });
+
+  it('allows multiple non-overlapping patches after one complete read', async () => {
+    const file = await fixture('one\ntwo\nthree\nfour\n');
+    reads.trackRead(file, 1, 4, 'agent-a');
+    const executeAsAgent = (patch: string) =>
+      tool.execute({ file_path: file, patch }, undefined, undefined, false, false, { agentId: 'agent-a' });
+
+    expect((await executeAsAgent('@@ -1,1 +1,2 @@\n-one\n+ONE\n+inserted')).success).toBe(true);
+    expect(reads.getReadState(file, 'agent-a')).toEqual([{ start: 1, end: 5 }]);
+
+    expect((await executeAsAgent('@@ -5,1 +5,1 @@\n-four\n+FOUR')).success).toBe(true);
+    expect(await fs.readFile(file, 'utf-8')).toBe('ONE\ninserted\ntwo\nthree\nFOUR\n');
+  });
+
+  it('has one compact existing-file mutation contract', () => {
+    const definition = tool.getFunctionDefinition().function;
+    expect(tool.name).toBe('apply-patch');
+    expect(definition.parameters.required).toEqual(['file_path', 'patch']);
+    expect(definition.parameters.properties).not.toHaveProperty('edits');
+    expect(definition.parameters.properties).not.toHaveProperty('overwrite');
+  });
+
+  it('rejects missing files and points creation to write', async () => {
+    const result = await tool.execute({
+      file_path: path.join(directory, 'missing.txt'),
+      patch: '@@ -0,0 +1,1 @@\n+new',
+    });
+    expect(result.success).toBe(false);
+    expect(result.suggestion).toContain('write');
+  });
+});

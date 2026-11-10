@@ -113,7 +113,8 @@ describe('Automatic File Checking After Modification', () => {
 
       const result = await applyPatchTool.execute({
         file_path: jsonPath,
-        patch: '@@ -1,1 +1,1 @@\n-{"name": "original"}\n+{"name": "modified"}',
+        old_text: '{"name": "original"}',
+        new_text: '{"name": "modified"}',
       });
 
       expect(result.success).toBe(true);
@@ -133,7 +134,8 @@ describe('Automatic File Checking After Modification', () => {
 
       const result = await applyPatchTool.execute({
         file_path: jsonPath,
-        patch: '@@ -1,1 +1,1 @@\n-{"name": "test"}\n+{"name": "test",}',
+        old_text: '{"name": "test"}',
+        new_text: '{"name": "test",}',
       });
 
       expect(result.success).toBe(true);
@@ -143,53 +145,47 @@ describe('Automatic File Checking After Modification', () => {
     });
   });
 
-    it('should handle a contextual line replacement', async () => {
-      const jsonPath = path.join(tmpDir, 'test.json');
+  it('should handle a contextual line replacement', async () => {
+    const jsonPath = path.join(tmpDir, 'test.json');
 
-      // Write a multi-line JSON file
-      await fs.writeFile(
-        jsonPath,
-        '{\n  "name": "test",\n  "version": "1.0.0"\n}',
-        'utf-8'
-      );
+    // Write a multi-line JSON file
+    await fs.writeFile(jsonPath, '{\n  "name": "test",\n  "version": "1.0.0"\n}', 'utf-8');
 
-      // Track the file as read
-      await trackFullFile(jsonPath);
+    // Track the file as read
+    await trackFullFile(jsonPath);
 
-      const result = await applyPatchTool.execute({
-        file_path: jsonPath,
-        patch: '@@ -1,4 +1,4 @@\n {\n-  "name": "test",\n+  "name": "modified",\n   "version": "1.0.0"\n }',
-      });
-
-      expect(result.success).toBe(true);
-      expect(result.file_check).toBeDefined();
-      expect(result.file_check.checker).toBe('json');
-      expect(result.file_check.passed).toBe(true);
+    const result = await applyPatchTool.execute({
+      file_path: jsonPath,
+      old_text: '"name": "test"',
+      new_text: '"name": "modified"',
     });
 
-    it('should detect errors introduced by an insertion hunk', async () => {
-      const jsonPath = path.join(tmpDir, 'test.json');
+    expect(result.success).toBe(true);
+    expect(result.file_check).toBeDefined();
+    expect(result.file_check.checker).toBe('json');
+    expect(result.file_check.passed).toBe(true);
+  });
 
-      // Write a valid JSON file
-      await fs.writeFile(
-        jsonPath,
-        '{\n  "name": "test"\n}',
-        'utf-8'
-      );
+  it('should detect errors introduced by an insertion hunk', async () => {
+    const jsonPath = path.join(tmpDir, 'test.json');
 
-      // Track the file as read
-      await trackFullFile(jsonPath);
+    // Write a valid JSON file
+    await fs.writeFile(jsonPath, '{\n  "name": "test"\n}', 'utf-8');
 
-      const result = await applyPatchTool.execute({
-        file_path: jsonPath,
-        patch: '@@ -1,3 +1,4 @@\n {\n+  invalid syntax here,\n   "name": "test"\n }',
-      });
+    // Track the file as read
+    await trackFullFile(jsonPath);
 
-      expect(result.success).toBe(true);
-      expect(result.file_check).toBeDefined();
-      expect(result.file_check.passed).toBe(false);
-      expect(result.file_check.errors.length).toBeGreaterThan(0);
+    const result = await applyPatchTool.execute({
+      file_path: jsonPath,
+      old_text: '{',
+      new_text: '{\n  invalid syntax here,',
     });
+
+    expect(result.success).toBe(true);
+    expect(result.file_check).toBeDefined();
+    expect(result.file_check.passed).toBe(false);
+    expect(result.file_check.errors.length).toBeGreaterThan(0);
+  });
   describe('Error Context', () => {
     it('should include source code context in errors', async () => {
       const jsonPath = path.join(tmpDir, 'test.json');

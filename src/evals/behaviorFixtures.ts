@@ -4,7 +4,7 @@ import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { promisify } from 'node:util';
 
 export type BehaviorCaseId =
@@ -24,7 +24,8 @@ export interface BehaviorFixture {
   prompt: string;
   steering?: { afterToolCalls: number; message: string };
   requiredTools?: readonly string[];
-  requiredFailureTools?: readonly string[];
+  requiredFailedReadPath?: string;
+  expectedFirstReadPath?: string;
   requiresTestRun?: boolean;
   setup(root: string): Promise<void>;
   verify(root: string): Promise<BehaviorVerification>;
@@ -35,7 +36,8 @@ interface Definition {
   prompt: string;
   steering?: BehaviorFixture['steering'];
   requiredTools?: readonly string[];
-  requiredFailureTools?: readonly string[];
+  requiredFailedReadPath?: string;
+  expectedFirstReadPath?: string;
   requiresTestRun?: boolean;
   files: Record<string, string>;
   editable: string[];
@@ -48,13 +50,15 @@ const digest = (text: string) => createHash('sha256').update(text).digest('hex')
 
 function fixture(definition: Definition): BehaviorFixture {
   const files = { 'package.json': packageFile, ...definition.files };
+  const protectedPaths = Object.keys(files).filter(path => !definition.editable.includes(path)).sort();
   return {
     id: definition.id,
     description: definition.description,
-    prompt: definition.prompt,
+    prompt: `${definition.prompt}\nProtected existing files (keep unchanged): ${protectedPaths.join(', ')}.`,
     ...(definition.steering ? { steering: definition.steering } : {}),
     ...(definition.requiredTools ? { requiredTools: definition.requiredTools } : {}),
-    ...(definition.requiredFailureTools ? { requiredFailureTools: definition.requiredFailureTools } : {}),
+    ...(definition.requiredFailedReadPath ? { requiredFailedReadPath: definition.requiredFailedReadPath } : {}),
+    ...(definition.expectedFirstReadPath ? { expectedFirstReadPath: definition.expectedFirstReadPath } : {}),
     ...(definition.requiresTestRun ? { requiresTestRun: true } : {}),
     async setup(root) {
       for (const [path, contents] of Object.entries(files)) {
@@ -118,6 +122,37 @@ function fixture(definition: Definition): BehaviorFixture {
   };
 }
 
+/** Minimal host observations; argument text alone never proves a failed file read. */
+export interface BehaviorToolObservation {
+  phase: 'start' | 'end';
+  owner: string;
+  toolName: string;
+  arguments?: Record<string, unknown>;
+  success?: boolean;
+  errorType?: string;
+}
+export function verifyFixtureReadRequirements(
+  requirements: Pick<BehaviorFixture, 'requiredFailedReadPath' | 'expectedFirstReadPath'>,
+  observations: readonly BehaviorToolObservation[],
+  workspace: string
+): BehaviorAssertion[] {
+  const reads = observations.filter(event => event.owner === 'main' && event.toolName === 'read');
+  const matches = (event: BehaviorToolObservation, path: string) =>
+    typeof event.arguments?.file_path === 'string' && resolve(workspace, event.arguments.file_path) === resolve(workspace, path);
+  const assertions: BehaviorAssertion[] = [];
+  if (requirements.requiredFailedReadPath) {
+    const path = requirements.requiredFailedReadPath;
+    assertions.push({ name: `required-failed-read:${path}`, passed: reads.some(event =>
+      event.phase === 'end' && event.success === false && event.errorType === 'file_error' && matches(event,path)) });
+  }
+  if (requirements.expectedFirstReadPath) {
+    const path = requirements.expectedFirstReadPath;
+    const first = reads.find(event => event.phase === 'start');
+    assertions.push({ name: `first-read:${path}`, passed: !!first && matches(first,path) });
+  }
+  return assertions;
+}
+
 export const behaviorFixtures: readonly BehaviorFixture[] = [
   fixture(multilineEditDefinition),
   fixture({
@@ -137,18 +172,28 @@ export const behaviorFixtures: readonly BehaviorFixture[] = [
     },
     checks: `import { normalize } from './src/options.js';
 import { createClient } from './src/client.js';
-for (const enabled of [false, true]) for (const retries of [0,1,7]) for (const label of ['', 'alpha', 'beta']) {
+const fallback = (value, defaultValue) => value === undefined ? defaultValue : value;
+for (const enabled of [undefined, false, true, null]) for (const retries of [undefined, 0, 1, 7, null]) for (const label of [undefined, '', 'alpha', 'beta', null]) {
  const options = Object.freeze({enabled,retries,label});
- assert.deepEqual(normalize(options), {enabled,retries,label});
- assert.deepEqual(createClient(options), {active:enabled,attempts:retries,label});
+ const expected = {enabled:fallback(enabled,true),retries:fallback(retries,3),label:fallback(label,'default')};
+ assert.deepEqual(normalize(options), expected);
+ assert.deepEqual(createClient(options), {active:expected.enabled,attempts:expected.retries,label:expected.label});
+}
+for (const options of [{}, {enabled:null}, {retries:null}, {label:null}, {enabled:undefined,retries:null,label:''}, {enabled:false,retries:undefined,label:null}]) {
+ const before = structuredClone(options);
+ const expected = {enabled:fallback(options.enabled,true),retries:fallback(options.retries,3),label:fallback(options.label,'default')};
+ assert.deepEqual(normalize(options), expected);
+ assert.deepEqual(createClient(options), {active:expected.enabled,attempts:expected.retries,label:expected.label});
+ assert.deepEqual(options, before);
 }
 assert.deepEqual(normalize(), {enabled:true,retries:3,label:'default'});
-assert.deepEqual(normalize({enabled:undefined,retries:undefined,label:undefined}), {enabled:true,retries:3,label:'default'});
+assert.deepEqual(createClient(), {active:true,attempts:3,label:'default'});
 assert.deepEqual(createClient({retries:2}), {active:true,attempts:2,label:'default'});`,
   }),
   fixture({
     id: 'path-recovery',
-    requiredFailureTools: ['read'],
+    requiredFailedReadPath: 'src/utils/slug.js',
+    expectedFirstReadPath: 'src/utils/slug.js',
     description: 'Recover from a stale path by finding the real implementation.',
     prompt:
       'Fix the slug helper reportedly at src/utils/slug.js: trim surrounding whitespace, lowercase, collapse runs of whitespace or underscores to one hyphen, and remove leading/trailing hyphens. Read that exact reported path first. If it is missing, locate the actual implementation and continue the repair. Do not create a replacement at the stale path or change protected files.',

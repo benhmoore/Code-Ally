@@ -35,7 +35,7 @@ export class WriteTool extends BaseTool {
     return this.formatErrorResponse(
       `File already exists: ${absolutePath}`,
       'file_error',
-      'Keep the existing file intact. Use apply-patch with a smaller contextual hunk; do not delete and recreate the file to bypass patch validation.'
+      'Keep the existing file intact. Use apply-patch with a smaller bounded edit; do not delete and recreate the file to bypass patch validation.'
     );
   }
 

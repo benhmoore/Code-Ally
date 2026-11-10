@@ -11,9 +11,12 @@ const oldOptions =
 const oldClient =
   'export function createClient(options) { const config = normalize(options); return { attempts: 3, active: true, label: config.label }; }';
 const patch = (file_path, oldLine, newLine) =>
-  call('apply-patch', config.variant === 'exact-edit'
-    ? {file_path,old_text:oldLine,new_text:newLine}
-    : { file_path, patch: `@@ -1 +1 @@\n-${oldLine}\n+${newLine}\n` });
+  call(
+    'apply-patch',
+    config.editSurface === 'exact'
+      ? { file_path, old_text: oldLine, new_text: newLine }
+      : { file_path, patch: `@@ -1 +1 @@\n-${oldLine}\n+${newLine}\n` }
+  );
 Object.defineProperty(globalThis, 'fetch', {
   configurable: true,
   writable: true,
@@ -21,6 +24,11 @@ Object.defineProperty(globalThis, 'fetch', {
     const url = String(input instanceof Request ? input.url : input);
     if (url !== 'http://offline.behavior.invalid/api/chat')
       throw new Error(`Offline provider refused network request: ${url}`);
+    if (process.env.ALLY_BEHAVIOR_OFFLINE_HANG === '1') return new Promise((_, reject) => {
+      const interrupted = () => reject(new DOMException('Offline request cancelled', 'AbortError'));
+      if (init.signal?.aborted) interrupted();
+      else init.signal?.addEventListener('abort', interrupted, { once: true });
+    });
     const payload = JSON.parse(init.body);
     let content = '';
     let tool_calls;

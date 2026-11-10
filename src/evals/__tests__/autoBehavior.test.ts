@@ -38,6 +38,11 @@ it('uses real policy and tool metadata, preserves raw reviews, and records autho
     },
   });
   const fetcher = vi.fn(async (_url: unknown, init?: RequestInit) => {
+    if (String(_url).endsWith('/api/version')) return Response.json({ version: 'offline-fixture' });
+    if (String(_url).endsWith('/api/tags'))
+      return Response.json({ models: [{ name: 'test-reviewer', digest: 'a'.repeat(64) }] });
+    if (String(_url).endsWith('/api/show'))
+      return Response.json({ capabilities: ['decision'], model_info: { 'general.architecture': 'fixture' } });
     const body = JSON.parse(String(init?.body));
     const probe = permissionReadinessProbeKind(body);
     if (probe === 'positive')
@@ -61,6 +66,11 @@ it('uses real policy and tool metadata, preserves raw reviews, and records autho
       )
     ).toBe(false);
     const artifact = JSON.parse(await readFile(output, 'utf8'));
+    expect(artifact.provenance).toMatchObject({
+      ollamaVersion: 'offline-fixture',
+      reviewer: { digest: 'a'.repeat(64) },
+    });
+    expect(artifact.provenance.sources.productionPolicySha256).toMatch(/^[a-f0-9]{64}$/);
     expect(artifact.records).toHaveLength(createAutoCases('/workspace').length * 3);
     expect(
       artifact.records.find((item: any) => item.mode === 'ready' && item.name === 'authorized-patch')

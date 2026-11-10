@@ -1,3 +1,5 @@
+import type { BehaviorProcessOutcome } from './behaviorProcess.js';
+import { resolveBehaviorFactors, type BehaviorFactors } from './behaviorFactors.js';
 import { createHash } from 'node:crypto';
 import { mkdir, rename, writeFile } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
@@ -101,7 +103,7 @@ export function parseOptions(args: string[]): CampaignOptions {
     resume,
   };
 }
-export interface Trial {
+export interface Trial extends BehaviorFactors {
   caseId: string;
   variant: Variant;
   repetition: number;
@@ -109,18 +111,36 @@ export interface Trial {
 }
 export function schedule(options: Pick<CampaignOptions, 'cases' | 'variants' | 'runs'>): Trial[] {
   const result: Trial[] = [];
+  const factors = resolveBehaviorFactors(options.variants);
   for (let repetition = 0; repetition < options.runs; repetition++) {
     const cases = repetition % 2 ? [...options.cases].reverse() : options.cases;
     for (const caseId of cases) {
       const originalIndex = options.cases.indexOf(caseId);
       const variants = (repetition + originalIndex) % 2 ? [...options.variants].reverse() : options.variants;
-      for (const variant of variants) result.push({ caseId, variant, repetition, seed: repetition });
+      for (const variant of variants)
+        result.push({ caseId, variant, repetition, seed: repetition, ...factors[variant]! });
     }
   }
   return result;
 }
 export function identity(value: unknown): string {
   return createHash('sha256').update(JSON.stringify(value)).digest('hex');
+}
+/** Resume requires the exact protocol-3 resolved factors, not just display labels. */
+export function assertResumePrefix(trials: readonly Trial[], results: readonly Trial[]): void {
+  for (const [index, row] of results.entries()) {
+    const expected = trials[index];
+    const actual: Trial = {
+      caseId: row.caseId,
+      variant: row.variant,
+      repetition: row.repetition,
+      seed: row.seed,
+      editSurface: row.editSurface,
+      promptVariant: row.promptVariant,
+    };
+    if (!expected || identity(expected) !== identity(actual))
+      throw new Error('Resume rejected: trial order or resolved factors changed');
+  }
 }
 export async function atomicJson(path: string, value: unknown): Promise<void> {
   await mkdir(dirname(path), { recursive: true });
@@ -134,6 +154,8 @@ export interface TrialResult extends Trial {
   exitCode: number | null;
   signal: string | null;
   timedOut: boolean;
+  termination?: BehaviorProcessOutcome;
+  retainedRoot?: string;
   log: string;
   worker?: Record<string, unknown>;
   error?: string;

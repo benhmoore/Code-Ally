@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   atomicJson,
+  assertResumePrefix,
   identity,
   hasInfrastructureFailure,
   parseOptions,
@@ -76,6 +77,8 @@ describe('campaign schedule and summary', () => {
       variant,
       repetition,
       seed: repetition,
+      editSurface: 'exact',
+      promptVariant: variant,
       passed,
       elapsedMs,
       exitCode: 0,
@@ -117,6 +120,8 @@ describe('campaign schedule and summary', () => {
 describe('paired comparison validity', () => {
   const trial = (variant: 'baseline' | 'outcome', caseId: string, requests: unknown[]): TrialResult => ({
     variant,
+    editSurface: 'exact',
+    promptVariant: variant,
     caseId,
     repetition: 0,
     seed: 0,
@@ -153,4 +158,13 @@ describe('paired comparison validity', () => {
       expect(() => parseOptions(['--model', 'local', '--variants', value])).toThrow('one candidate');
     }
   });
+});
+
+it('rejects resume across resolved edit interfaces or legacy trials even when labels match', () => {
+  const current = schedule({ cases: ['a'], variants: ['baseline'], runs: 1 });
+  const historical = schedule({ cases: ['a'], variants: ['baseline', 'exact-edit'], runs: 1 });
+  expect(() => assertResumePrefix(current, current)).not.toThrow();
+  expect(() => assertResumePrefix(current, [historical[0]!])).toThrow('resolved factors');
+  const { editSurface: _surface, promptVariant: _prompt, ...legacy } = current[0]!;
+  expect(() => assertResumePrefix(current, [legacy as (typeof current)[0]])).toThrow('resolved factors');
 });

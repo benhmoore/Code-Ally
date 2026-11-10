@@ -2,6 +2,17 @@ import { describe, expect, it } from 'vitest';
 import { decodeExactTextSource, replaceExactText } from '../exactTextReplacement.js';
 
 describe('logical-newline exact replacement', () => {
+  it('admits one insertion point only for a truly empty source', () => {
+    expect(replaceExactText('', '', 'café\r\n東京').content).toBe('café\n東京');
+    expect(replaceExactText('', '', 'new')).toMatchObject({
+      start: 0,
+      end: 0,
+      newline: '\n',
+    });
+    expect(() => replaceExactText('', '', '')).toThrow('no changes');
+    for (const source of ['nonempty', '\n', '\ufeff'])
+      expect(() => replaceExactText(source, '', 'new')).toThrow('only for an empty file');
+  });
   it('matches LF arguments against CRLF source and preserves the source style', () => {
     const result = replaceExactText('prefix\r\nalpha\r\nbeta\r\nsuffix\r\n', 'alpha\nbeta', 'ALPHA\nBETA');
     expect(result.content).toBe('prefix\r\nALPHA\r\nBETA\r\nsuffix\r\n');

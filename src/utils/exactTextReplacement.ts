@@ -28,18 +28,19 @@ export function decodeExactTextSource(bytes: Uint8Array): string {
 }
 
 /**
+ * Empty oldText names the sole insertion point only when source is empty.
  * Only newline encoding is equivalent: no trimming, Unicode normalization, or fuzzy matching.
  * Inserted newlines use the first newline in the matched region, otherwise the first
  * file newline, otherwise LF. Bytes outside the matched raw slice remain untouched.
  */
 export function replaceExactText(source: string, oldText: string, newText: string): ExactTextReplacement {
   for (const text of [source, oldText, newText]) validateText(text);
-  if (!oldText.length) throw new Error('old_text must be nonempty exact source text');
+  if (!oldText.length && source.length) throw new Error('Empty old_text is allowed only for an empty file');
   const normalized = source.replace(/\r\n/g, '\n');
   const needle = oldText.replace(/\r\n/g, '\n');
   const index = normalized.indexOf(needle);
   if (index < 0) throw new Error('old_text was not found exactly; re-read the target');
-  if (normalized.indexOf(needle, index + 1) >= 0)
+  if (needle.length && normalized.indexOf(needle, index + 1) >= 0)
     throw new Error('old_text matches multiple locations; include unique surrounding text');
   let start = index;
   let end = index + needle.length;

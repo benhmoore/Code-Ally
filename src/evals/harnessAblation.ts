@@ -1,6 +1,7 @@
 /** Controlled ablations for Code Ally prompt, tool, and reasoning decisions. */
 
 import { scoreSchemaReliability, SCHEMA_SCENARIOS } from './schemaReliabilityScoring.js';
+import { currentHarnessEditDefinition, RANGE_FIXTURE_SOURCE, scoreRangeFixtureEdit } from './rangeEditScoring.js';
 import { DEFAULT_CONFIG } from '../config/defaults.js';
 import { evaluateToolDiscovery } from './toolDiscovery.js';
 import { createHash } from 'node:crypto';
@@ -21,7 +22,7 @@ import {
   normalizeProviderToolDefinitions,
 } from './runtimeToolProfiles.js';
 
-const SUITE = { id: 'code-ally-harness-ablation', version: 14 } as const;
+const SUITE = { id: 'code-ally-harness-ablation', version: 16 } as const;
 const FIXTURE_NOW = new Date('2026-08-17T14:08:36.000Z');
 const FIXTURE_TIME_ZONE = 'America/Chicago';
 
@@ -102,10 +103,7 @@ const BASH = tool('bash', 'Run a shell command in the repository.', {
   run_in_background: { type: 'boolean', description: 'Run a long-lived command in background' },
 }, ['command']);
 
-const APPLY_PATCH = tool('apply-patch', 'Modify one existing text file with contextual unified-diff hunks after reading it.', {
-  file_path: { type: 'string', description: 'Existing file to modify' },
-  patch: { type: 'string', description: 'Unified-diff @@ hunks with unchanged context' },
-}, ['file_path', 'patch']);
+const APPLY_PATCH = currentHarnessEditDefinition();
 
 const BATCH = tool('batch', 'Execute several independent tools concurrently in one wrapper call.', {
   tools: {
@@ -420,13 +418,11 @@ async function promptToolCase(
   const second = await send(client, [
     ...initial,
     { role: 'assistant', content: first.response.content, tool_calls: first.response.tool_calls },
-    { role: 'tool', tool_call_id: read.id, content: '1→export function rangeSize(start: number, end: number) {\n2→  return end - start;\n3→}' },
+    { role: 'tool', tool_call_id: read.id, content: RANGE_FIXTURE_SOURCE.trimEnd().split('\n').map((line, index) => `${index + 1}→${line}`).join('\n') },
   ], functions, options);
   const edit = callNamed(second.response, 'apply-patch');
-  const patch = edit?.function.arguments.patch;
-  const replacementCorrect = typeof patch === 'string'
-    && patch.includes('-  return end - start;')
-    && patch.includes('+  return end - start + 1;');
+  const replacementCorrect = scoreRangeFixtureEdit(edit?.function.arguments,
+    functions.find(definition => definition.function.name === 'apply-patch'));
   const functionalScore = Number(samePath(read.function.arguments.file_path, 'src/range.ts'))
     + Number(Boolean(edit))
     + Number(repositoryPath(edit?.function.arguments.file_path) === 'src/range.ts')

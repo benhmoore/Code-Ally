@@ -5,7 +5,15 @@
  * and event emission. All concrete tools must extend this class.
  */
 
-import { ToolResult, ActivityEvent, ActivityEventType, ErrorType, ToolExecutionContext, FormSchema, FunctionDefinition } from '../types/index.js';
+import {
+  ToolResult,
+  ActivityEvent,
+  ActivityEventType,
+  ErrorType,
+  ToolExecutionContext,
+  FormSchema,
+  FunctionDefinition,
+} from '../types/index.js';
 import { ToolCapability, capabilitiesRequireConfirmation } from './ToolCapability.js';
 import { collectLocalPaths } from './schemaPaths.js';
 import { ActivityStream } from '../services/ActivityStream.js';
@@ -92,9 +100,11 @@ export abstract class BaseTool {
   /** Recovery contract used by the durable run journal. */
   effectFor(args: Record<string, any>): 'read_only' | 'idempotent' | 'non_idempotent' | 'reconcilable' {
     const capabilities = this.capabilitiesFor(args);
-    if (capabilities.includes(ToolCapability.ShellExec)
-      || capabilities.includes(ToolCapability.RemoteEffect)
-      || capabilities.includes(ToolCapability.ProcessControl)) {
+    if (
+      capabilities.includes(ToolCapability.ShellExec) ||
+      capabilities.includes(ToolCapability.RemoteEffect) ||
+      capabilities.includes(ToolCapability.ProcessControl)
+    ) {
       return 'non_idempotent';
     }
     if (capabilities.includes(ToolCapability.FsWrite)) return 'reconcilable';
@@ -110,10 +120,7 @@ export abstract class BaseTool {
    * may narrow a structured failure to `failed` when they directly observed a
    * definitive outcome.
    */
-  effectOutcomeFor(
-    args: Record<string, any>,
-    result: ToolResult,
-  ): 'succeeded' | 'failed' | 'unknown' {
+  effectOutcomeFor(args: Record<string, any>, result: ToolResult): 'succeeded' | 'failed' | 'unknown' {
     if (result.success) return 'succeeded';
     return this.effectFor(args) === 'non_idempotent' ? 'unknown' : 'failed';
   }
@@ -317,9 +324,7 @@ export abstract class BaseTool {
    */
   validateConfiguration(): void {
     if (this.hideOutput && this.alwaysShowFullOutput) {
-      throw new Error(
-        `Tool "${this.name}" cannot have both hideOutput and alwaysShowFullOutput set to true`
-      );
+      throw new Error(`Tool "${this.name}" cannot have both hideOutput and alwaysShowFullOutput set to true`);
     }
   }
 
@@ -357,16 +362,9 @@ export abstract class BaseTool {
   }
 
   /** Run preview logic with the same invocation isolation as execution. */
-  async runPreview(
-    args: any,
-    callId?: string,
-    executionContext?: ToolExecutionContext
-  ): Promise<void> {
+  async runPreview(args: any, callId?: string, executionContext?: ToolExecutionContext): Promise<void> {
     await this.validateFilesystemArgs(args);
-    await this.invocationState.run(
-      { callId, executionContext, params: {} },
-      () => this.previewChanges(args, callId)
-    );
+    await this.invocationState.run({ callId, executionContext, params: {} }, () => this.previewChanges(args, callId));
   }
 
   /**
@@ -407,35 +405,27 @@ export abstract class BaseTool {
     isContextFile: boolean = false,
     executionContext?: ToolExecutionContext
   ): Promise<ToolResult> {
-    return this.invocationState.run(
-      { callId, abortSignal, executionContext, params: {} },
-      async () => {
-        try {
-          await this.validateFilesystemArgs(args);
-          if (abortSignal?.aborted) {
-            throw new Error('AbortError: Tool execution was interrupted');
-          }
-
-          return await this.executeImpl(args, callId, isUserInitiated, isContextFile, executionContext);
-        } catch (error) {
-          if (error instanceof DirectoryTraversalError) {
-            return this.formatErrorResponse(error.message, 'security_error');
-          }
-          if (error instanceof Error &&
-              (error.message?.includes('AbortError') || abortSignal?.aborted)) {
-            return this.formatErrorResponse(
-              'Tool execution interrupted by user',
-              'interrupted'
-            );
-          }
-
-          return this.formatErrorResponse(
-            formatError(error),
-            'system_error'
-          );
+    return this.invocationState.run({ callId, abortSignal, executionContext, params: {} }, async () => {
+      try {
+        await this.validateFilesystemArgs(args);
+        if (abortSignal?.aborted) {
+          throw new Error('AbortError: Tool execution was interrupted');
         }
+
+        return await this.executeImpl(args, callId, isUserInitiated, isContextFile, executionContext);
+      } catch (error) {
+        if (error instanceof DirectoryTraversalError) {
+          return this.formatErrorResponse(error.message, 'security_error');
+        }
+        if (error instanceof Error && (error.message?.includes('AbortError') || abortSignal?.aborted)) {
+          return this.formatErrorResponse('Tool execution interrupted by user', 'interrupted');
+        }
+
+        return this.formatErrorResponse(formatError(error), 'system_error');
+      } finally {
+        this.releasePreparedInvocation(args);
       }
-    );
+    });
   }
 
   /**
@@ -451,6 +441,9 @@ export abstract class BaseTool {
     }
   }
 
+  /** Release invocation-local preparation on success, failure, denial, or cancellation. */
+  releasePreparedInvocation(_args: Record<string, unknown>): void {}
+
   /**
    * Optional argument validation
    *
@@ -460,7 +453,9 @@ export abstract class BaseTool {
    * @param _args - Tool-specific parameters
    * @returns ValidationResult with valid=false if validation fails, or null if validation passes
    */
-  validateArgs(_args: Record<string, unknown>): { valid: boolean; error?: string; error_type?: string; suggestion?: string } | null {
+  validateArgs(
+    _args: Record<string, unknown>
+  ): { valid: boolean; error?: string; error_type?: string; suggestion?: string } | null {
     // Default: no validation
     return null;
   }
@@ -502,7 +497,9 @@ export abstract class BaseTool {
    * resolve through that agent's execution context before falling back globally.
    */
   protected getExecutionRegistry(executionContext?: ToolExecutionContext): Pick<ServiceRegistry, 'get'> {
-    return executionContext?.registryScope ?? this.currentExecutionContext?.registryScope ?? ServiceRegistry.getInstance();
+    return (
+      executionContext?.registryScope ?? this.currentExecutionContext?.registryScope ?? ServiceRegistry.getInstance()
+    );
   }
 
   /**
@@ -589,26 +586,24 @@ export abstract class BaseTool {
    * @param initialValues - Optional initial values for fields
    * @returns Promise resolving to form data
    */
-  protected async requestForm(
-    schema: FormSchema,
-    initialValues?: Record<string, any>
-  ): Promise<Record<string, any>> {
+  protected async requestForm(schema: FormSchema, initialValues?: Record<string, any>): Promise<Record<string, any>> {
     if (!this.formManager) {
       throw new Error('FormManager not available - cannot request form');
     }
-    return this.formManager.requestForm(
-      this.name,
-      schema,
-      initialValues,
-      this.currentCallId
-    );
+    return this.formManager.requestForm(this.name, schema, initialValues, this.currentCallId);
   }
 
   /**
    * Emit a diff preview for file changes
    * Shows user what will change before applying modifications
    */
-  protected emitDiffPreview(oldContent: string, newContent: string, filePath: string, operationType: 'apply-patch' | 'write' | 'format' = 'apply-patch', editsCount?: number): void {
+  protected emitDiffPreview(
+    oldContent: string,
+    newContent: string,
+    filePath: string,
+    operationType: 'apply-patch' | 'write' | 'format' = 'apply-patch',
+    editsCount?: number
+  ): void {
     if (!this.currentCallId) {
       logger.warn(`[${this.name}] Cannot emit diff preview: no currentCallId set`);
       return;
@@ -707,9 +702,7 @@ export abstract class BaseTool {
       // Structured context; the message itself lives only in `error`.
       error_details: {
         tool_name: this.name,
-        parameters: Object.keys(this.currentParams).length > 0
-          ? { ...this.currentParams }
-          : undefined,
+        parameters: Object.keys(this.currentParams).length > 0 ? { ...this.currentParams } : undefined,
         suggestion: suggestion,
       },
 
@@ -814,8 +807,13 @@ export abstract class BaseTool {
       // artifact a model should inspect with read/grep.
       const payload = toModelToolResult({ ...result }) as Record<string, unknown>;
       for (const key of [
-        'success', 'error', 'error_type', 'error_details', 'suggestion',
-        'system_reminder', 'system_reminder_persist',
+        'success',
+        'error',
+        'error_type',
+        'error_details',
+        'suggestion',
+        'system_reminder',
+        'system_reminder_persist',
       ]) {
         delete payload[key];
       }
@@ -958,12 +956,7 @@ export abstract class BaseTool {
         return null;
       }
 
-      const patchNumber = await patchManager.captureOperation(
-        operationType,
-        filePath,
-        originalContent,
-        newContent
-      );
+      const patchNumber = await patchManager.captureOperation(operationType, filePath, originalContent, newContent);
 
       if (patchNumber !== null) {
         logger.debug(`[${this.name}] Captured ${operationType} operation as patch ${patchNumber}`);
@@ -990,11 +983,20 @@ export abstract class BaseTool {
     editRanges?: Array<{ oldStart: number; oldEnd: number; newStart: number; newEnd: number }>;
     readStateManager: ReadStateManager | null;
     executionContext?: ToolExecutionContext;
+    abortSignal?: AbortSignal;
   }): Promise<{
     patchNumber: number | null;
     diff: string;
   }> {
-    const { absolutePath, originalContent, modifiedContent, operationType, editRanges, readStateManager, executionContext } = options;
+    const {
+      absolutePath,
+      originalContent,
+      modifiedContent,
+      operationType,
+      editRanges,
+      readStateManager,
+      executionContext,
+    } = options;
     const readScopeId = this.getReadScopeId(executionContext);
     const cacheRegistry = this.getExecutionRegistry(executionContext);
 
@@ -1003,6 +1005,7 @@ export abstract class BaseTool {
       if (currentContent !== originalContent) {
         throw new Error(`File changed while ${this.name} was preparing the edit. Re-read ${absolutePath} and retry.`);
       }
+      options.abortSignal?.throwIfAborted();
       await atomicWriteFile(absolutePath, modifiedContent);
       const capturedPatch = await this.captureOperationPatch(
         operationType,

@@ -136,7 +136,7 @@ export class BashTool extends BaseTool {
 - Do not create, delete, overwrite, or rewrite project source files through shell commands. Use write for new files and apply-patch for every existing text-file change.
 - Never terminate a process merely because it occupies a desired port. Stop only a process handle or PID created and recorded by the current session; otherwise choose another free endpoint.
 - For a server or watcher, set run_in_background=true and leave shell background operators such as & out of the command; the tool owns the process lifecycle.
-- If apply-patch fails, re-read the exact target and retry with a smaller contextual hunk. Never delete and recreate a file to bypass patch validation.`;
+- If apply-patch fails, re-read the exact target and retry with a smaller bounded edit. Never delete and recreate a file to bypass patch validation.`;
   readonly capabilities = [ToolCapability.ShellExec] as const;
   // Builds and tests provide feedback but do not constitute an implementation
   // step. Preserve any evidence-gathering streak until a real mutation occurs,

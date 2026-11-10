@@ -208,3 +208,40 @@ Actual terminal scenarios covered parallel delegation before any completion, nav
 Coverage is bounded and representative, not every possible permutation. This does not establish cross-terminal compatibility, native desktop notification delivery, classifier safety, model accuracy, or filled 128k-context performance. Streaming text still receives Markdown formatting when it settles; an incremental Markdown renderer remains a separate feature. Complete long error details remain available in history when a 40×12 viewport cannot also fit the interaction controls.
 
 Final validation: `npm run check` passed TypeScript, zero-warning ESLint, all 282 suites and 3,573 tests, coverage gates, and the production build. Fixture scripts passed syntax checks, and retained evidence hashes were verified.
+
+## Measured model behavior and editing contracts
+
+The production-harness behavior campaign records actual provider requests and
+uses independent file and behavior checks across coding, recovery, tool discovery,
+steering, delegation, and persisted checkpoint continuation. The first 36-trial
+32k prompt comparison recorded 36/36 passes under the original verifier. A later
+audit found missing explicit-null checks in the configuration case, so those
+scores do not establish every stated semantic requirement. Supplemental replay
+then found that the baseline preserved null in all three configuration trials
+while the candidate failed once. That functional regression, alongside inconsistent
+efficiency, supports retaining the existing production prompt.
+Results exclude infrastructure-affected matched pairs from cost comparisons and
+do not invent missing token usage after delegated cancellation.
+
+The campaign exposed a request-budget bug: configured output caps could be
+replaced by a larger remaining-context allowance. Agent requests and compaction
+now share the configured ceiling with an additional available-context bound.
+The complete 36-trial campaign transmitted 248 requests, all capped at 2,048
+output tokens. This fixes a harness contract independently of model identity.
+
+The edit-interface comparison separates the tool schema from the system prompt.
+Exact text matching admits LF/CRLF equivalence while preserving other characters
+and all bytes outside the replacement. It rejects ambiguous matches, invalid
+UTF-8, binary text, and no-op edits. Preparation holds an immutable source and
+argument snapshot; scoped read evidence is checked before permission and execution.
+The shared finalizer owns atomic compare-and-swap, cancellation at the publication
+boundary, read-cache updates, journaling, and undo. Preview and execution use the
+same prepared edit, and invocation cleanup releases it after denial, interruption,
+failure, or success. No model-specific edit fallback or fuzzy matching is used.
+
+Two experimental adapters were rejected after valid replacements failed in their
+intermediate unified-diff conversion. The corrected implementation derives line
+observation and mutation ranges directly from the exact match offsets. The
+historical unified-diff frontend remains an explicit evaluator control sharing
+that finalization backend, rather than a second normal tool offered to the model.
+See [model evaluation](model-evaluation.md) for protocols, findings, and limits.

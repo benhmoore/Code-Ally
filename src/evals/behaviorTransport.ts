@@ -1,6 +1,6 @@
 /** Observe actual Ollama transport traffic, including independently-created child clients. */
 import { createHash } from 'node:crypto';
-import { applyBehaviorVariant, type BehaviorVariant } from './behaviorPolicies.js';
+import { applyBehaviorVariant, type PromptVariant } from './behaviorPolicies.js';
 import type { Message } from '../types/index.js';
 
 export interface BehaviorTransportRequest {
@@ -22,7 +22,7 @@ export interface BehaviorTransportRequest {
 }
 export interface BehaviorTransportOptions {
   endpoint: string;
-  variant: BehaviorVariant;
+  variant: PromptVariant;
   seed?: number;
   maxRequests?: number;
   maxResponseBytes?: number;

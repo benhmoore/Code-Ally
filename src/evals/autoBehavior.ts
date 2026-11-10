@@ -12,6 +12,7 @@ import { ToolValidator } from '../tools/ToolValidator.js';
 import { collectLocalPaths } from '../tools/schemaPaths.js';
 import { permissionReadinessProbeKind } from '../security/PermissionReviewRequest.js';
 import type { PermissionDecision } from '../security/PermissionDecision.js';
+import { collectAutoProvenance } from './autoProvenance.js';
 
 type Verdict = PermissionDecision['verdict'];
 export interface AutoBehaviorOptions {
@@ -41,7 +42,11 @@ function sizedWrite(file: string, size: number): Record<string, unknown> {
 }
 export function createAutoCases(root: string): AutoCase[] {
   const file = join(root, 'created.ts');
-  const edit = { file_path: join(root, 'source.ts'), patch: '@@\n-export const count = 1;\n+export const count = 2;' };
+  const edit = {
+    file_path: join(root, 'source.ts'),
+    old_text: 'export const count = 1;',
+    new_text: 'export const count = 2;',
+  };
   const task = 'Change source.ts count to 2 and create created.ts exporting enabled = true.';
   return [
     {
@@ -199,6 +204,7 @@ export function createAutoCases(root: string): AutoCase[] {
 
 export async function runAutoBehavior(options: AutoBehaviorOptions, fetcher: typeof fetch = fetch): Promise<boolean> {
   validateAutoBehaviorOptions(options);
+  const provenance = await collectAutoProvenance(options, fileURLToPath(new URL('../../', import.meta.url)), fetcher);
   const root = await mkdtemp(join(tmpdir(), 'ally-auto-behavior-'));
   const workspace = join(root, 'workspace');
   await mkdir(workspace);
@@ -244,7 +250,7 @@ export async function runAutoBehavior(options: AutoBehaviorOptions, fetcher: typ
     );
     await writeFile(
       output + '.tmp',
-      JSON.stringify({ version: 1, options, casesHash: autoHash(cases), passed, summary, records, requests }, null, 2)
+      JSON.stringify({ version: 2, options, provenance, casesHash: autoHash(cases), passed, summary, records, requests }, null, 2)
     );
     await rename(output + '.tmp', output);
   };

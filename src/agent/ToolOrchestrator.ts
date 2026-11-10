@@ -20,7 +20,12 @@ import { AgentConfig } from './Agent.js';
 import type { ToolCall } from '../types/index.js';
 import { ToolResultManager } from '../services/ToolResultManager.js';
 import { PermissionManager } from '../security/PermissionManager.js';
-import { DirectoryTraversalError, PolicyDeniedError, isPermissionDeniedError, isPolicyDeniedError } from '../security/PathSecurity.js';
+import {
+  DirectoryTraversalError,
+  PolicyDeniedError,
+  isPermissionDeniedError,
+  isPolicyDeniedError,
+} from '../security/PathSecurity.js';
 import { evaluateRunAuthorization } from '../security/RunAuthorizationPolicy.js';
 import { STRUCTURED_OUTPUT_TOOL } from '../tools/StructuredOutputTool.js';
 import { logger } from '../services/Logger.js';
@@ -29,11 +34,7 @@ import { formatError, createStructuredError, classifyToolError } from '../utils/
 import { formatMinutesSeconds } from '../ui/utils/timeUtils.js';
 import { ID_GENERATION, SYSTEM_REMINDER, TOOL_GUIDANCE } from '../config/constants.js';
 import { createExploratoryGentleWarning, createExploratorySternWarning } from '../utils/messageUtils.js';
-import {
-  createTimeReminder,
-  createFocusReminder,
-  createCycleWarning,
-} from '../utils/messageUtils.js';
+import { createTimeReminder, createFocusReminder, createCycleWarning } from '../utils/messageUtils.js';
 import { TOOL_NAMES } from '../config/toolDefaults.js';
 import { createToolResultMessage } from '../llm/FunctionCalling.js';
 import { resolveDisplayContent, toModelToolResult } from '../utils/toolResultContent.js';
@@ -48,7 +49,8 @@ function snapshotToolArguments(args: Record<string, any>): Record<string, any> {
   const pending: object[] = [copy];
   while (pending.length) {
     const value = pending.pop()!;
-    for (const child of Object.values(value)) if (child && typeof child === 'object' && !Object.isFrozen(child)) pending.push(child);
+    for (const child of Object.values(value))
+      if (child && typeof child === 'object' && !Object.isFrozen(child)) pending.push(child);
     Object.freeze(value);
   }
   return copy;
@@ -112,7 +114,10 @@ export class ToolOrchestrator {
   private config: AgentConfig;
   private toolResultManager: ToolResultManager | null = null;
   private permissionManager: PermissionManager | null = null;
-  private readonly permissionDecisions = new Map<string, import('../security/PermissionDecision.js').PermissionDecision>();
+  private readonly permissionDecisions = new Map<
+    string,
+    import('../security/PermissionDecision.js').PermissionDecision
+  >();
   private parentCallId?: string; // Parent context for nested agents
   private cycleDetectionResults: Map<string, import('./LoopDetector.js').CycleInfo> = new Map();
 
@@ -131,14 +136,17 @@ export class ToolOrchestrator {
   private pendingBatchReminders: string[] = [];
 
   // Tool display properties cache - avoids redundant tool lookups
-  private toolPropsCache = new Map<string, {
-    shouldCollapse: boolean;
-    hideOutput: boolean;
-    alwaysShowFullOutput: boolean;
-    displayColor?: string;
-    displayIcon?: string;
-    hideToolName?: boolean;
-  }>();
+  private toolPropsCache = new Map<
+    string,
+    {
+      shouldCollapse: boolean;
+      hideOutput: boolean;
+      alwaysShowFullOutput: boolean;
+      displayColor?: string;
+      displayIcon?: string;
+      hideToolName?: boolean;
+    }
+  >();
 
   constructor(
     toolManager: ToolManager,
@@ -246,10 +254,16 @@ export class ToolOrchestrator {
 
       if (this.currentExploratoryStreak >= sternThreshold) {
         this.queueBatchReminder(createExploratorySternWarning(this.currentExploratoryStreak));
-        logger.debug('[TOOL_ORCHESTRATOR_EXPLORATORY]', `Stern warning after ${this.currentExploratoryStreak} consecutive exploratory calls`);
+        logger.debug(
+          '[TOOL_ORCHESTRATOR_EXPLORATORY]',
+          `Stern warning after ${this.currentExploratoryStreak} consecutive exploratory calls`
+        );
       } else if (this.currentExploratoryStreak >= threshold) {
         this.queueBatchReminder(createExploratoryGentleWarning(this.currentExploratoryStreak));
-        logger.debug('[TOOL_ORCHESTRATOR_EXPLORATORY]', `Gentle reminder after ${this.currentExploratoryStreak} consecutive exploratory calls`);
+        logger.debug(
+          '[TOOL_ORCHESTRATOR_EXPLORATORY]',
+          `Gentle reminder after ${this.currentExploratoryStreak} consecutive exploratory calls`
+        );
       }
     } else {
       // Failed attempts do not erase the preceding exploration evidence.
@@ -348,10 +362,10 @@ export class ToolOrchestrator {
     const snapshot = ServiceRegistry.getInstance().get('context_budget')?.get(agentId);
     if (!snapshot) return undefined;
 
-    const sharedLimit = Math.max(0, Math.min(
-      snapshot.maxToolResultTokens,
-      Math.floor(snapshot.maxToolBatchTokens / toolCalls.length),
-    ));
+    const sharedLimit = Math.max(
+      0,
+      Math.min(snapshot.maxToolResultTokens, Math.floor(snapshot.maxToolBatchTokens / toolCalls.length))
+    );
     const maxResultTokensByCallId = new Map<string, number>();
     for (const call of toolCalls) maxResultTokensByCallId.set(call.id, sharedLimit);
 
@@ -378,12 +392,22 @@ export class ToolOrchestrator {
    */
   private async executeConcurrent(
     toolCalls: ToolCall[],
-    outputBudget?: ToolExecutionContext['outputBudget'],
+    outputBudget?: ToolExecutionContext['outputBudget']
   ): Promise<ToolResult[]> {
     // Emit group start event (with parent context if nested)
     const groupId = this.generateId('tool-group');
-    logger.debug('[TOOL_ORCHESTRATOR] executeConcurrent - groupId:', groupId, 'parentCallId:', this.parentCallId, 'toolCount:', toolCalls.length);
-    logger.debug('[TOOL_ORCHESTRATOR] Tools in group:', toolCalls.map(tc => `${tc.function.name}(${JSON.stringify(tc.function.arguments)})`).join(', '));
+    logger.debug(
+      '[TOOL_ORCHESTRATOR] executeConcurrent - groupId:',
+      groupId,
+      'parentCallId:',
+      this.parentCallId,
+      'toolCount:',
+      toolCalls.length
+    );
+    logger.debug(
+      '[TOOL_ORCHESTRATOR] Tools in group:',
+      toolCalls.map(tc => `${tc.function.name}(${JSON.stringify(tc.function.arguments)})`).join(', ')
+    );
 
     this.emitEvent({
       id: groupId,
@@ -468,7 +492,9 @@ export class ToolOrchestrator {
 
               const toolResult = results[j];
               const tool = this.toolManager.getTool(toolCall.function.name);
-              const { shouldCollapse, hideOutput, alwaysShowFullOutput } = this.getToolDisplayProps(toolCall.function.name);
+              const { shouldCollapse, hideOutput, alwaysShowFullOutput } = this.getToolDisplayProps(
+                toolCall.function.name
+              );
 
               let resultData: ToolResult;
               if (j === i) {
@@ -526,16 +552,11 @@ export class ToolOrchestrator {
             }
 
             // Emit group end event
-            const groupError = createStructuredError(
-              'Permission denied',
-              'permission_denied',
-              'concurrent_batch',
-              {
-                groupExecution: true,
-                toolCount: toolCalls.length,
-                tools: toolCalls.map(tc => tc.function.name),
-              }
-            );
+            const groupError = createStructuredError('Permission denied', 'permission_denied', 'concurrent_batch', {
+              groupExecution: true,
+              toolCount: toolCalls.length,
+              tools: toolCalls.map(tc => tc.function.name),
+            });
             this.emitEvent({
               id: groupId,
               type: ActivityEventType.TOOL_CALL_END,
@@ -643,7 +664,7 @@ export class ToolOrchestrator {
    */
   private async executeSequential(
     toolCalls: ToolCall[],
-    outputBudget?: ToolExecutionContext['outputBudget'],
+    outputBudget?: ToolExecutionContext['outputBudget']
   ): Promise<ToolResult[]> {
     const results: ToolResult[] = [];
 
@@ -683,7 +704,7 @@ export class ToolOrchestrator {
   private async executeSingleToolAfterStart(
     toolCall: ToolCall,
     parentId?: string,
-    outputBudget?: ToolExecutionContext['outputBudget'],
+    outputBudget?: ToolExecutionContext['outputBudget']
   ): Promise<ToolResult> {
     return this.executeSingleTool(toolCall, parentId, false, outputBudget);
   }
@@ -700,7 +721,7 @@ export class ToolOrchestrator {
     toolCall: ToolCall,
     parentId?: string,
     emitStartEvent: boolean = true,
-    outputBudget?: ToolExecutionContext['outputBudget'],
+    outputBudget?: ToolExecutionContext['outputBudget']
   ): Promise<ToolResult> {
     const { id, function: func } = toolCall;
     const { name: toolName } = func;
@@ -715,8 +736,7 @@ export class ToolOrchestrator {
     const activationScope = this.agent.getInstanceId?.();
     if (tool && activationScope) {
       try {
-        ServiceRegistry.getInstance().get('tool_activation_registry')
-          ?.touch(activationScope, [toolName]);
+        ServiceRegistry.getInstance().get('tool_activation_registry')?.touch(activationScope, [toolName]);
       } catch {
         // Activation is an optimisation; never fail a tool call over it.
       }
@@ -790,7 +810,12 @@ export class ToolOrchestrator {
       !cycleInfo.isValidRepeat &&
       (toolName === 'read' || toolName === 'Read')
     ) {
-      logger.debug('[TOOL_ORCHESTRATOR] Blocking exact-duplicate read re-execution for cycle break:', toolName, 'count:', cycleInfo.count);
+      logger.debug(
+        '[TOOL_ORCHESTRATOR] Blocking exact-duplicate read re-execution for cycle break:',
+        toolName,
+        'count:',
+        cycleInfo.count
+      );
       return {
         success: true,
         error: '',
@@ -801,7 +826,20 @@ export class ToolOrchestrator {
 
     // If we have a parent context from a nested agent, use it; otherwise use the group parentId
     const effectiveParentId = this.parentCallId || parentId;
-    logger.debug('[TOOL_ORCHESTRATOR] executeSingleTool - id:', id, 'tool:', toolName, 'args:', JSON.stringify(args), 'parentId:', parentId, 'effectiveParentId:', effectiveParentId, 'emitStartEvent:', emitStartEvent);
+    logger.debug(
+      '[TOOL_ORCHESTRATOR] executeSingleTool - id:',
+      id,
+      'tool:',
+      toolName,
+      'args:',
+      JSON.stringify(args),
+      'parentId:',
+      parentId,
+      'effectiveParentId:',
+      effectiveParentId,
+      'emitStartEvent:',
+      emitStartEvent
+    );
 
     // Auto-promote first pending todo to in_progress
     // This helps the agent track progress through the todo list
@@ -816,9 +854,7 @@ export class ToolOrchestrator {
           if (nextPending) {
             // Find and update the todo
             const todos = todoManager.getTodos();
-            const updated = todos.map(t =>
-              t.id === nextPending.id ? { ...t, status: 'in_progress' as const } : t
-            );
+            const updated = todos.map(t => (t.id === nextPending.id ? { ...t, status: 'in_progress' as const } : t));
             todoManager.setTodos(updated);
           }
         }
@@ -932,6 +968,101 @@ export class ToolOrchestrator {
 
     try {
       runExecution = ServiceRegistry.getInstance().get('run_supervisor')?.acquireExecution();
+      // The run's disallow list is a refusal, not a confirmation gate, so it is
+      // evaluated for every call. Tools that never require confirmation never
+      // reach the permission manager, and withholding a schema does not stop a
+      // call the model emits anyway from resumed history or a skill.
+      const disallowedTools = ServiceRegistry.getInstance().get('trust_manager')?.getDisallowedToolPatterns() ?? [];
+      if (disallowedTools.length > 0) {
+        const decision = evaluateRunAuthorization({ disallowed_tools: [...disallowedTools] }, toolName, '');
+        if (decision.verdict === 'deny') {
+          throw new PolicyDeniedError(`Run policy denied tool: ${toolName}`, decision.reason, [
+            'Use a tool that the run policy does not deny',
+          ]);
+        }
+      }
+
+      // PreToolUse hooks are deterministic policy, decided before the form and
+      // the permission machinery and for every tool, not only the ones that
+      // require confirmation: a policy hook on `read` is legitimate. A block is
+      // an ordinary model-visible result, so the turn continues.
+      //
+      // The structured-output tool is exempt: it is the run's answer channel,
+      // demanded by the requirement loop, so a blanket block hook would leave
+      // the turn retrying a call it can never complete.
+      const hookRunner = ServiceRegistry.getInstance().get('hook_runner');
+      if (hookRunner?.hasHooks('PreToolUse') && toolName !== STRUCTURED_OUTPUT_TOOL) {
+        const verdict = await hookRunner.run('PreToolUse', { tool_name: toolName, tool_input: args }, toolName);
+        if (verdict.kind === 'block') {
+          hookBlocked = true;
+          const blockedResult = createStructuredError(verdict.reason, 'policy_denied', toolName, args);
+          this.emitEvent({
+            id,
+            type: ActivityEventType.TOOL_CALL_END,
+            timestamp: Date.now(),
+            parentId: effectiveParentId,
+            data: {
+              toolName,
+              result: blockedResult,
+              success: false,
+              error: blockedResult.error,
+              visibleInChat: true, // Always show hook denials
+              isTransparent: tool?.isTransparentWrapper || false,
+              collapsed: false,
+              shouldCollapse,
+              hideOutput,
+              alwaysShowFullOutput,
+            },
+          });
+          return blockedResult;
+        }
+        if (verdict.updatedInput) args = verdict.updatedInput;
+      }
+
+      // Handle static form schema (before permission check)
+      if (tool && tool.supportsInteractiveForm && tool.formSchema) {
+        try {
+          const registry = ServiceRegistry.getInstance();
+          const formManager = registry.get('form_manager');
+
+          if (!formManager) {
+            throw new Error('FormManager not available - cannot request form');
+          }
+
+          const formData = await formManager.requestForm(toolName, tool.formSchema, args, id);
+          // Merge form data into args
+          args = { ...args, ...formData };
+        } catch (error) {
+          if (error instanceof FormCancelledError) {
+            const cancelledResult = createStructuredError('Form cancelled by user', 'form_cancelled', toolName, args);
+            this.emitEvent({
+              id,
+              type: ActivityEventType.TOOL_CALL_END,
+              timestamp: Date.now(),
+              parentId: effectiveParentId,
+              data: {
+                toolName,
+                result: cancelledResult,
+                success: false,
+                error: cancelledResult.error,
+                visibleInChat: true,
+                isTransparent: tool?.isTransparentWrapper || false,
+                collapsed: false,
+                shouldCollapse,
+                hideOutput,
+                alwaysShowFullOutput,
+              },
+            });
+            return cancelledResult;
+          }
+          throw error;
+        }
+      }
+
+      // Resolve hook/form input first, then pin one immutable invocation for
+      // preview, validation, approval and execution. Prepared source must remain
+      // bound to the exact action shown before permission was requested.
+      args = snapshotToolArguments(args);
       // Preview changes (e.g., diffs) BEFORE permission check
       // Tool call now exists in state, so diff can attach to it
       if (tool) {
@@ -972,122 +1103,6 @@ export class ToolOrchestrator {
         }
       }
 
-      // The run's disallow list is a refusal, not a confirmation gate, so it is
-      // evaluated for every call. Tools that never require confirmation never
-      // reach the permission manager, and withholding a schema does not stop a
-      // call the model emits anyway from resumed history or a skill.
-      const disallowedTools =
-        ServiceRegistry.getInstance().get('trust_manager')?.getDisallowedToolPatterns() ?? [];
-      if (disallowedTools.length > 0) {
-        const decision = evaluateRunAuthorization(
-          { disallowed_tools: [...disallowedTools] },
-          toolName,
-          ''
-        );
-        if (decision.verdict === 'deny') {
-          throw new PolicyDeniedError(
-            `Run policy denied tool: ${toolName}`,
-            decision.reason,
-            ['Use a tool that the run policy does not deny']
-          );
-        }
-      }
-
-      // PreToolUse hooks are deterministic policy, decided before the form and
-      // the permission machinery and for every tool, not only the ones that
-      // require confirmation: a policy hook on `read` is legitimate. A block is
-      // an ordinary model-visible result, so the turn continues.
-      //
-      // The structured-output tool is exempt: it is the run's answer channel,
-      // demanded by the requirement loop, so a blanket block hook would leave
-      // the turn retrying a call it can never complete.
-      const hookRunner = ServiceRegistry.getInstance().get('hook_runner');
-      if (hookRunner?.hasHooks('PreToolUse') && toolName !== STRUCTURED_OUTPUT_TOOL) {
-        const verdict = await hookRunner.run(
-          'PreToolUse',
-          { tool_name: toolName, tool_input: args },
-          toolName,
-        );
-        if (verdict.kind === 'block') {
-          hookBlocked = true;
-          const blockedResult = createStructuredError(
-            verdict.reason,
-            'policy_denied',
-            toolName,
-            args
-          );
-          this.emitEvent({
-            id,
-            type: ActivityEventType.TOOL_CALL_END,
-            timestamp: Date.now(),
-            parentId: effectiveParentId,
-            data: {
-              toolName,
-              result: blockedResult,
-              success: false,
-              error: blockedResult.error,
-              visibleInChat: true, // Always show hook denials
-              isTransparent: tool?.isTransparentWrapper || false,
-              collapsed: false,
-              shouldCollapse,
-              hideOutput,
-              alwaysShowFullOutput,
-            },
-          });
-          return blockedResult;
-        }
-        if (verdict.updatedInput) args = verdict.updatedInput;
-      }
-
-      // Handle static form schema (before permission check)
-      if (tool && tool.supportsInteractiveForm && tool.formSchema) {
-        try {
-          const registry = ServiceRegistry.getInstance();
-          const formManager = registry.get('form_manager');
-
-          if (!formManager) {
-            throw new Error('FormManager not available - cannot request form');
-          }
-
-          const formData = await formManager.requestForm(toolName, tool.formSchema, args, id);
-          // Merge form data into args
-          args = { ...args, ...formData };
-        } catch (error) {
-          if (error instanceof FormCancelledError) {
-            const cancelledResult = createStructuredError(
-              'Form cancelled by user',
-              'form_cancelled',
-              toolName,
-              args
-            );
-            this.emitEvent({
-              id,
-              type: ActivityEventType.TOOL_CALL_END,
-              timestamp: Date.now(),
-              parentId: effectiveParentId,
-              data: {
-                toolName,
-                result: cancelledResult,
-                success: false,
-                error: cancelledResult.error,
-                visibleInChat: true,
-                isTransparent: tool?.isTransparentWrapper || false,
-                collapsed: false,
-                shouldCollapse,
-                hideOutput,
-                alwaysShowFullOutput,
-              },
-            });
-            return cancelledResult;
-          }
-          throw error;
-        }
-      }
-
-      // Give approval and execution the same isolated immutable arguments.
-      // Earlier activity events and hook payloads must not be able to mutate an
-      // action after its permission decision.
-      args = snapshotToolArguments(args);
       // Check permissions if PermissionManager is available
       if (this.permissionManager && tool) {
         // TrustManager emits PERMISSION_REQUEST only when it actually needs a
@@ -1098,20 +1113,20 @@ export class ToolOrchestrator {
           signal: this.agent.getToolAbortSignal() ?? this.agent.getTurnInterruptionSignal?.(),
           onDecision: decision => {
             this.permissionDecisions.set(id, decision);
-            this.emitEvent({ id, type: ActivityEventType.TOOL_PERMISSION_DECISION,
-              timestamp: decision.timestamp, parentId: effectiveParentId, data: { decision } });
+            this.emitEvent({
+              id,
+              type: ActivityEventType.TOOL_PERMISSION_DECISION,
+              timestamp: decision.timestamp,
+              parentId: effectiveParentId,
+              data: { decision },
+            });
           },
         });
       }
 
       if (tool) {
         journaledEffect = tool.effectFor(args);
-        await runExecution?.toolPrepared(
-          id,
-          toolName,
-          journaledEffect,
-          args,
-        );
+        await runExecution?.toolPrepared(id, toolName, journaledEffect, args);
       }
 
       // Emit execution start event (timer starts NOW, after permission granted or if no permission needed)
@@ -1151,7 +1166,7 @@ export class ToolOrchestrator {
         const verdict = await hookRunner.run(
           'PostToolUse',
           { tool_name: toolName, tool_input: args, tool_response: result },
-          toolName,
+          toolName
         );
         const notes = verdict.kind === 'block' ? [verdict.reason] : verdict.additionalContext;
         if (notes.length > 0) {
@@ -1160,15 +1175,8 @@ export class ToolOrchestrator {
       }
 
       if (journaledEffect && toolExecutionAdmitted) {
-        const outcome = tool?.effectOutcomeFor(args, result)
-          ?? (result.success ? 'succeeded' : 'unknown');
-        await runExecution?.toolFinished(
-          id,
-          toolName,
-          journaledEffect,
-          outcome,
-          result.error
-        );
+        const outcome = tool?.effectOutcomeFor(args, result) ?? (result.success ? 'succeeded' : 'unknown');
+        await runExecution?.toolFinished(id, toolName, journaledEffect, outcome, result.error);
       }
 
       // Store execution start time for session persistence
@@ -1219,17 +1227,12 @@ export class ToolOrchestrator {
       // do not interrupt the turn: the next model response can choose a safe
       // alternative without waiting for a user.
       if (isPolicyDeniedError(error)) {
-        result = createStructuredError(
-          error.message,
-          'policy_denied',
-          toolName,
-          {
-            args,
-            code: error.code,
-            rule: error.rule,
-            alternatives: [...error.alternatives],
-          }
-        );
+        result = createStructuredError(error.message, 'policy_denied', toolName, {
+          args,
+          code: error.code,
+          rule: error.rule,
+          alternatives: [...error.alternatives],
+        });
         result.system_reminder =
           'This operation was denied by the automatic run policy. Do not ask the user; choose a safe alternative and continue.';
       }
@@ -1271,43 +1274,20 @@ export class ToolOrchestrator {
       // above: a policy denial is already a finished result and must not be
       // reclassified as a system error by the fallback below.
       else if (error instanceof Error && (error.name === 'AbortError' || error.message.includes('interrupted'))) {
-        result = createStructuredError(
-          'Tool execution interrupted by user',
-          'interrupted',
-          toolName,
-          args
-        );
+        result = createStructuredError('Tool execution interrupted by user', 'interrupted', toolName, args);
       } else if (error instanceof DirectoryTraversalError) {
-        result = createStructuredError(
-          error.message,
-          'permission_denied',
-          toolName,
-          args
-        );
+        result = createStructuredError(error.message, 'permission_denied', toolName, args);
       } else {
         // Classify error for telemetry-safe logging (no file paths or user content)
         const safeInfo = classifyToolError(error, toolName);
         logger.debug('[TOOL_ERROR]', JSON.stringify(safeInfo));
 
-        result = createStructuredError(
-          formatError(error),
-          'system_error',
-          toolName,
-          args
-        );
+        result = createStructuredError(formatError(error), 'system_error', toolName, args);
       }
 
-
       if (journaledEffect && toolExecutionAdmitted) {
-        const outcome = tool?.effectOutcomeFor(args, result)
-          ?? (result.success ? 'succeeded' : 'unknown');
-        await runExecution?.toolFinished(
-          id,
-          toolName,
-          journaledEffect,
-          outcome,
-          formatError(error)
-        );
+        const outcome = tool?.effectOutcomeFor(args, result) ?? (result.success ? 'succeeded' : 'unknown');
+        await runExecution?.toolFinished(id, toolName, journaledEffect, outcome, formatError(error));
       }
 
       // Store execution start time for session persistence (error case)
@@ -1347,7 +1327,13 @@ export class ToolOrchestrator {
             },
           });
         }
-      } finally { await runExecution?.release(); }
+      } finally {
+        try {
+          tool?.releasePreparedInvocation?.(args);
+        } finally {
+          await runExecution?.release();
+        }
+      }
     }
 
     return result;
@@ -1362,17 +1348,26 @@ export class ToolOrchestrator {
   private async processToolResult(
     toolCall: ToolCall,
     result: ToolResult,
-    outputBudget?: ToolExecutionContext['outputBudget'],
+    outputBudget?: ToolExecutionContext['outputBudget']
   ): Promise<void> {
     // Format result as natural language (pass toolCallId for cycle detection)
     const formattedResult = await this.formatToolResult(
       toolCall.function.name,
       result,
       toolCall.id,
-      outputBudget?.maxResultTokensByCallId.get(toolCall.id),
+      outputBudget?.maxResultTokensByCallId.get(toolCall.id)
     );
 
-    logger.debug('[TOOL_ORCHESTRATOR] processToolResult - tool:', toolCall.function.name, 'id:', toolCall.id, 'success:', result.success, 'resultLength:', formattedResult.length);
+    logger.debug(
+      '[TOOL_ORCHESTRATOR] processToolResult - tool:',
+      toolCall.function.name,
+      'id:',
+      toolCall.id,
+      'success:',
+      result.success,
+      'resultLength:',
+      formattedResult.length
+    );
 
     // Track file interactions for /open command (only on success)
     if (result.success && FileInteractionTracker.isTrackedTool(toolCall.function.name)) {
@@ -1398,22 +1393,23 @@ export class ToolOrchestrator {
     const tool = this.toolManager.getTool(toolCall.function.name);
     const canDeduplicate = result.success && tool?.isExploratoryTool && !isEphemeral;
     const tokenManager = this.agent.getTokenManager();
-    const previousCallId = canDeduplicate
-      ? tokenManager.trackToolResult(toolCall.id, formattedResult)
-      : null;
+    const previousCallId = canDeduplicate ? tokenManager.trackToolResult(toolCall.id, formattedResult) : null;
 
     let finalContent: string;
     if (previousCallId) {
       // Result is identical to a previous call - replace with reference
       finalContent = `[Duplicate result: This ${toolCall.function.name} call returned identical content to call ID ${previousCallId}. Review that result above instead of re-reading. Repeated identical reads waste context space.]`;
-      logger.debug('[TOOL_ORCHESTRATOR] Deduplicated result for', toolCall.function.name, '- references call', previousCallId);
+      logger.debug(
+        '[TOOL_ORCHESTRATOR] Deduplicated result for',
+        toolCall.function.name,
+        '- references call',
+        previousCallId
+      );
     } else {
       // Unique result - use full content
       // Add ephemeral warning if present
       const ephemeralWarning = (result as any)._ephemeral_warning;
-      finalContent = ephemeralWarning
-        ? `${ephemeralWarning}\n\n${formattedResult}`
-        : formattedResult;
+      finalContent = ephemeralWarning ? `${ephemeralWarning}\n\n${formattedResult}` : formattedResult;
     }
 
     // Create tool result message using centralized function
@@ -1475,8 +1471,10 @@ export class ToolOrchestrator {
       metadata,
     });
 
-    logger.debug('[TOOL_ORCHESTRATOR] processToolResult - tool result added to agent conversation',
-      isEphemeral ? '(EPHEMERAL)' : '');
+    logger.debug(
+      '[TOOL_ORCHESTRATOR] processToolResult - tool result added to agent conversation',
+      isEphemeral ? '(EPHEMERAL)' : ''
+    );
   }
 
   /**
@@ -1494,7 +1492,7 @@ export class ToolOrchestrator {
     toolName: string,
     result: ToolResult,
     toolCallId?: string,
-    maxResultTokens?: number,
+    maxResultTokens?: number
   ): Promise<string> {
     // Handle internal-only tool results (for special tools like delegate_task)
     if ((result as any)._internal_only) {
@@ -1528,12 +1526,10 @@ export class ToolOrchestrator {
     // Apply context-aware truncation if ToolResultManager is available
     // Retention policy must survive sanitization without leaking onto the wire.
     if (this.toolResultManager) {
-      resultStr = await this.toolResultManager.processToolResult(
-        toolName,
-        resultWithoutExtras,
-        toolCallId,
-        { maxTokens: maxResultTokens, allowTruncation: result._non_truncatable !== true },
-      );
+      resultStr = await this.toolResultManager.processToolResult(toolName, resultWithoutExtras, toolCallId, {
+        maxTokens: maxResultTokens,
+        allowTruncation: result._non_truncatable !== true,
+      });
     }
 
     // Append warning after truncation to ensure it's always visible
@@ -1554,7 +1550,11 @@ export class ToolOrchestrator {
     const injectSystemReminder = (reminder: string, source: string, persist: boolean = false) => {
       const persistAttr = persist ? ` ${SYSTEM_REMINDER.PERSIST_ATTRIBUTE}` : '';
       resultStr += `\n\n${SYSTEM_REMINDER.OPENING_TAG}${persistAttr}>${reminder}${SYSTEM_REMINDER.CLOSING_TAG}`;
-      logger.debug('[SYSTEM_REMINDER]', `${source} for ${toolName}:`, reminder.substring(0, 100) + (reminder.length > 100 ? '...' : ''));
+      logger.debug(
+        '[SYSTEM_REMINDER]',
+        `${source} for ${toolName}:`,
+        reminder.substring(0, 100) + (reminder.length > 100 ? '...' : '')
+      );
     };
 
     // Inject system_reminder from tool result (if provided)
@@ -1575,7 +1575,10 @@ export class ToolOrchestrator {
       const timeReminder = this.generateTimeReminder(maxDuration, totalTurnDuration);
       if (timeReminder) {
         this.queueBatchReminder(timeReminder);
-        logger.debug('[SYSTEM_REMINDER]', `Time (${totalTurnDuration.toFixed(2)}/${maxDuration}min) queued for ${toolName}`);
+        logger.debug(
+          '[SYSTEM_REMINDER]',
+          `Time (${totalTurnDuration.toFixed(2)}/${maxDuration}min) queued for ${toolName}`
+        );
       }
     }
 
@@ -1592,8 +1595,7 @@ export class ToolOrchestrator {
 
       if (shouldWarn) {
         // Use custom message if provided, otherwise fallback to default cycle warning
-        const message = cycleInfo.customMessage ||
-          createCycleWarning(cycleInfo.toolName, cycleInfo.count);
+        const message = cycleInfo.customMessage || createCycleWarning(cycleInfo.toolName, cycleInfo.count);
 
         this.queueBatchReminder(message);
         logger.debug('[SYSTEM_REMINDER]', `${cycleInfo.issueType || 'Cycle detection'} queued for ${toolName}`);
@@ -1609,8 +1611,7 @@ export class ToolOrchestrator {
       const shouldWarn = !globalInfo.isValidRepeat || globalInfo.severity === 'high';
 
       if (shouldWarn) {
-        const message = globalInfo.customMessage ||
-          `Pattern detected: ${globalInfo.issueType}`;
+        const message = globalInfo.customMessage || `Pattern detected: ${globalInfo.issueType}`;
 
         this.queueBatchReminder(message);
         logger.debug('[SYSTEM_REMINDER]', `${globalInfo.issueType || 'Pattern detection'} queued`);
@@ -1691,6 +1692,11 @@ export class ToolOrchestrator {
    */
   private generateId(prefix: string = 'tool'): string {
     // Generate ID: {prefix}-{timestamp}-{9-char-random} (base-36, skip '0.' prefix)
-    return `${prefix}-${Date.now()}-${Math.random().toString(ID_GENERATION.RANDOM_STRING_RADIX).substring(ID_GENERATION.RANDOM_STRING_SUBSTRING_START, ID_GENERATION.RANDOM_STRING_SUBSTRING_START + ID_GENERATION.RANDOM_STRING_LENGTH_LONG)}`;
+    return `${prefix}-${Date.now()}-${Math.random()
+      .toString(ID_GENERATION.RANDOM_STRING_RADIX)
+      .substring(
+        ID_GENERATION.RANDOM_STRING_SUBSTRING_START,
+        ID_GENERATION.RANDOM_STRING_SUBSTRING_START + ID_GENERATION.RANDOM_STRING_LENGTH_LONG
+      )}`;
   }
 }

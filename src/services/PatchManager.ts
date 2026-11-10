@@ -421,16 +421,16 @@ export class PatchManager implements IService {
         return false;
       }
 
-      // Write result back to file (or delete if result is empty and was a delete operation)
-      if (result.content !== undefined && result.content !== '') {
+      // Undo creation removes the new path; undo editing preserves an existing empty file.
+      if (result.content !== undefined && (result.content !== '' || patchEntry.operation_type !== 'write')) {
         // Ensure directory exists
         const dir = path.dirname(filePath);
         await fs.mkdir(dir, { recursive: true });
 
         await atomicWriteFile(filePath, result.content);
         logger.info(`Applied reverse patch to ${filePath}`);
-      } else if (fileExists) {
-        // Delete file if reverse resulted in empty content
+      } else if (result.content === '' && patchEntry.operation_type === 'write' && fileExists) {
+        // Only a creation operation may remove a path when its undo is empty
         await fs.unlink(filePath);
         logger.info(`Removed file ${filePath}`);
       }
